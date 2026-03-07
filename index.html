@@ -337,8 +337,9 @@ const DATES_COL       = 1;   // colonna A = date
 const FIRST_ROOM_COL  = 2;   // colonna B = prima camera
 const EXCLUDED_SHEETS = ['Dati Centralizzati Realtime','Non toccare','Ricettività','LOG COMPLESSIVO'];
 
-const MONTHS_IT = ['GENNAIO','FEBBRAIO','MARZO','APRILE','MAGGIO','GIUGNO',
-                   'LUGLIO','AGOSTO','SETTEMBRE','OTTOBRE','NOVEMBRE','DICEMBRE'];
+// Nomi mesi esatti come appaiono nei fogli Google (prima lettera maiuscola)
+const MONTHS_IT = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
+                   'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
 const MONTHS_S  = ['GEN','FEB','MAR','APR','MAG','GIU','LUG','AGO','SET','OTT','NOV','DIC'];
 const DAYS_IT   = ['Do','Lu','Ma','Me','Gi','Ve','Sa'];
 
@@ -550,9 +551,15 @@ async function loadFromSheets() {
         const headers  = headerData.values?.[0] || [];
         const jsonRow  = jsonData.values?.[0]   || [];
 
-        // Costruisci mappa colonna → nome camera per questo foglio
+        // Costruisci mappa colonna → nome camera (normalizziamo "21.0" → "21")
         sheetColumnMap[sName] = {};
-        headers.forEach((h, i) => { if (h) sheetColumnMap[sName][h.trim()] = i + 2; }); // +2 perché inizia da col B (indice 2)
+        headers.forEach((h, i) => {
+          if (!h) return;
+          const raw = String(h).trim();
+          const norm = raw.replace(/\.0$/, "");
+          sheetColumnMap[sName][raw] = i + 2;
+          if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
+        });
 
         // Parsa ogni JSON di camera
         jsonRow.forEach((cell, i) => {
@@ -568,8 +575,18 @@ async function loadFromSheets() {
               if (!b.dal || !b.al || !b.camera) return;
               const [dd,mm,yy] = b.dal.split('/').map(Number);
               const [de,me,ye] = b.al.split('/').map(Number);
-              const room = ROOMS.find(r => r.name === String(b.camera).trim());
-              if (!room) return;
+
+              // Normalizza nome camera: "21.0" → "21", "1.0" → "1", "marasanta" → "marasanta"
+              const camNorm = String(b.camera).trim().replace(/\.0$/, '');
+              const room = ROOMS.find(r =>
+                r.name === camNorm ||
+                r.name === String(b.camera).trim() ||
+                r.name.toLowerCase() === camNorm.toLowerCase()
+              );
+              if (!room) {
+                console.warn(`Camera non riconosciuta: "${b.camera}" (normalizzata: "${camNorm}")`);
+                return;
+              }
 
               const colorHex = b.backgroundColor
                 ? b.backgroundColor.startsWith('#') ? b.backgroundColor : '#' + b.backgroundColor
@@ -586,7 +603,7 @@ async function loadFromSheets() {
                 note: b.note || '',
                 fromSheet: true,
                 sheetName: sName,
-                cameraName: String(b.camera).trim(),
+                cameraName: room.name, // usa il nome normalizzato da ROOMS
               });
             });
           } catch(pe) {
@@ -627,7 +644,7 @@ async function writeBookingToSheet(b) {
       const hd = await sheetsGet(headerRange);
       const headers = hd.values?.[0] || [];
       sheetColumnMap[sName] = {};
-      headers.forEach((h,i) => { if(h) sheetColumnMap[sName][h.trim()] = i+2; });
+      headers.forEach((h,i) => { if(!h) return; const raw=String(h).trim(); const norm=raw.replace(/\.0$/,''); sheetColumnMap[sName][raw]=i+2; if(norm!==raw) sheetColumnMap[sName][norm]=i+2; });
       colIdx = sheetColumnMap[sName]?.[b.cameraName];
     } catch(e) {}
   }
