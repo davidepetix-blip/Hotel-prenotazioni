@@ -503,6 +503,7 @@ function logout() {
   google.accounts.oauth2.revoke(accessToken, () => {});
   accessToken = null;
   bookings = [];
+  _sheetIdCache = null;
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('userAvatar').style.display = 'none';
 }
@@ -625,6 +626,9 @@ async function loadFromSheets() {
       }
     }
 
+    // ── Ricongiungi prenotazioni che attraversano più mesi ──
+    bookings = mergeMultiMonthBookings(bookings);
+
     hideLoading();
     render();
     showToast(`✓ ${bookings.length} prenotazioni caricate`, 'success');
@@ -639,131 +643,159 @@ async function loadFromSheets() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// SCRITTURA SUL FOGLIO GOOGLE
+// MULTI-MESE: spezza una prenotazione in frammenti mensili
+// es. 26/3→5/4  →  [{26/3→31/3, sName:'Marzo 2026'}, {1/4→5/4, sName:'Aprile 2026'}]
+// ═══════════════════════════════════════════════════════════════════
+function splitBookingByMonth(b) {
+  const fragments = [];
+  let cur = new Date(b.s);          // cursore corrente (check-in)
+  const end = new Date(b.e);        // check-out finale
+
+  while (cur < end) {
+    const y = cur.getFullYear(), m = cur.getMonth();
+    // Ultimo giorno del mese corrente
+    const lastDayOfMonth = new Date(y, m + 1, 0);
+    // Fine del frammento = min(fine mese, check-out)
+    const fragEnd = end < lastDayOfMonth ? end : new Date(y, m + 1, 0, 12);
+    // Se check-out cade dentro il mese, fragEnd = check-out
+    const actualEnd = end <= new Date(y, m + 1, 0, 12) ? end : new Date(y, m + 1, 0, 12);
+
+    fragments.push({
+      sName:    sheetName(y, m),
+      startDay: cur.getDate(),
+      // endDay: ultimo giorno colorato è fragEnd.getDate() se è fine mese,
+      //         oppure checkout.getDate() se finisce nello stesso mese
+      endDay:   actualEnd.getDate(),
+      isLastFrag: actualEnd >= end,
+      y, m,
+    });
+
+    // Avanza al 1° del mese successivo
+    cur = new Date(y, m + 1, 1, 12);
+  }
+  return fragments;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SCRITTURA SUL FOGLIO GOOGLE (supporta multi-mese)
 // ═══════════════════════════════════════════════════════════════════
 
-async function writeBookingToSheet(b) {
-  const sName = sheetName(b.s.getFullYear(), b.s.getMonth());
+// Cache degli sheetId per evitare chiamate ripetute
+let _sheetIdCache = null;
+async function getSheetIdMap() {
+  if (_sheetIdCache) return _sheetIdCache;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets(properties(title,sheetId))`;
+  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+  const d = await r.json();
+  _sheetIdCache = {};
+  d.sheets.forEach(s => { _sheetIdCache[s.properties.title] = s.properties.sheetId; });
+  return _sheetIdCache;
+}
 
-  // Trova l'indice di colonna della camera nel foglio
-  let colIdx = sheetColumnMap[sName]?.[b.cameraName];
+// Scrive UN frammento mensile sul foglio (startDay..endDay incluso, testo solo nella prima cella)
+async function writeFragment(sName, cameraName, startDay, endDay, firstCellText, note, color, sheetIdMap) {
+  // Risolvi colonna
+  let colIdx = sheetColumnMap[sName]?.[cameraName];
   if (!colIdx) {
-    // Prova a ricaricare la mappa per questo foglio
     try {
-      const headerRange = `'${sName}'!B${HEADER_ROW}:AJ${HEADER_ROW}`;
-      const hd = await sheetsGet(headerRange);
-      const headers = hd.values?.[0] || [];
+      const hd = await sheetsGet(`'${sName}'!B${HEADER_ROW}:AJ${HEADER_ROW}`);
       sheetColumnMap[sName] = {};
-      headers.forEach((h,i) => { if(!h) return; const raw=String(h).trim(); const norm=raw.replace(/\.0$/,''); sheetColumnMap[sName][raw]=i+2; if(norm!==raw) sheetColumnMap[sName][norm]=i+2; });
-      colIdx = sheetColumnMap[sName]?.[b.cameraName];
+      (hd.values?.[0] || []).forEach((h,i) => {
+        if(!h) return;
+        const raw = String(h).trim(), norm = raw.replace(/\.0$/, '');
+        sheetColumnMap[sName][raw] = i+2;
+        if(norm !== raw) sheetColumnMap[sName][norm] = i+2;
+      });
+      colIdx = sheetColumnMap[sName]?.[cameraName];
     } catch(e) {}
   }
-  if (!colIdx) throw new Error(`Camera "${b.cameraName}" non trovata nel foglio "${sName}"`);
+  if (!colIdx) throw new Error(`Camera "${cameraName}" non trovata nel foglio "${sName}"`);
 
-  // Calcola il numero di righe da colorare
-  // Riga di inizio = FIRST_DATA_ROW + (giorno check-in - 1)
-  const startDay = b.s.getDate();
-  const endDay   = b.e.getDate();
+  const sheetId = sheetIdMap[sName];
+  if (sheetId === undefined) throw new Error(`Foglio "${sName}" non trovato`);
+
   const startRow = FIRST_DATA_ROW + startDay - 1;
-  // Notti = giorni colorati (check-in incluso, check-out escluso)
-  const numRows  = endDay - startDay; // check-out day è libero
+  // Numero di righe colorate = giorni occupati (check-out non colorato)
+  // Per frammenti di fine mese coloriamo fino a endDay incluso (= fine mese)
+  // Per frammento finale coloriamo fino a endDay-1 (check-out libero)
+  // Nota: endDay qui è già calcolato correttamente da splitBookingByMonth
+  const numRows = endDay - startDay + 1;
+  if (numRows <= 0) return;
 
-  if (numRows <= 0) throw new Error('Durata prenotazione non valida');
-
-  // Converti colonna numero → lettera (es. 2 → B, 28 → AB)
-  const colLetter = numToCol(colIdx);
-
-  // Prepara il testo per la prima cella: "Nome disposizione"
-  const firstCellText = `${b.n} ${b.d}`.trim();
-
-  const color = hexToSheetsColor(b.c);
-
-  // Costruisci le richieste batchUpdate
-  // 1. Scrivi il testo nella prima cella
-  // 2. Colora tutte le celle della prenotazione
-
-  // Prima ottieni lo sheetId numerico
-  const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets(properties(title,sheetId))`;
-  const metaR = await fetch(metaUrl, { headers: { Authorization: 'Bearer ' + accessToken } });
-  const meta  = await metaR.json();
-  const sheetMeta = meta.sheets.find(s => s.properties.title === sName);
-  if (!sheetMeta) throw new Error(`Foglio "${sName}" non trovato`);
-  const sheetId = sheetMeta.properties.sheetId;
-
-  // Usa batchUpdate per colori + testo in una sola chiamata
-  const requests = [];
-
-  // Testo prima cella
-  requests.push({
-    updateCells: {
-      range: {
-        sheetId, startRowIndex: startRow-1, endRowIndex: startRow,
-        startColumnIndex: colIdx-1, endColumnIndex: colIdx
-      },
-      rows: [{ values: [{ userEnteredValue: { stringValue: firstCellText } }] }],
-      fields: 'userEnteredValue'
+  const sheetsColor = hexToSheetsColor(color);
+  const requests = [
+    // Testo nella prima cella del frammento
+    {
+      updateCells: {
+        range: { sheetId, startRowIndex: startRow-1, endRowIndex: startRow, startColumnIndex: colIdx-1, endColumnIndex: colIdx },
+        rows: [{ values: [{ userEnteredValue: { stringValue: firstCellText } }] }],
+        fields: 'userEnteredValue'
+      }
+    },
+    // Colore su tutte le righe del frammento
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: startRow-1, endRowIndex: startRow-1+numRows, startColumnIndex: colIdx-1, endColumnIndex: colIdx },
+        cell: { userEnteredFormat: { backgroundColor: sheetsColor } },
+        fields: 'userEnteredFormat.backgroundColor'
+      }
     }
-  });
+  ];
 
-  // Note nella prima cella (se presenti)
-  if (b.note) {
+  if (note) {
     requests.push({
       updateCells: {
         range: { sheetId, startRowIndex: startRow-1, endRowIndex: startRow, startColumnIndex: colIdx-1, endColumnIndex: colIdx },
-        rows: [{ values: [{ note: b.note }] }],
+        rows: [{ values: [{ note }] }],
         fields: 'note'
       }
     });
   }
 
-  // Colore per tutte le celle della prenotazione
-  requests.push({
-    repeatCell: {
-      range: {
-        sheetId,
-        startRowIndex: startRow-1,
-        endRowIndex:   startRow-1 + numRows,
-        startColumnIndex: colIdx-1,
-        endColumnIndex:   colIdx
-      },
-      cell: { userEnteredFormat: { backgroundColor: color } },
-      fields: 'userEnteredFormat.backgroundColor'
-    }
-  });
-
-  const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`;
-  const resp = await fetch(batchUrl, {
+  const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests })
   });
+  if (!resp.ok) throw new Error(`Scrittura fallita (${resp.status}): ${await resp.text()}`);
+}
 
-  if (!resp.ok) {
-    const errBody = await resp.text();
-    throw new Error(`Scrittura fallita (${resp.status}): ${errBody}`);
+async function writeBookingToSheet(b) {
+  const firstCellText = `${b.n} ${b.d}`.trim();
+  const sheetIdMap    = await getSheetIdMap();
+  const fragments     = splitBookingByMonth(b);
+
+  for (const frag of fragments) {
+    // Per l'ultimo frammento: il check-out non viene colorato → endDay - 1
+    // Per i frammenti intermedi/iniziali che finiscono a fine mese: coloriamo tutto
+    const colorEnd = frag.isLastFrag ? frag.endDay - 1 : frag.endDay;
+    if (colorEnd < frag.startDay) continue; // prenotazione di 0 giorni nello stesso mese → salta
+
+    await writeFragment(
+      frag.sName, b.cameraName,
+      frag.startDay, colorEnd,
+      firstCellText, b.note, b.c,
+      sheetIdMap
+    );
   }
 }
 
-// Cancella le celle di una prenotazione (rimuovi colore e testo)
-async function clearBookingFromSheet(b) {
-  if (!b.fromSheet) return; // prenotazione locale non ancora salvata
+// ═══════════════════════════════════════════════════════════════════
+// CANCELLAZIONE DAL FOGLIO (supporta multi-mese)
+// ═══════════════════════════════════════════════════════════════════
 
-  const sName = b.sheetName || sheetName(b.s.getFullYear(), b.s.getMonth());
-  let colIdx  = sheetColumnMap[sName]?.[b.cameraName];
-  if (!colIdx) return;
+async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap) {
+  let colIdx = sheetColumnMap[sName]?.[cameraName];
+  if (!colIdx) return; // foglio probabilmente non caricato, ignora
 
-  const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets(properties(title,sheetId))`;
-  const metaR   = await fetch(metaUrl, { headers: { Authorization: 'Bearer ' + accessToken } });
-  const meta    = await metaR.json();
-  const sheetMeta = meta.sheets.find(s => s.properties.title === sName);
-  if (!sheetMeta) return;
-  const sheetId = sheetMeta.properties.sheetId;
+  const sheetId = sheetIdMap[sName];
+  if (sheetId === undefined) return;
 
-  const startRow = FIRST_DATA_ROW + b.s.getDate() - 1;
-  const numRows  = b.e.getDate() - b.s.getDate();
+  const startRow = FIRST_DATA_ROW + startDay - 1;
+  const numRows  = endDay - startDay + 1;
+  if (numRows <= 0) return;
 
   const requests = [
-    // Rimuovi colore (bianco)
     {
       repeatCell: {
         range: { sheetId, startRowIndex: startRow-1, endRowIndex: startRow-1+numRows, startColumnIndex: colIdx-1, endColumnIndex: colIdx },
@@ -771,20 +803,91 @@ async function clearBookingFromSheet(b) {
         fields: 'userEnteredFormat.backgroundColor'
       }
     },
-    // Cancella testo
-    { updateCells: {
+    {
+      updateCells: {
         range: { sheetId, startRowIndex: startRow-1, endRowIndex: startRow, startColumnIndex: colIdx-1, endColumnIndex: colIdx },
         rows: [{ values: [{ userEnteredValue: { stringValue: '' } }] }],
         fields: 'userEnteredValue'
-    }}
+      }
+    }
   ];
 
-  const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`;
-  await fetch(batchUrl, {
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests })
   });
+}
+
+async function clearBookingFromSheet(b) {
+  if (!b.fromSheet) return;
+  const sheetIdMap = await getSheetIdMap();
+  const fragments  = splitBookingByMonth(b);
+
+  for (const frag of fragments) {
+    const colorEnd = frag.isLastFrag ? frag.endDay - 1 : frag.endDay;
+    if (colorEnd < frag.startDay) continue;
+    try {
+      await clearFragment(frag.sName, b.cameraName, frag.startDay, colorEnd, sheetIdMap);
+    } catch(e) {
+      console.warn(`Errore pulizia frammento ${frag.sName}:`, e.message);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RICONGIUNGI prenotazioni multi-mese dopo la lettura dal foglio
+// Due frammenti appartengono alla stessa prenotazione se hanno:
+//   - stessa camera, stesso nome, stesso colore, stesso letto
+//   - il frammento A finisce l'ultimo giorno del mese M
+//     e il frammento B inizia il 1° giorno del mese M+1
+// ═══════════════════════════════════════════════════════════════════
+function mergeMultiMonthBookings(list) {
+  // Ordina per camera, poi per data inizio
+  const sorted = [...list].sort((a,b) => {
+    if (a.r !== b.r) return a.r.localeCompare(b.r);
+    return a.s - b.s;
+  });
+
+  const merged = [];
+  const used   = new Set();
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (used.has(i)) continue;
+    let base = sorted[i];
+
+    // Prova ad estendere concatenando frammenti successivi
+    for (let j = i + 1; j < sorted.length; j++) {
+      if (used.has(j)) continue;
+      const next = sorted[j];
+
+      // Devono avere stessa camera, nome, colore, disposizione
+      if (base.r !== next.r) break;       // sorted per camera, inutile continuare
+      if (base.n !== next.n) continue;
+      if (base.c !== next.c) continue;
+      if (base.d !== next.d) continue;
+
+      // Il frammento base deve terminare all'ultimo giorno del suo mese
+      const baseLastDayOfMonth = new Date(base.e.getFullYear(), base.e.getMonth() + 1, 0).getDate();
+      const baseEndsOnLastDay  = base.e.getDate() === baseLastDayOfMonth;
+
+      // Il frammento successivo deve iniziare il 1° del mese dopo
+      const nextStartsOnFirst  = next.s.getDate() === 1;
+      const nextIsFollowingMonth =
+        (next.s.getFullYear() === base.e.getFullYear() && next.s.getMonth() === base.e.getMonth() + 1) ||
+        (base.e.getMonth() === 11 && next.s.getMonth() === 0 && next.s.getFullYear() === base.e.getFullYear() + 1);
+
+      if (baseEndsOnLastDay && nextStartsOnFirst && nextIsFollowingMonth) {
+        // Unisci: estendi la data di fine al checkout del frammento successivo
+        base = { ...base, e: next.e, sheetName: base.sheetName }; // mantieni sheetName del primo frammento
+        used.add(j);
+      }
+    }
+
+    merged.push(base);
+  }
+
+  return merged;
 }
 
 // Helper: numero colonna → lettera (1→A, 28→AB, ecc.)
@@ -904,9 +1007,18 @@ function selBook(id,e){
       <button class="btn danger" onclick="delBook(${b.id})" style="flex:1;justify-content:center;">✕ Elimina</button>
     </div>
     <div class="synchint">
-      <b>→ Google Sheets</b><br>
-      Colonna "${roomName(b.r)}" · Foglio "${b.sheetName || sheetName(b.s.getFullYear(),b.s.getMonth())}"<br>
-      Celle ${fmt(b.s)} → ${fmt(b.e)} · Colore <span style="font-size:9px;padding:1px 5px;border-radius:2px;background:${b.c};color:${light(b.c)?'#222':'#eee'}">${b.c}</span>
+      ${(()=>{
+        const frags = splitBookingByMonth(b);
+        if(frags.length <= 1) {
+          return `<b>→ Google Sheets</b><br>
+          Colonna "${roomName(b.r)}" · Foglio "${b.sheetName || sheetName(b.s.getFullYear(),b.s.getMonth())}"<br>
+          Celle ${fmt(b.s)} → ${fmt(b.e)} · Colore <span style="font-size:9px;padding:1px 5px;border-radius:2px;background:${b.c};color:${light(b.c)?'#222':'#eee'}">${b.c}</span>`;
+        } else {
+          return `<b>→ Google Sheets (prenotazione multi-mese)</b><br>
+          Scritta su <b>${frags.length} fogli</b>: ${frags.map(f=>f.sName).join(', ')}<br>
+          Camera "${roomName(b.r)}" · Colore <span style="font-size:9px;padding:1px 5px;border-radius:2px;background:${b.c};color:${light(b.c)?'#222':'#eee'}">${b.c}</span>`;
+        }
+      })()}
     </div>`;
   openDrawer();
 }
@@ -1002,11 +1114,8 @@ async function saveBooking(){
   const sd=new Date(iv+'T12:00:00'), ed=new Date(ov+'T12:00:00');
   if(ed<=sd)    { show('Il check-out deve essere dopo il check-in.'); return; }
 
-  // ── Controllo prenotazioni che ricadono in mesi diversi ──
-  if(sd.getMonth() !== ed.getMonth() || sd.getFullYear() !== ed.getFullYear()){
-    const ok = confirm('⚠ La prenotazione attraversa due mesi diversi.\nSarà scritta solo nel foglio del mese di check-in. Procedi?');
-    if(!ok) return;
-  }
+  // ── Info prenotazioni multi-mese ──
+  // Nessun blocco: la scrittura è gestita automaticamente su più fogli mensili
 
   // ── OVERLAP BLOCK ──
   const conf=bookings.filter(b=>b.r===rid&&b.id!==editId&&b.s<ed&&b.e>sd);
@@ -1063,9 +1172,10 @@ async function saveBooking(){
 function showTT(e,id){
   const b=bookings.find(x=>x.id===id); if(!b) return;
   const adj=adjConflict(b);
-  document.getElementById('tt-n').textContent=b.n+(adj.length?' ⚠':'');
+  const isMulti = b.s.getMonth() !== b.e.getMonth() || b.s.getFullYear() !== b.e.getFullYear();
+  document.getElementById('tt-n').textContent=b.n+(adj.length?' ⚠':'')+(isMulti?' 📅':'');
   document.getElementById('tt-r').textContent=`Camera: ${roomName(b.r)}`;
-  document.getElementById('tt-d').textContent=`${fmt(b.s)} → ${fmt(b.e)} (${nights(b.s,b.e)} notti)`;
+  document.getElementById('tt-d').textContent=`${fmt(b.s)} → ${fmt(b.e)} (${nights(b.s,b.e)} notti${isMulti?' · multi-mese':''})`;
   document.getElementById('tt-b').textContent=`${b.d}`+(adj.length?' · ⚠ colore adiacente':'')+(b.pending?' · ⏳ in salvataggio':'');
   const tt=document.getElementById('tt'); tt.style.display='block'; movTT(e);
 }
