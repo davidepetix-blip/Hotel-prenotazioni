@@ -202,6 +202,42 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border2); }
+
+/* ── CONTATORI LETTI ── */
+.bed-counters { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.bed-counter-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--surface2); border: 1.5px solid var(--border); border-radius: var(--radius); transition: border-color .15s; }
+.bed-counter-row.active { border-color: var(--accent); background: #f0faf4; }
+.bed-counter-label { font-size: 12px; font-weight: 500; color: var(--text2); min-width: 100px; }
+.bed-counter-label small { font-size: 10px; color: var(--text3); font-weight: 400; }
+.bed-counter-ctrl { display: flex; align-items: center; gap: 10px; }
+.bed-ctr-btn { width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); font-size: 16px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .12s; font-weight: 300; }
+.bed-ctr-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+.bed-ctr-btn:disabled { opacity: .3; cursor: default; }
+.bed-ctr-val { font-size: 14px; font-weight: 600; color: var(--text); min-width: 18px; text-align: center; }
+.bed-preview { font-size: 11px; color: var(--accent); font-weight: 600; margin-top: 6px; min-height: 16px; letter-spacing: .01em; }
+
+/* ── PAGINA IMPOSTAZIONI ── */
+#settingsPage { display: none; position: fixed; inset: 0; background: var(--bg); z-index: 150; flex-direction: column; overflow: hidden; }
+#settingsPage.open { display: flex; }
+.spage-bar { height: var(--TB); flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-sm); }
+.spage-title { font-family: 'Playfair Display', serif; font-size: 18px; font-weight: 600; color: var(--text); flex: 1; }
+.spage-body { flex: 1; overflow-y: auto; padding: 20px 16px; max-width: 700px; margin: 0 auto; width: 100%; }
+.sgroup { margin-bottom: 28px; }
+.sgroup-title { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .12em; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid var(--accent-light); }
+.sroom-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 8px; box-shadow: var(--shadow-sm); }
+.sroom-name { font-weight: 600; font-size: 13px; color: var(--text); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.sroom-badge { font-size: 9px; font-weight: 500; color: var(--text3); background: var(--surface2); border: 1px solid var(--border); padding: 2px 6px; border-radius: 10px; }
+.sroom-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sfield { }
+.sfield label { display: block; font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 4px; }
+.sfield input, .sfield select { width: 100%; background: var(--surface2); border: 1.5px solid var(--border); color: var(--text); font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; padding: 7px 9px; border-radius: var(--radius); outline: none; -webkit-appearance: none; }
+.sfield input:focus, .sfield select:focus { border-color: var(--accent); }
+.sbed-types { margin-top: 10px; }
+.sbed-types label { display: block; font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 6px; }
+.sbed-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.sbed-chip { padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 500; background: var(--surface2); border: 1.5px solid var(--border); cursor: pointer; transition: all .12s; color: var(--text2); }
+.sbed-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ssave-bar { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); display: flex; justify-content: flex-end; gap: 10px; }
 </style>
 </head>
 <body>
@@ -241,6 +277,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
   <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
+  <button class="btn btn-icon" onclick="openSettings()" title="Impostazioni camere">⚙</button>
   <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
   <button class="btn primary" id="btnAdd" style="display:none" onclick="openModal()">+ Nuova</button>
   <img id="userAvatar" class="avatar" style="display:none" title="Logout" onclick="logout()">
@@ -297,7 +334,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     <div class="errmsg" id="errmsg"></div>
     <div class="fg">
       <label class="fl">Camera</label>
-      <select class="fi" id="fRoom" onchange="rebuildColors()"></select>
+      <select class="fi" id="fRoom" onchange="rebuildColors(); rebuildBeds();"></select>
     </div>
     <div class="fg">
       <label class="fl">Nome cliente</label>
@@ -308,8 +345,9 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
       <div class="fg"><label class="fl">Check-out</label><input type="date" class="fi" id="fOut"></div>
     </div>
     <div class="fg">
-      <label class="fl">Disposizione letti</label>
-      <div class="bedopts" id="bedopts"></div>
+      <label class="fl">Disposizione letti <span id="bedSummaryLabel" style="color:var(--accent);font-size:10px;font-weight:600;text-transform:none;letter-spacing:0;margin-left:6px;"></span></label>
+      <div class="bed-counters" id="bedCounters"></div>
+      <div class="bed-preview" id="bedPreview"></div>
     </div>
     <div class="fg">
       <label class="fl">Note</label>
@@ -323,6 +361,20 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
       <button class="btn" onclick="closeModal()">Annulla</button>
       <button class="btn primary" onclick="saveBooking()">Salva sul foglio</button>
     </div>
+  </div>
+</div>
+
+<!-- ══ SETTINGS PAGE ══ -->
+<div id="settingsPage">
+  <div class="spage-bar">
+    <button class="btn btn-icon" onclick="closeSettings()">←</button>
+    <div class="spage-title">⚙ Impostazioni Camere</div>
+    <button class="btn" onclick="resetRoomSettings()">Ripristina default</button>
+  </div>
+  <div class="spage-body" id="settingsBody"></div>
+  <div class="ssave-bar">
+    <button class="btn" onclick="closeSettings()">Annulla</button>
+    <button class="btn primary" onclick="saveSettings()">✓ Salva impostazioni</button>
   </div>
 </div>
 
@@ -393,7 +445,61 @@ const PALETTE = [
   {h:'#00FFFF',n:'Ciano'},      {h:'#76A5AF',n:'Petrolio'},
 ];
 
-const BEDS = ['1m/s','1m','2m','1s','2s','3s','4s','5s','6s','1c','1aff','ND'];
+// Tipi di letto disponibili per i contatori
+// { id, label, short }
+const BED_TYPES = [
+  { id:'m',   label:'Matrimoniale',    short:'m'   },
+  { id:'s',   label:'Singolo',         short:'s'   },
+  { id:'c',   label:'Culla',           short:'c'   },
+  { id:'aff', label:'Affollato/Extra', short:'aff' },
+];
+
+// ═══════════════════════════════════════════════════════════════════
+// DATABASE CAMERE — caricato da localStorage o da default
+// Struttura: { [roomId]: { maxGuests: number, allowedBeds: string[] } }
+// allowedBeds: array di id da BED_TYPES
+// ═══════════════════════════════════════════════════════════════════
+const ROOM_DEFAULTS = {
+  // Scuola (camere standard 2 posti)
+  r1:{maxGuests:2,allowedBeds:['m','s']},    r2:{maxGuests:2,allowedBeds:['m','s']},
+  r3:{maxGuests:2,allowedBeds:['m','s']},    r4:{maxGuests:2,allowedBeds:['m','s']},
+  r5:{maxGuests:2,allowedBeds:['m','s']},    r6:{maxGuests:2,allowedBeds:['m','s']},
+  r7:{maxGuests:2,allowedBeds:['m','s']},    r8:{maxGuests:2,allowedBeds:['m','s']},
+  r9:{maxGuests:2,allowedBeds:['m','s']},    r10:{maxGuests:2,allowedBeds:['m','s']},
+  r100:{maxGuests:2,allowedBeds:['m','s','c']}, r101:{maxGuests:2,allowedBeds:['m','s','c']},
+  r102:{maxGuests:2,allowedBeds:['m','s','c']}, r103:{maxGuests:2,allowedBeds:['m','s','c']},
+  r104:{maxGuests:2,allowedBeds:['m','s','c']},
+  // Largo Roma
+  r21:{maxGuests:3,allowedBeds:['m','s','c']}, r22:{maxGuests:3,allowedBeds:['m','s','c']},
+  r23:{maxGuests:3,allowedBeds:['m','s','c']}, r24:{maxGuests:3,allowedBeds:['m','s','c']},
+  r25:{maxGuests:3,allowedBeds:['m','s','c']}, r31:{maxGuests:4,allowedBeds:['m','s','c']},
+  // Appartamenti
+  marasanta:{maxGuests:6,allowedBeds:['m','s','c','aff']},
+  margher:  {maxGuests:4,allowedBeds:['m','s','c']},
+  marg1:    {maxGuests:4,allowedBeds:['m','s','c']},
+  sole:     {maxGuests:4,allowedBeds:['m','s','c']},
+  giove:    {maxGuests:6,allowedBeds:['m','s','c','aff']},
+  saturno:  {maxGuests:3,allowedBeds:['m','s','c']},
+  nettuno:  {maxGuests:2,allowedBeds:['m','s']},
+  marte:    {maxGuests:4,allowedBeds:['m','s','c']},
+  venere:   {maxGuests:2,allowedBeds:['m','s']},
+  mercurio: {maxGuests:3,allowedBeds:['m','s','c']},
+  giuliaB:  {maxGuests:4,allowedBeds:['m','s','c']},
+  giuliaC:  {maxGuests:4,allowedBeds:['m','s','c']},
+  giuliaD:  {maxGuests:4,allowedBeds:['m','s','c']},
+  giuliaE:  {maxGuests:4,allowedBeds:['m','s','c']},
+};
+
+function loadRoomSettings() {
+  try {
+    const saved = localStorage.getItem('hotelRoomSettings');
+    if (saved) return JSON.parse(saved);
+  } catch(e) {}
+  return JSON.parse(JSON.stringify(ROOM_DEFAULTS)); // deep copy
+}
+function saveRoomSettingsLS(settings) {
+  localStorage.setItem('hotelRoomSettings', JSON.stringify(settings));
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // STATO APPLICAZIONE
@@ -401,10 +507,46 @@ const BEDS = ['1m/s','1m','2m','1s','2s','3s','4s','5s','6s','1c','1aff','ND'];
 let accessToken = null;
 let curM = new Date().getMonth();
 let curY = new Date().getFullYear();
-let selColor = '#D9D9D9', selBed = '2s', editId = null, nid = 1000;
+let selColor = '#D9D9D9', editId = null, nid = 1000;
+// Contatori letti: { m:0, s:0, c:0, aff:0 }
+let bedCounts = { m:0, s:0, c:0, aff:0 };
+let roomSettings = loadRoomSettings();
 let bookings = [];
 // Mappa: sheetName → { roomName → columnIndex }
 let sheetColumnMap = {};
+
+// Genera stringa disposizione da contatori (es. "2m + 1s + 1c")
+function buildBedString(counts) {
+  const parts = [];
+  if (counts.m  > 0) parts.push(`${counts.m}m`);
+  if (counts.s  > 0) parts.push(`${counts.s}s`);
+  if (counts.c  > 0) parts.push(`${counts.c}c`);
+  if (counts.aff> 0) parts.push(`${counts.aff}aff`);
+  return parts.join(' + ') || 'ND';
+}
+
+// Parsa stringa disposizione → contatori (per pre-riempire in modifica)
+function parseBedString(str) {
+  const counts = { m:0, s:0, c:0, aff:0 };
+  if (!str || str === 'ND') return counts;
+  // es: "2m + 1s + 1c" o "1m/s" (legacy)
+  const parts = str.split(/[+,\/]/);
+  for (const part of parts) {
+    const p = part.trim();
+    const nm = p.match(/^(\d+)m$/);    if (nm) { counts.m  = parseInt(nm[1]); continue; }
+    const ns = p.match(/^(\d+)s$/);    if (ns) { counts.s  = parseInt(ns[1]); continue; }
+    const nc = p.match(/^(\d+)c$/);    if (nc) { counts.c  = parseInt(nc[1]); continue; }
+    const na = p.match(/^(\d+)aff$/);  if (na) { counts.aff= parseInt(na[1]); continue; }
+    // Legacy: "1m" senza numero → 1
+    if (p === 'm')   { counts.m=1;   continue; }
+    if (p === 's')   { counts.s=1;   continue; }
+    if (p === 'c')   { counts.c=1;   continue; }
+    if (p === 'aff') { counts.aff=1; continue; }
+    // Legacy: "1m/s" → 1m + 1s
+    if (p.match(/^1m\/s$/i)) { counts.m=1; counts.s=1; }
+  }
+  return counts;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // HELPERS
@@ -1031,7 +1173,9 @@ function editBook(id){
   document.getElementById('fIn').value=b.s.toISOString().slice(0,10);
   document.getElementById('fOut').value=b.e.toISOString().slice(0,10);
   document.getElementById('fNotes').value=b.note;
-  selColor=b.c; selBed=b.d;
+  selColor=b.c;
+  // Parsa la stringa disposizione nei contatori
+  bedCounts = parseBedString(b.d);
   closeDrawer(); openModal(true);
 }
 
@@ -1069,18 +1213,95 @@ function closeDrawer(){ document.getElementById('drawer').classList.remove('open
 // MODAL
 // ═══════════════════════════════════════════════════════════════════
 function openModal(isEdit=false){
-  if(!isEdit){ editId=null; document.getElementById('fName').value=''; document.getElementById('fNotes').value=''; if(!document.getElementById('fIn').value){ const t=new Date(); document.getElementById('fIn').value=t.toISOString().slice(0,10); const t2=new Date(t);t2.setDate(t2.getDate()+1);document.getElementById('fOut').value=t2.toISOString().slice(0,10); } }
+  if(!isEdit){ editId=null; document.getElementById('fName').value=''; document.getElementById('fNotes').value=''; if(!document.getElementById('fIn').value){ const t=new Date(); document.getElementById('fIn').value=t.toISOString().slice(0,10); const t2=new Date(t);t2.setDate(t2.getDate()+1);document.getElementById('fOut').value=t2.toISOString().slice(0,10); } bedCounts={m:0,s:0,c:0,aff:0}; }
   document.getElementById('mtitle').textContent=isEdit?'Modifica Prenotazione':'Nuova Prenotazione';
-  rebuildBeds(); rebuildColors();
+  rebuildBeds(isEdit ? bedCounts : null); rebuildColors();
   document.getElementById('errmsg').classList.remove('show');
   document.getElementById('mov').classList.add('open');
 }
 function closeModal(){ document.getElementById('mov').classList.remove('open'); editId=null; document.getElementById('fIn').value=''; document.getElementById('fOut').value=''; }
 function movClick(e){ if(e.target===document.getElementById('mov')) closeModal(); }
 
-function rebuildBeds(){
-  const el=document.getElementById('bedopts'); el.innerHTML='';
-  BEDS.forEach(b=>{ const c=document.createElement('div'); c.className='bchip'+(b===selBed?' sel':''); c.textContent=b; c.onclick=()=>{ selBed=b; el.querySelectorAll('.bchip').forEach(x=>x.classList.remove('sel')); c.classList.add('sel'); }; el.appendChild(c); });
+function rebuildBeds(initCounts) {
+  const rid = document.getElementById('fRoom').value;
+  const cfg = roomSettings[rid] || { maxGuests: 6, allowedBeds: ['m','s','c','aff'] };
+  const el  = document.getElementById('bedCounters');
+  el.innerHTML = '';
+
+  // Se vengono passati contatori iniziali (modalità modifica), usali
+  if (initCounts) {
+    bedCounts = { ...initCounts };
+  } else {
+    // Reset contatori
+    bedCounts = { m:0, s:0, c:0, aff:0 };
+  }
+
+  BED_TYPES.forEach(({ id, label }) => {
+    if (!cfg.allowedBeds.includes(id)) return; // non consentito per questa camera
+
+    const row = document.createElement('div');
+    row.className = 'bed-counter-row' + (bedCounts[id] > 0 ? ' active' : '');
+    row.id = 'bcrow-' + id;
+
+    const lbl = document.createElement('div');
+    lbl.className = 'bed-counter-label';
+    lbl.innerHTML = `${label} <small>(${id})</small>`;
+
+    const ctrl = document.createElement('div');
+    ctrl.className = 'bed-counter-ctrl';
+
+    const btnMinus = document.createElement('button');
+    btnMinus.className = 'bed-ctr-btn';
+    btnMinus.textContent = '−';
+    btnMinus.disabled = bedCounts[id] === 0;
+    btnMinus.onclick = () => changeBedCount(id, -1, cfg.maxGuests);
+
+    const valEl = document.createElement('div');
+    valEl.className = 'bed-ctr-val';
+    valEl.id = 'bcval-' + id;
+    valEl.textContent = bedCounts[id];
+
+    const btnPlus = document.createElement('button');
+    btnPlus.className = 'bed-ctr-btn';
+    btnPlus.textContent = '+';
+    btnPlus.onclick = () => changeBedCount(id, +1, cfg.maxGuests);
+
+    ctrl.append(btnMinus, valEl, btnPlus);
+    row.append(lbl, ctrl);
+    el.appendChild(row);
+  });
+
+  updateBedPreview();
+}
+
+function changeBedCount(id, delta, maxGuests) {
+  const newVal = (bedCounts[id] || 0) + delta;
+  if (newVal < 0) return;
+  // Controlla capienza totale
+  const total = Object.values(bedCounts).reduce((a,b) => a+b, 0) - (bedCounts[id]||0) + newVal;
+  // Matrimoniale conta come 2 posti, singolo come 1, culla come 0 (non conta per capienza adulti)
+  const guestCount = (bedCounts.m + (id==='m'?delta:0))*2 + (bedCounts.s + (id==='s'?delta:0)) + (bedCounts.aff + (id==='aff'?delta:0));
+  if (delta > 0 && guestCount > maxGuests * 2) return; // limite generoso
+
+  bedCounts[id] = newVal;
+
+  // Aggiorna UI
+  const valEl = document.getElementById('bcval-' + id);
+  if (valEl) valEl.textContent = newVal;
+
+  const minusBtn = document.querySelector(`#bcrow-${id} .bed-ctr-btn`);
+  if (minusBtn) minusBtn.disabled = newVal === 0;
+
+  const row = document.getElementById('bcrow-' + id);
+  if (row) row.classList.toggle('active', newVal > 0);
+
+  updateBedPreview();
+}
+
+function updateBedPreview() {
+  const str = buildBedString(bedCounts);
+  const prev = document.getElementById('bedPreview');
+  if (prev) prev.textContent = str !== 'ND' ? `→ ${str}` : '';
 }
 function rebuildColors(){
   const el=document.getElementById('colopts'); el.innerHTML='';
@@ -1129,8 +1350,9 @@ async function saveBooking(){
   }
 
   const room = ROOMS.find(r=>r.id===rid);
+  const bedStr = buildBedString(bedCounts);
   const newB = {
-    id: editId || nid++, r: rid, n: name, d: selBed, c: selColor,
+    id: editId || nid++, r: rid, n: name, d: bedStr, c: selColor,
     s: sd, e: ed, note, fromSheet: false,
     sheetName: sheetName(sd.getFullYear(), sd.getMonth()),
     cameraName: room?.name || rid,
@@ -1192,6 +1414,84 @@ document.addEventListener('mousemove',movTT);
 // ═══════════════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// IMPOSTAZIONI CAMERE
+// ═══════════════════════════════════════════════════════════════════
+function openSettings() {
+  renderSettingsBody();
+  document.getElementById('settingsPage').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('settingsPage').classList.remove('open');
+}
+function resetRoomSettings() {
+  if (!confirm('Ripristinare le impostazioni predefinite per tutte le camere?')) return;
+  roomSettings = JSON.parse(JSON.stringify(ROOM_DEFAULTS));
+  saveRoomSettingsLS(roomSettings);
+  renderSettingsBody();
+  showToast('Impostazioni ripristinate', 'success');
+}
+
+function saveSettings() {
+  // Leggi tutti i valori dalla pagina impostazioni
+  ROOMS.forEach(room => {
+    const maxEl = document.getElementById('smax-' + room.id);
+    if (!maxEl) return;
+    const maxGuests = parseInt(maxEl.value) || 2;
+    const allowedBeds = BED_TYPES
+      .filter(bt => {
+        const chip = document.getElementById('schip-' + room.id + '-' + bt.id);
+        return chip && chip.classList.contains('on');
+      })
+      .map(bt => bt.id);
+    roomSettings[room.id] = { maxGuests, allowedBeds: allowedBeds.length ? allowedBeds : ['m','s'] };
+  });
+  saveRoomSettingsLS(roomSettings);
+  closeSettings();
+  showToast('✓ Impostazioni camere salvate', 'success');
+}
+
+function renderSettingsBody() {
+  const body = document.getElementById('settingsBody');
+  const groups = [...new Set(ROOMS.map(r => r.g))];
+  let html = '';
+
+  groups.forEach(g => {
+    html += `<div class="sgroup"><div class="sgroup-title">${g}</div>`;
+    ROOMS.filter(r => r.g === g).forEach(room => {
+      const cfg = roomSettings[room.id] || ROOM_DEFAULTS[room.id] || { maxGuests:2, allowedBeds:['m','s'] };
+      html += `
+        <div class="sroom-card">
+          <div class="sroom-name">
+            ${room.name}
+            <span class="sroom-badge">${g}</span>
+          </div>
+          <div class="sroom-fields">
+            <div class="sfield">
+              <label>Capienza max ospiti</label>
+              <input type="number" id="smax-${room.id}" value="${cfg.maxGuests}" min="1" max="20">
+            </div>
+          </div>
+          <div class="sbed-types">
+            <label>Tipi di letto consentiti</label>
+            <div class="sbed-chips">
+              ${BED_TYPES.map(bt => `
+                <div class="sbed-chip ${cfg.allowedBeds.includes(bt.id) ? 'on' : ''}"
+                     id="schip-${room.id}-${bt.id}"
+                     onclick="this.classList.toggle('on')">
+                  ${bt.label} (${bt.id})
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>`;
+    });
+    html += '</div>';
+  });
+
+  body.innerHTML = html;
+}
+
 function buildRoomSelect(){
   const sel=document.getElementById('fRoom');
   const groups=[...new Set(ROOMS.map(r=>r.g))];
