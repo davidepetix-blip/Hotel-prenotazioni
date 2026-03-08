@@ -388,6 +388,10 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 const CLIENT_ID     = '13060466249-bk4s31a1vanhnd6j0qhequ3d3ptd2b2g.apps.googleusercontent.com';
 const SHEET_ID      = '1XTalxQBUFywBW4DL3JwSJvKkPlOhstAbRMH4DWx-eGI';
 const SCOPES        = 'https://www.googleapis.com/auth/spreadsheets';
+// URL della Web App Apps Script — da impostare dopo la pubblicazione
+// Vai su Apps Script → Distribuzione → Nuova distribuzione → Web App
+// Esegui come: Me | Accesso: Chiunque → copia l'URL qui
+// JSON riga 45 aggiornato direttamente via Sheets API (no Apps Script Web App necessaria)
 
 // ═══════════════════════════════════════════════════════════════════
 // COSTANTI FOGLIO — devono corrispondere al tuo Apps Script
@@ -908,10 +912,8 @@ async function writeBookingToSheet(b) {
   const fragments     = splitBookingByMonth(b);
 
   for (const frag of fragments) {
-    // Per l'ultimo frammento: il check-out non viene colorato → endDay - 1
-    // Per i frammenti intermedi/iniziali che finiscono a fine mese: coloriamo tutto
     const colorEnd = frag.isLastFrag ? frag.endDay - 1 : frag.endDay;
-    if (colorEnd < frag.startDay) continue; // prenotazione di 0 giorni nello stesso mese → salta
+    if (colorEnd < frag.startDay) continue;
 
     await writeFragment(
       frag.sName, b.cameraName,
@@ -919,7 +921,239 @@ async function writeBookingToSheet(b) {
       firstCellText, b.note, b.c,
       sheetIdMap
     );
+
+    // Dopo aver scritto, triggera Apps Script per aggiornare il JSON riga 45
+    await triggerAppsScriptUpdate(frag.sName, b.cameraName);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AGGIORNAMENTO JSON RIGA 45 — diretto via Sheets API
+// Replica la logica di processSingleColumnBookings di Apps Script:
+// legge celle+colori della colonna, costruisce il JSON, lo scrive in riga 45.
+// ═══════════════════════════════════════════════════════════════════
+
+async function triggerAppsScriptUpdate(sName, cameraName) {
+  const colIdx = sheetColumnMap[sName]?.[cameraName];
+  if (!colIdx) {
+    console.warn(`updateJson: colonna non trovata per "${cameraName}" in "${sName}"`);
+    return;
+  }
+  try {
+    await updateJsonRow45(sName, colIdx, cameraName);
+    console.log(`✓ JSON riga 45 aggiornato: "${sName}" col ${colIdx} (${cameraName})`);
+  } catch(err) {
+    console.warn('updateJson fallito (non critico):', err.message);
+  }
+}
+
+async function updateJsonRow45(sName, colIdx, cameraName) {
+  // Leggi l'intera colonna dal foglio: FIRST_DATA_ROW fino a OUTPUT_ROW-1
+  // Usiamo includeGridData per avere sia valori che backgroundColor
+  const rows = OUTPUT_ROW - FIRST_DATA_ROW; // numero di righe da leggere
+  const colLetter = numToCol(colIdx);
+
+  // Range colonna dati (solo questa colonna, da riga 3 a 44)
+  const dataRange  = `'${sName}'!${colLetter}${FIRST_DATA_ROW}:${colLetter}${OUTPUT_ROW - 1}`;
+  // Range colonna date (colonna A, stesse righe)
+  const datesRange = `'${sName}'!A${FIRST_DATA_ROW}:A${OUTPUT_ROW - 1}`;
+
+  // Fetch valori + colori in un'unica chiamata usando spreadsheets.get
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`
+    + `?ranges=${encodeURIComponent(dataRange)}`
+    + `&ranges=${encodeURIComponent(datesRange)}`
+    + `&fields=sheets(data(rowData(values(userEnteredValue,effectiveFormat/backgroundColor,note))))`;
+
+  const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+  if (!resp.ok) throw new Error(`Lettura foglio fallita: ${resp.status}`);
+  const data = await resp.json();
+
+  // data.sheets[0] = colonna dati, data.sheets[0] second range = date
+  // In realtà con ranges multipli sullo stesso foglio arriva tutto in sheets[0].data[]
+  const sheetData = data.sheets?.[0]?.data;
+  if (!sheetData || sheetData.length < 2) throw new Error('Dati insufficienti dalla API');
+
+  const colRows  = sheetData[0].rowData || [];  // dati della colonna camera
+  const dateRows = sheetData[1].rowData || [];  // dati della colonna date (A)
+
+  // ── Ricostruisci le prenotazioni leggendo celle e colori ──
+  // Logica identica a processSingleColumnBookings di Apps Script
+  const WHITE = '#ffffff';
+  const fmtDate = d => {
+    const dd = String(d.getDate()).padStart(2,'0');
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    const yy = d.getFullYear();
+    return `${dd}/${mm}/${yy}`;
+  };
+
+  // Estrai anno e mese dal nome foglio (es. "Marzo 2026")
+  const sheetMatch = sName.match(/([A-Za-zÀ-ÖØ-öø-ÿ]+)\s+(\d{4})/i);
+  const sheetYear  = sheetMatch ? parseInt(sheetMatch[2]) : new Date().getFullYear();
+  const sheetMonthName = sheetMatch ? sheetMatch[1].toLowerCase() : '';
+  const MESI = {gennaio:0,febbraio:1,marzo:2,aprile:3,maggio:4,giugno:5,
+                luglio:6,agosto:7,settembre:8,ottobre:9,novembre:10,dicembre:11};
+  const sheetMonth = MESI[sheetMonthName] ?? new Date().getMonth();
+
+  // Risolvi data da riga (il valore può essere un numero seriale, una stringa, o un giorno)
+  function resolveDate(rowData, rowIndex) {
+    const v = rowData?.values?.[0]?.userEnteredValue;
+    if (!v) return new Date(sheetYear, sheetMonth, FIRST_DATA_ROW + rowIndex - 3 + 1);
+    if (v.numberValue !== undefined) {
+      // Numero seriale Google Sheets (giorni dal 30/12/1899)
+      const ms = (v.numberValue - 25569) * 86400000;
+      return new Date(ms);
+    }
+    if (v.stringValue) {
+      const parts = v.stringValue.split('/');
+      if (parts.length === 3) return new Date(+parts[2], +parts[1]-1, +parts[0]);
+      const num = parseInt(v.stringValue);
+      if (!isNaN(num)) return new Date(sheetYear, sheetMonth, num);
+    }
+    return new Date(sheetYear, sheetMonth, FIRST_DATA_ROW + rowIndex - 3 + 1);
+  }
+
+  // Normalizza colore hex (rimuovi trasparenza ecc.)
+  function normalizeColor(c) {
+    if (!c) return WHITE;
+    const r = Math.round((c.red   || 0) * 255).toString(16).padStart(2,'0');
+    const g = Math.round((c.green || 0) * 255).toString(16).padStart(2,'0');
+    const b = Math.round((c.blue  || 0) * 255).toString(16).padStart(2,'0');
+    return '#' + r + g + b;
+  }
+
+  function isColored(hex) {
+    if (!hex) return false;
+    const h = hex.toLowerCase();
+    return h !== '#ffffff' && h !== '#000000' && h !== 'white';
+  }
+
+  // Calcola conteggi letti dalla stringa disposizione
+  function calcBedCounts(disp) {
+    let m=0, s=0, c=0, ms=0;
+    if (!disp) return {matrimoniali:m,singoli:s,culle:c,matrimonialiUS:ms};
+    // Splitta su spazio e + (come fa Apps Script)
+    const parts = disp.replace(/\+/g,' ').split(/\s+/);
+    for (const p of parts) {
+      const pt = p.trim().toLowerCase();
+      if (!pt) continue;
+      const num = parseInt(pt.match(/\d+/)?.[0] || '1');
+      if (pt.includes('m/s')) ms += num;
+      else if (pt.includes('m')) m += num;
+      else if (pt.includes('s')) s += num;
+      else if (pt.includes('c')) c += num;
+    }
+    return {matrimoniali:m, singoli:s, culle:c, matrimonialiUS:ms};
+  }
+
+  // Estrai nome e disposizione dalla stringa cella (es. "Rossi 2m 1s")
+  function parseCellText(text) {
+    if (!text) return {nome:'', disposizione:''};
+    // Tokens che sono disposizioni valide (includiamo anche il nuovo formato "Nm", "Ns" ecc.)
+    const dispPattern = /\b(\d+m\/s|\d+m|\d+s|\d+c|\d+aff|nd)\b/gi;
+    const disps = [];
+    let remainder = text.replace(dispPattern, (match) => { disps.push(match.toLowerCase()); return ''; });
+    // Rimuovi anche i "+" residui
+    remainder = remainder.replace(/\+/g,' ').replace(/\s+/g,' ').trim();
+    return {
+      nome: remainder,
+      disposizione: disps.join(' ')
+    };
+  }
+
+  const resultBookings = [];
+  let cur = null; // prenotazione corrente in costruzione
+
+  for (let i = 0; i < colRows.length; i++) {
+    const rowData  = colRows[i];
+    const dateData = dateRows[i];
+    const cellDate = resolveDate(dateData, i);
+    const cellDateStr = fmtDate(cellDate);
+
+    const cellVal = rowData?.values?.[0];
+    const bgColor = normalizeColor(cellVal?.effectiveFormat?.backgroundColor);
+    const cellText = cellVal?.userEnteredValue?.stringValue || '';
+    const cellNote = cellVal?.note || '';
+
+    const colored = isColored(bgColor);
+
+    if (colored) {
+      if (!cur) {
+        // Nuova prenotazione
+        const {nome, disposizione} = parseCellText(cellText);
+        cur = {
+          camera: cameraName,
+          nome,
+          dal: cellDateStr,
+          al: null,
+          disposizione,
+          note: cellNote,
+          backgroundColor: bgColor,
+          matrimoniali:0, singoli:0, culle:0, matrimonialiUS:0
+        };
+      } else if (bgColor !== cur.backgroundColor) {
+        // Cambio colore = fine vecchia, inizio nuova
+        cur.al = cellDateStr;
+        const bc = calcBedCounts(cur.disposizione);
+        Object.assign(cur, bc);
+        if (cur.nome && cur.dal && cur.al && cur.disposizione) resultBookings.push(cur);
+        const {nome, disposizione} = parseCellText(cellText);
+        cur = {
+          camera: cameraName, nome, dal: cellDateStr, al: null,
+          disposizione, note: cellNote, backgroundColor: bgColor,
+          matrimoniali:0, singoli:0, culle:0, matrimonialiUS:0
+        };
+      } else {
+        // Stessa prenotazione continua — accumula note se presenti
+        if (cellNote && !cur.note.includes(cellNote)) {
+          cur.note = [cur.note, cellNote].filter(Boolean).join(' - ');
+        }
+      }
+    } else {
+      // Cella bianca = fine prenotazione
+      if (cur) {
+        cur.al = cellDateStr;
+        const bc = calcBedCounts(cur.disposizione);
+        Object.assign(cur, bc);
+        if (cur.nome && cur.dal && cur.al && cur.disposizione) resultBookings.push(cur);
+        cur = null;
+      }
+    }
+  }
+  // Gestisci prenotazione che va a fine mese
+  if (cur) {
+    const lastDate = resolveDate(dateRows[dateRows.length - 1], dateRows.length - 1);
+    const dayAfter = new Date(lastDate); dayAfter.setDate(dayAfter.getDate() + 1);
+    cur.al = fmtDate(dayAfter);
+    const bc = calcBedCounts(cur.disposizione);
+    Object.assign(cur, bc);
+    if (cur.nome && cur.dal && cur.al && cur.disposizione) resultBookings.push(cur);
+  }
+
+  // Scrivi il JSON in riga OUTPUT_ROW
+  const jsonStr = JSON.stringify(resultBookings);
+  const sheetIdMap = await getSheetIdMap();
+  const sheetId = sheetIdMap[sName];
+  if (sheetId === undefined) throw new Error(`SheetId non trovato per "${sName}"`);
+
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`;
+  const writeResp = await fetch(writeUrl, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests: [{
+      updateCells: {
+        range: {
+          sheetId,
+          startRowIndex: OUTPUT_ROW - 1,
+          endRowIndex: OUTPUT_ROW,
+          startColumnIndex: colIdx - 1,
+          endColumnIndex: colIdx
+        },
+        rows: [{ values: [{ userEnteredValue: { stringValue: jsonStr } }] }],
+        fields: 'userEnteredValue'
+      }
+    }]})
+  });
+  if (!writeResp.ok) throw new Error(`Scrittura JSON fallita: ${writeResp.status}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -971,6 +1205,8 @@ async function clearBookingFromSheet(b) {
     if (colorEnd < frag.startDay) continue;
     try {
       await clearFragment(frag.sName, b.cameraName, frag.startDay, colorEnd, sheetIdMap);
+      // Notifica Apps Script di aggiornare il JSON dopo la cancellazione
+      await triggerAppsScriptUpdate(frag.sName, b.cameraName);
     } catch(e) {
       console.warn(`Errore pulizia frammento ${frag.sName}:`, e.message);
     }
@@ -1448,8 +1684,9 @@ function saveSettings() {
   });
   saveRoomSettingsLS(roomSettings);
   closeSettings();
-  showToast('✓ Impostazioni camere salvate', 'success');
+  showToast('✓ Impostazioni salvate', 'success');
 }
+
 
 function renderSettingsBody() {
   const body = document.getElementById('settingsBody');
