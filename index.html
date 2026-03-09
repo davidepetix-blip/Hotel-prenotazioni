@@ -382,6 +382,19 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 <div class="toast" id="toast"></div>
 
 <script>
+// ── Error handler globale per debug mobile ──
+window.onerror = function(msg, src, line, col, err) {
+  const d = document.getElementById('loginErr');
+  if (d) d.textContent = '⚠ JS Error: ' + msg + ' (riga ' + line + ')';
+  console.error(msg, src, line, err);
+  return false;
+};
+window.addEventListener('unhandledrejection', function(e) {
+  const d = document.getElementById('loginErr');
+  if (d) d.textContent = '⚠ Promise Error: ' + (e.reason?.message || e.reason);
+  console.error('Unhandled rejection:', e.reason);
+});
+
 // ═══════════════════════════════════════════════════════════════════
 // CONFIG — inseriti automaticamente
 // ═══════════════════════════════════════════════════════════════════
