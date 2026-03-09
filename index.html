@@ -2203,7 +2203,7 @@ async function testDbConnection() {
   const idEl = document.getElementById('sDbSheetId');
   const res  = document.getElementById('dbTestResult');
   const id   = idEl?.value.trim();
-  if (!id) { res.textContent = '⚠ Inserisci l'ID del foglio'; res.style.color='var(--danger)'; return; }
+  if (!id) { res.textContent = "⚠ Inserisci l'ID del foglio"; res.style.color='var(--danger)'; return; }
   res.textContent = '⏳ Connessione…'; res.style.color='var(--text3)';
   try {
     const r = await fetch(
@@ -2222,7 +2222,7 @@ async function testDbConnection() {
       res.style.color = 'var(--danger)';
     }
   } catch(e) {
-    res.textContent = '✗ Errore: ' + e.message + ' — controlla l'ID e i permessi';
+    res.textContent = '✗ Errore: ' + e.message + ' — controlla l\'ID e i permessi';
     res.style.color = 'var(--danger)';
   }
 }
