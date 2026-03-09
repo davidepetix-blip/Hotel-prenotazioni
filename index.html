@@ -255,6 +255,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
       Accedi con Google
     </button>
     <div class="login-err" id="loginErr"></div>
+    <div id="dbgLog" style="font-size:10px;font-family:monospace;color:#666;margin-top:10px;text-align:left;max-height:150px;overflow-y:auto;padding:8px;background:#f0f0f0;border-radius:8px;display:none;"></div>
   </div>
 </div>
 
@@ -383,17 +384,14 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Error handler globale per debug mobile ──
-window.onerror = function(msg, src, line, col, err) {
-  const d = document.getElementById('loginErr');
-  if (d) d.textContent = '⚠ JS Error: ' + msg + ' (riga ' + line + ')';
-  console.error(msg, src, line, err);
-  return false;
-};
-window.addEventListener('unhandledrejection', function(e) {
-  const d = document.getElementById('loginErr');
-  if (d) d.textContent = '⚠ Promise Error: ' + (e.reason?.message || e.reason);
-  console.error('Unhandled rejection:', e.reason);
-});
+function dbg(msg, isErr) {
+  console.log(msg);
+  const box = document.getElementById('dbgLog');
+  if (box) { box.style.display='block'; const l=document.createElement('div'); l.style.color=isErr?'#c0392b':'#555'; l.textContent=new Date().toLocaleTimeString()+' '+msg; box.appendChild(l); box.scrollTop=box.scrollHeight; }
+  if (isErr) { const e=document.getElementById('loginErr'); if(e) e.textContent=msg; }
+}
+window.onerror = function(msg, src, line) { dbg('❌ JS riga '+line+': '+msg, true); return false; };
+window.addEventListener('unhandledrejection', function(e) { dbg('❌ Promise: '+(e.reason?.message||String(e.reason)), true); });
 
 // ═══════════════════════════════════════════════════════════════════
 // CONFIG — inseriti automaticamente
@@ -689,6 +687,7 @@ function getRedirectUri() {
 }
 
 function startLogin() {
+  dbg('▶ startLogin');
   document.getElementById('loginErr').textContent = '';
   const state = randomState();
   sessionStorage.setItem('oauth_state', state);
@@ -705,6 +704,7 @@ function startLogin() {
 
 // Chiamata subito al caricamento — intercetta il token se stiamo tornando da Google
 function handleOAuthRedirect() {
+  dbg('▶ handleOAuthRedirect hash='+(location.hash?'si':'no'));
   const hash = location.hash.slice(1);
   if (!hash) return false;
   const params = new URLSearchParams(hash);
@@ -2251,10 +2251,10 @@ window.addEventListener('load', () => {
   handleOAuthRedirect();
 });
 
-buildRoomSelect();
-checkW();
-// Mostra il calendario vuoto mentre si aspetta il login
-render();
+dbg('▶ buildRoomSelect'); buildRoomSelect();
+dbg('▶ checkW'); checkW();
+dbg('▶ render'); render();
+dbg('✓ avvio ok');
 </script>
 </body>
 </html>
