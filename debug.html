@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Debug OAuth</title>
+<style>
+  body { font-family: monospace; padding: 16px; background: #111; color: #0f0; font-size: 13px; }
+  h2 { color: #fff; }
+  .ok  { color: #0f0; }
+  .err { color: #f44; }
+  .warn{ color: #fa0; }
+  .box { background: #1a1a1a; border: 1px solid #333; padding: 12px; margin: 8px 0; border-radius: 6px; word-break: break-all; }
+  button { background: #0066cc; color: #fff; border: none; padding: 12px 20px; font-size: 14px; border-radius: 6px; margin: 6px 4px; cursor: pointer; }
+  button:active { opacity: .7; }
+</style>
+</head>
+<body>
+<h2>🔍 Debug OAuth — Hotel Prenotazioni</h2>
+<div id="log"></div>
+
+<button onclick="testRedirect()">▶ Test redirect OAuth</button>
+<button onclick="testPopup()">▶ Test popup OAuth</button>
+<button onclick="clearAll()">🗑 Reset</button>
+
+<script>
+const CLIENT_ID = '13060466249-bk4s31a1vanhnd6j0qhequ3d3ptd2b2g.apps.googleusercontent.com';
+const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets';
+
+function log(msg, cls='') {
+  const d = document.getElementById('log');
+  const t = new Date().toLocaleTimeString();
+  d.innerHTML += `<div class="box ${cls}">[${t}] ${msg}</div>`;
+  console.log(msg);
+}
+
+// ── Info ambiente ──
+log('USER AGENT: ' + navigator.userAgent, 'warn');
+log('URL: ' + location.href, 'warn');
+log('ORIGIN: ' + location.origin, 'warn');
+log('PATHNAME: ' + location.pathname, 'warn');
+log('HASH: ' + (location.hash || '(vuoto)'), 'warn');
+log('REDIRECT URI che verrà usato: ' + location.origin + location.pathname, 'warn');
+
+// ── Controlla se stiamo tornando da un redirect ──
+const hash = location.hash.slice(1);
+if (hash) {
+  const params = new URLSearchParams(hash);
+  log('─── RITORNO DA REDIRECT ───', 'warn');
+  for (const [k, v] of params) {
+    if (k === 'access_token') {
+      log(`${k} = ${v.slice(0,20)}... (troncato)`, 'ok');
+    } else {
+      log(`${k} = ${v}`, params.get('error') ? 'err' : 'ok');
+    }
+  }
+  if (params.get('access_token')) {
+    log('✅ TOKEN RICEVUTO — il redirect flow funziona!', 'ok');
+    history.replaceState(null, '', location.pathname);
+    // Test chiamata API
+    testApi(params.get('access_token'));
+  } else if (params.get('error')) {
+    log('❌ ERRORE OAuth: ' + params.get('error'), 'err');
+    log('ERROR DESCRIPTION: ' + (params.get('error_description') || 'nessuna'), 'err');
+  }
+} else {
+  log('Nessun fragment nell\'URL — pagina caricata normalmente', 'ok');
+}
+
+// ── Controlla sessionStorage ──
+try {
+  sessionStorage.setItem('test', '1');
+  sessionStorage.removeItem('test');
+  log('sessionStorage: ✅ disponibile', 'ok');
+} catch(e) {
+  log('sessionStorage: ❌ ' + e.message, 'err');
+}
+
+// ── Controlla crypto.getRandomValues ──
+try {
+  const arr = crypto.getRandomValues(new Uint8Array(4));
+  log('crypto.getRandomValues: ✅ ok → ' + Array.from(arr).join(','), 'ok');
+} catch(e) {
+  log('crypto.getRandomValues: ❌ ' + e.message, 'err');
+}
+
+// ── Verifica Google Identity Services ──
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    if (typeof google !== 'undefined' && google.accounts) {
+      log('Google Identity Services: ✅ caricato', 'ok');
+    } else {
+      log('Google Identity Services: ❌ NON caricato', 'err');
+    }
+  }, 1500);
+});
+
+function randomState() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+function testRedirect() {
+  const state = randomState();
+  sessionStorage.setItem('oauth_state', state);
+  const redirectUri = location.origin + location.pathname;
+  log('Avvio redirect verso: ' + redirectUri, 'warn');
+  const params = new URLSearchParams({
+    client_id:     CLIENT_ID,
+    redirect_uri:  redirectUri,
+    response_type: 'token',
+    scope:         SCOPES,
+    state,
+    include_granted_scopes: 'true',
+  });
+  const url = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+  log('URL OAuth: ' + url, 'warn');
+  location.href = url;
+}
+
+function testPopup() {
+  log('Tentativo popup...', 'warn');
+  const w = window.open('about:blank', '_blank', 'width=500,height=600');
+  if (!w || w.closed || typeof w.closed == 'undefined') {
+    log('❌ POPUP BLOCCATO dal browser', 'err');
+  } else {
+    log('✅ Popup aperto correttamente', 'ok');
+    w.close();
+  }
+}
+
+async function testApi(token) {
+  log('Test chiamata Sheets API...', 'warn');
+  try {
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    const u = await r.json();
+    log('✅ API OK — utente: ' + (u.email || u.name || JSON.stringify(u)), 'ok');
+  } catch(e) {
+    log('❌ API fallita: ' + e.message, 'err');
+  }
+}
+
+function clearAll() {
+  sessionStorage.clear();
+  location.hash = '';
+  document.getElementById('log').innerHTML = '';
+  log('Reset effettuato', 'warn');
+}
+</script>
+<script src="https://accounts.google.com/gsi/client" async></script>
+</body>
+</html>
