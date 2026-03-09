@@ -661,38 +661,106 @@ function sheetsColorToHex(c) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// AUTENTICAZIONE GOOGLE (OAuth 2.0 implicit flow)
+// AUTENTICAZIONE GOOGLE — OAuth 2.0 implicit flow con fallback redirect
+// Su mobile i popup sono bloccati → usa redirect automaticamente
 // ═══════════════════════════════════════════════════════════════════
 let tokenClient;
 
+// Genera state CSRF casuale
+function randomState() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// Controlla se siamo su mobile (popup bloccati)
+function isMobile() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 function startLogin() {
-  document.getElementById('loginErr').textContent = '';
+  const errEl = document.getElementById('loginErr');
+  errEl.textContent = '';
+
+  if (isMobile()) {
+    // ── Redirect flow: funziona su tutti i browser mobili ──
+    const state = randomState();
+    sessionStorage.setItem('oauth_state', state);
+    const redirectUri = location.origin + location.pathname;
+    const params = new URLSearchParams({
+      client_id:     CLIENT_ID,
+      redirect_uri:  redirectUri,
+      response_type: 'token',
+      scope:         SCOPES,
+      state,
+      include_granted_scopes: 'true',
+    });
+    location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+    return;
+  }
+
+  // ── Popup flow: desktop ──
   if (!tokenClient) {
-    document.getElementById('loginErr').textContent = 'Google Identity non ancora caricato. Riprova tra un secondo.';
+    errEl.textContent = 'Google Identity non ancora caricato. Riprova tra un secondo.';
     return;
   }
   tokenClient.requestAccessToken();
 }
 
+// Gestisce il token restituito dopo il redirect (fragment #access_token=…)
+function handleOAuthRedirect() {
+  const hash = location.hash.slice(1);
+  if (!hash) return false;
+  const params = new URLSearchParams(hash);
+  const token  = params.get('access_token');
+  const state  = params.get('state');
+  const error  = params.get('error');
+
+  if (error) {
+    document.getElementById('loginErr').textContent = 'Accesso negato: ' + error;
+    history.replaceState(null, '', location.pathname); // pulisci URL
+    return true;
+  }
+  if (!token) return false;
+
+  // Verifica state (CSRF)
+  const savedState = sessionStorage.getItem('oauth_state');
+  sessionStorage.removeItem('oauth_state');
+  if (savedState && state !== savedState) {
+    document.getElementById('loginErr').textContent = 'Errore di sicurezza. Riprova.';
+    history.replaceState(null, '', location.pathname);
+    return true;
+  }
+
+  // Pulisci URL (rimuovi fragment sensibile) e salva token
+  history.replaceState(null, '', location.pathname);
+  accessToken = token;
+  onLoginSuccess();
+  return true;
+}
+
 function initGoogleAuth() {
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPES,
-    callback: async (resp) => {
-      if (resp.error) {
-        document.getElementById('loginErr').textContent = 'Accesso negato: ' + resp.error;
-        return;
-      }
-      accessToken = resp.access_token;
-      onLoginSuccess();
-    },
-  });
+  // Prima controlla se stiamo tornando da un redirect OAuth
+  if (handleOAuthRedirect()) return;
+
+  // Desktop: prepara tokenClient per popup
+  if (!isMobile() && typeof google !== 'undefined') {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: async (resp) => {
+        if (resp.error) {
+          document.getElementById('loginErr').textContent = 'Accesso negato: ' + resp.error;
+          return;
+        }
+        accessToken = resp.access_token;
+        onLoginSuccess();
+      },
+    });
+  }
 }
 
 async function onLoginSuccess() {
-  // Mostra l'UI principale, nascondi login
   document.getElementById('loginScreen').style.display = 'none';
-  // Carica info utente
   try {
     const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: 'Bearer ' + accessToken }
@@ -704,13 +772,14 @@ async function onLoginSuccess() {
       av.title = `${u.name} — Clicca per uscire`;
     }
   } catch(e) {}
-
   await loadFromSheets();
 }
 
 function logout() {
   if (!confirm('Vuoi uscire?')) return;
-  google.accounts.oauth2.revoke(accessToken, () => {});
+  if (typeof google !== 'undefined' && accessToken) {
+    google.accounts.oauth2.revoke(accessToken, () => {});
+  }
   accessToken = null;
   bookings = [];
   Object.keys(_sheetIdCaches).forEach(k => delete _sheetIdCaches[k]);
