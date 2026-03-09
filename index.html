@@ -225,20 +225,47 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .rdash-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(155px,1fr)); gap:10px; padding:14px; overflow-y:auto; flex:1; }
 .rdash-card { background:var(--surface); border:1.5px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; transition:.15s; }
 .rdash-card:active { opacity:.8; }
-.rdash-card.pulita         { border-left:4px solid #2d6a4f; }
-.rdash-card.da-pulire      { border-left:4px solid #e67e22; }
-.rdash-card.in-corso       { border-left:4px solid #3498db; }
-.rdash-card.fuori-servizio { border-left:4px solid #c0392b; }
-.rdash-cam-name  { font-size:15px; font-weight:700; color:var(--text); }
-.rdash-cam-group { font-size:9px; text-transform:uppercase; letter-spacing:.08em; color:var(--text3); margin-bottom:8px; }
-.rdash-badge { display:inline-block; padding:3px 9px; border-radius:12px; font-size:10px; font-weight:700; text-transform:uppercase; }
+.rdash-card.op-occupata       { background:#fff0f0; border-left:4px solid #c0392b; }
+.rdash-card.op-cambio         { background:#fff8ee; border-left:4px solid #e67e22; animation:pulseBorder 1.8s infinite; }
+.rdash-card.op-uscita         { background:#fffbe6; border-left:4px solid #f1c40f; }
+.rdash-card.op-arrivo         { background:#eef6ff; border-left:4px solid #2980b9; }
+.rdash-card.op-pronta         { background:#f0faf5; border-left:4px solid #2d6a4f; }
+.rdash-card.op-da-preparare   { background:#fdf6ec; border-left:4px solid #e67e22; }
+.rdash-card.op-fuori-servizio { background:#f5f5f5; border-left:4px solid #7f8c8d; }
+@keyframes pulseBorder {
+  0%,100% { border-left-color:#e67e22; }
+  50%      { border-left-color:#c0392b; }
+}
+.rdash-cam-name  { font-size:14px; font-weight:700; color:var(--text); }
+.rdash-cam-group { font-size:9px; text-transform:uppercase; letter-spacing:.08em; color:var(--text3); margin-bottom:6px; }
+.rdash-badge { display:inline-block; padding:3px 9px; border-radius:12px; font-size:10px; font-weight:700; text-transform:uppercase; margin-bottom:4px; }
+.badge-op-occupata       { background:#f8d7da; color:#721c24; }
+.badge-op-cambio         { background:#fde8cc; color:#7d4e00; }
+.badge-op-uscita         { background:#fff9c4; color:#7d6000; }
+.badge-op-arrivo         { background:#cce5ff; color:#004085; }
+.badge-op-pronta         { background:#d4edda; color:#155724; }
+.badge-op-da-preparare   { background:#fde8cc; color:#7d4e00; }
+.badge-op-fuori-servizio { background:#e2e3e5; color:#495057; }
+.rdash-section-title { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--text3); margin:4px 0 2px; }
+.rdash-guest-row { display:flex; align-items:center; gap:6px; font-size:11px; margin-top:3px; }
+.rdash-guest-name { font-weight:600; color:var(--text); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rdash-disp { font-size:10px; color:var(--text2); background:var(--surface2); padding:1px 5px; border-radius:4px; flex-shrink:0; }
+.rdash-arrow { font-size:14px; color:var(--accent); font-weight:700; }
+.rdash-note   { font-size:10px; color:var(--text3); margin-top:4px; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rdash-ts     { font-size:9px; color:var(--text3); margin-top:6px; }
+/* Dot Gantt — stati operativi */
+.rsd-op-occupata       { background:#c0392b; }
+.rsd-op-cambio         { background:#e67e22; }
+.rsd-op-uscita         { background:#f1c40f; }
+.rsd-op-arrivo         { background:#2980b9; }
+.rsd-op-pronta         { background:#2d6a4f; }
+.rsd-op-da-preparare   { background:#e67e22; }
+.rsd-op-fuori-servizio { background:#7f8c8d; }
+/* mantieni classi pulizia per badge nel modal */
 .badge-pulita         { background:#d4edda; color:#155724; }
 .badge-da-pulire      { background:#fde8cc; color:#7d4e00; }
 .badge-in-corso       { background:#cce5ff; color:#004085; }
 .badge-fuori-servizio { background:#f8d7da; color:#721c24; }
-.rdash-config { font-size:11px; color:var(--text2); margin-top:6px; }
-.rdash-note   { font-size:10px; color:var(--text3); margin-top:4px; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.rdash-ts     { font-size:9px; color:var(--text3); margin-top:6px; }
 .rstate-overlay { position:fixed; inset:0; z-index:500; background:rgba(0,0,0,.45); display:none; align-items:flex-end; }
 .rstate-overlay.open { display:flex; }
 .rstate-panel { background:var(--bg); border-radius:16px 16px 0 0; padding:20px 20px 36px; width:100%; max-width:500px; margin:0 auto; }
@@ -2025,8 +2052,10 @@ function render() {
       });
       let tv='';
       if(isNow){ const tx=(tod-1)*CW+CW/2-1; tv=`<div class="tvline" style="left:${tx}px"></div>`; }
-      const _rs=roomStates[room.id]||{}, _rp=_rs.pulizia||'';
-      const _dot=_rp?`<span class="room-status-dot rsd-${_rp}" title="${_rp}"></span>`:'';
+      const _today=new Date(); _today.setHours(12,0,0,0);
+      const _opst=getRoomDayStatus(room.id,_today);
+      const _opLabels={'cambio':'Cambio','occupata':'Occupata','uscita':'Uscita oggi','arrivo':'Arrivo oggi','pronta':'Pronta','da-preparare':'Da preparare','fuori-servizio':'Fuori servizio'};
+      const _dot=`<span class="room-status-dot rsd-op-${_opst.opId}" title="${_opLabels[_opst.opId]||''}"></span>`;
       h+=`<div class="rrow"><div class="rlabel" onclick="event.stopPropagation();openRoomDrawer('${room.id}')" style="cursor:pointer;">${room.name}${_dot}</div><div class="dcwrap">${cells}${bars}${tv}</div></div>`;
     });
   });
@@ -2533,12 +2562,68 @@ function renderSettingsBody() {
 // DASHBOARD CAMERE
 // ═══════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════
+// STATO OPERATIVO GIORNALIERO — calcola situazione di ogni camera oggi
+// ═══════════════════════════════════════════════════════════════════
+
+// Ritorna lo stato operativo di una camera per una data specifica
+// { opId, label, uscente, entrante } 
+// opId ∈ occupata|cambio|uscita|arrivo|pronta|da-preparare|fuori-servizio
+function getRoomDayStatus(roomId, date) {
+  const d = new Date(date); d.setHours(12,0,0,0);
+  const dStr = d.getTime();
+  const rs = roomStates[roomId] || {};
+
+  // Fuori servizio → priorità massima
+  if (rs.pulizia === 'fuori-servizio') {
+    return { opId:'fuori-servizio', label:'Fuori servizio', uscente:null, entrante:null };
+  }
+
+  // Trova prenotazioni attive / che iniziano / che finiscono in questa data
+  const occupante = bookings.find(b =>
+    b.r === roomId &&
+    b.s.getTime() < dStr &&    // check-in PRIMA di oggi (già dentro)
+    b.e.getTime() > dStr       // check-out DOPO oggi (non ancora uscito)
+  );
+  const uscente = bookings.find(b =>
+    b.r === roomId &&
+    b.e.getTime() === dStr     // check-out esattamente oggi
+  );
+  const entrante = bookings.find(b =>
+    b.r === roomId &&
+    b.s.getTime() === dStr     // check-in esattamente oggi
+  );
+
+  if (uscente && entrante) {
+    return { opId:'cambio', label:'Cambio cliente', uscente, entrante };
+  }
+  if (occupante) {
+    return { opId:'occupata', label:'Occupata', uscente:null, entrante:null, occupante };
+  }
+  if (uscente) {
+    return { opId:'uscita', label:'Check-out oggi', uscente, entrante:null };
+  }
+  if (entrante) {
+    return { opId:'arrivo', label:'Arrivo oggi', uscente:null, entrante };
+  }
+  // Libera — controlla stato pulizia
+  const puliziaOk = rs.pulizia === 'pulita';
+  return { opId: puliziaOk ? 'pronta' : 'da-preparare',
+           label: puliziaOk ? 'Pronta' : 'Da preparare',
+           uscente:null, entrante:null };
+}
+
 function puliziaBadge(p) {
   const labels = { 'pulita':'Pulita','da-pulire':'Da pulire','in-corso':'In corso','fuori-servizio':'Fuori servizio' };
   return `<span class="rdash-badge badge-${p}">${labels[p]||p}</span>`;
 }
 
+function opBadge(opId, label) {
+  return `<span class="rdash-badge badge-op-${opId}">${label}</span>`;
+}
+
 function openRoomDash() {
+  _rdashFilter = 'tutti';
   renderRoomDash();
   document.getElementById('roomDashPage').classList.add('open');
 }
@@ -2547,35 +2632,112 @@ function closeRoomDash() {
 }
 
 function renderRoomDash() {
-  const body = document.getElementById('roomDashPage');
-  // Filtri
-  let filtersHtml = `<div class="rdash-filters">`;
-  const filtri = ['tutti','pulita','da-pulire','in-corso','fuori-servizio'];
-  const fLabel  = {'tutti':'Tutti','pulita':'Pulite','da-pulire':'Da pulire','in-corso':'In corso','fuori-servizio':'Fuori servizio'};
+  const today = new Date(); today.setHours(12,0,0,0);
+  const todayStr = today.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
+
+  // Filtri operativi
+  const filtri = ['tutti','cambio','occupata','arrivo','uscita','pronta','da-preparare','fuori-servizio'];
+  const fLabel  = {
+    'tutti':'Tutti', 'cambio':'🔄 Cambio', 'occupata':'🔴 Occupate',
+    'arrivo':'🔵 Arrivi', 'uscita':'🟡 Uscite', 'pronta':'🟢 Pronte',
+    'da-preparare':'🟠 Da prep.', 'fuori-servizio':'⚫ Fuori serv.'
+  };
+  let filtersHtml = `<div style="padding:10px 14px 4px;font-size:11px;color:var(--text3);font-weight:600;">Oggi: ${todayStr}</div>
+  <div class="rdash-filters">`;
   filtri.forEach(f => {
     filtersHtml += `<button class="rdash-filter-btn${_rdashFilter===f?' active':''}" onclick="_rdashFilter='${f}';renderRoomDash()">${fLabel[f]}</button>`;
   });
   filtersHtml += `</div>`;
 
-  let gridHtml = `<div class="rdash-grid">`;
+  // Raggruppa per stato operativo (cambio prima, poi occupata, uscita, arrivo, da-preparare, pronta, fuori-servizio)
+  const ordine = ['cambio','occupata','uscita','arrivo','da-preparare','pronta','fuori-servizio'];
+  const grouped = {}; ordine.forEach(o => grouped[o] = []);
+
   ROOMS.forEach(room => {
-    const s = roomStates[room.id] || {};
-    const p = s.pulizia || 'da-pulire';
-    if (_rdashFilter !== 'tutti' && p !== _rdashFilter) return;
-    const ts = s.ts ? new Date(s.ts).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-    gridHtml += `
-      <div class="rdash-card ${p}" onclick="openRstateModal('${room.id}')">
-        <div class="rdash-cam-name">Camera ${room.name}</div>
-        <div class="rdash-cam-group">${room.g}</div>
-        ${puliziaBadge(p)}
-        <div class="rdash-config">${s.configurazione ? '🛏 '+s.configurazione : ''}</div>
-        <div class="rdash-note">${s.noteOps || ''}</div>
-        <div class="rdash-ts">${ts}</div>
-      </div>`;
+    const st = getRoomDayStatus(room.id, today);
+    if (_rdashFilter !== 'tutti' && st.opId !== _rdashFilter) return;
+    grouped[st.opId]?.push({ room, st });
+  });
+
+  let gridHtml = `<div class="rdash-grid">`;
+  ordine.forEach(opId => {
+    (grouped[opId] || []).forEach(({ room, st }) => {
+      const rs = roomStates[room.id] || {};
+      const ts = rs.ts ? new Date(rs.ts).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+
+      let detailHtml = '';
+
+      if (st.opId === 'cambio') {
+        // Uscente + entrante con disposizioni
+        detailHtml += `<div class="rdash-section-title">In uscita</div>
+          <div class="rdash-guest-row">
+            <span class="rdash-guest-name">↑ ${st.uscente.n}</span>
+            ${st.uscente.d ? `<span class="rdash-disp">${st.uscente.d}</span>` : ''}
+          </div>
+          <div style="text-align:center;margin:4px 0;font-size:18px;color:var(--accent);">↓</div>
+          <div class="rdash-section-title">In arrivo</div>
+          <div class="rdash-guest-row">
+            <span class="rdash-guest-name">↓ ${st.entrante.n}</span>
+            ${st.entrante.d ? `<span class="rdash-disp">${st.entrante.d}</span>` : ''}
+          </div>`;
+        if (st.uscente.d !== st.entrante.d) {
+          detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:5px;font-weight:600;">
+            ⚙ ${st.uscente.d||'—'} → ${st.entrante.d||'—'}
+          </div>`;
+        }
+      } else if (st.opId === 'occupata' && st.occupante) {
+        const notti = Math.round((st.occupante.e - st.occupante.s)/(86400000));
+        const giorniRimasti = Math.round((st.occupante.e - today)/(86400000));
+        detailHtml += `<div class="rdash-guest-row">
+          <span class="rdash-guest-name">${st.occupante.n}</span>
+          ${st.occupante.d ? `<span class="rdash-disp">${st.occupante.d}</span>` : ''}
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px;">
+          Uscita: ${fmt(st.occupante.e)} · ancora ${giorniRimasti} ${giorniRimasti===1?'notte':'notti'}
+        </div>`;
+      } else if (st.opId === 'uscita' && st.uscente) {
+        detailHtml += `<div class="rdash-guest-row">
+          <span class="rdash-guest-name">${st.uscente.n}</span>
+          ${st.uscente.d ? `<span class="rdash-disp">${st.uscente.d}</span>` : ''}
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px;">Da pulire dopo uscita</div>`;
+      } else if (st.opId === 'arrivo' && st.entrante) {
+        detailHtml += `<div class="rdash-guest-row">
+          <span class="rdash-guest-name">${st.entrante.n}</span>
+          ${st.entrante.d ? `<span class="rdash-disp">${st.entrante.d}</span>` : ''}
+        </div>`;
+        if (rs.configurazione) {
+          const dispOk = rs.configurazione.replace(/\s/g,'').toLowerCase() === (st.entrante.d||'').replace(/\s/g,'').toLowerCase();
+          detailHtml += `<div style="font-size:10px;margin-top:3px;color:${dispOk?'#2d6a4f':'#e67e22'};">
+            ${dispOk ? '✓ Configurazione ok' : `⚙ Attuale: ${rs.configurazione} → Necessaria: ${st.entrante.d||'—'}`}
+          </div>`;
+        }
+      } else if (st.opId === 'pronta') {
+        detailHtml += `<div style="font-size:10px;color:#2d6a4f;margin-top:2px;">✓ Camera pronta</div>`;
+        if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 ${rs.configurazione}</div>`;
+      } else if (st.opId === 'da-preparare') {
+        const pulLabel = {'da-pulire':'Da pulire','in-corso':'Pulizia in corso'};
+        detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:2px;">${pulLabel[rs.pulizia||'da-pulire']||'Da preparare'}</div>`;
+        if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 Attuale: ${rs.configurazione}</div>`;
+      }
+
+      if (rs.noteOps) detailHtml += `<div class="rdash-note" style="margin-top:5px;">📌 ${rs.noteOps}</div>`;
+
+      gridHtml += `
+        <div class="rdash-card op-${st.opId}" onclick="openRstateModal('${room.id}')">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;">
+            <div class="rdash-cam-name">${room.name}</div>
+            <div class="rdash-cam-group" style="margin-bottom:0;">${room.g}</div>
+          </div>
+          <div style="margin:5px 0 6px;">${opBadge(st.opId, st.label)}</div>
+          ${detailHtml}
+          <div class="rdash-ts">${ts ? 'Aggiornato: '+ts : ''}</div>
+        </div>`;
+    });
   });
   gridHtml += `</div>`;
 
-  // Rimonta solo filters+grid (senza toccare la topbar)
+  const body = document.getElementById('roomDashPage');
   const existingBar = body.querySelector('.spage-bar');
   body.innerHTML = '';
   if (existingBar) body.appendChild(existingBar);
