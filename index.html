@@ -385,23 +385,53 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 // ═══════════════════════════════════════════════════════════════════
 // CONFIG — inseriti automaticamente
 // ═══════════════════════════════════════════════════════════════════
-const CLIENT_ID     = '13060466249-bk4s31a1vanhnd6j0qhequ3d3ptd2b2g.apps.googleusercontent.com';
-const SHEET_ID      = '1XTalxQBUFywBW4DL3JwSJvKkPlOhstAbRMH4DWx-eGI';
-const SCOPES        = 'https://www.googleapis.com/auth/spreadsheets';
-// URL della Web App Apps Script — da impostare dopo la pubblicazione
-// Vai su Apps Script → Distribuzione → Nuova distribuzione → Web App
-// Esegui come: Me | Accesso: Chiunque → copia l'URL qui
-// JSON riga 45 aggiornato direttamente via Sheets API (no Apps Script Web App necessaria)
+const CLIENT_ID = '13060466249-bk4s31a1vanhnd6j0qhequ3d3ptd2b2g.apps.googleusercontent.com';
+const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets';
 
 // ═══════════════════════════════════════════════════════════════════
-// COSTANTI FOGLIO — devono corrispondere al tuo Apps Script
+// FOGLI ANNUALI — configurabili dalle Impostazioni
+// Struttura: [{ year, sheetId, label }]
 // ═══════════════════════════════════════════════════════════════════
-const FIRST_DATA_ROW  = 3;   // riga dove iniziano i dati
-const HEADER_ROW      = 2;   // riga intestazioni camere
-const OUTPUT_ROW      = 45;  // riga JSON generata da Apps Script
-const DATES_COL       = 1;   // colonna A = date
-const FIRST_ROOM_COL  = 2;   // colonna B = prima camera
-const EXCLUDED_SHEETS = ['Dati Centralizzati Realtime','Non toccare','Ricettività','LOG COMPLESSIVO'];
+const DEFAULT_ANNUAL_SHEETS = [
+  { year: 2025, sheetId: '', label: '2025' },
+  { year: 2026, sheetId: '1XTalxQBUFywBW4DL3JwSJvKkPlOhstAbRMH4DWx-eGI', label: '2026' },
+];
+
+// ═══════════════════════════════════════════════════════════════════
+// FOGLIO DATABASE — separato, unico per tutti gli anni
+// ═══════════════════════════════════════════════════════════════════
+// ID del foglio Google che funge da database centrale
+// Scheda attesa: "PRENOTAZIONI" con intestazioni in riga 1
+let DATABASE_SHEET_ID = ''; // configurabile da Impostazioni
+
+// Colonne della scheda PRENOTAZIONI (1-based, corrispondono all'ordine in A,B,C…)
+const DB_COLS = {
+  ID:          1,  // A — id univoco es. "PRE-2026-0001"
+  CAMERA:      2,  // B
+  NOME:        3,  // C
+  DAL:         4,  // D — dd/MM/yyyy
+  AL:          5,  // E — dd/MM/yyyy
+  DISP:        6,  // F — disposizione letti
+  NOTE:        7,  // G
+  COLORE:      8,  // H — hex
+  ANNO:        9,  // I
+  FONTE:       10, // J — "app" | "manuale"
+  TS:          11, // K — timestamp ISO
+  DELETED:     12, // L — "true" se eliminata (soft delete)
+};
+const DB_SHEET_NAME  = 'PRENOTAZIONI';
+const DB_HEADER_ROW  = 1;
+const DB_FIRST_ROW   = 2;
+
+// ═══════════════════════════════════════════════════════════════════
+// COSTANTI FOGLIO ANNUALE — devono corrispondere al tuo Apps Script
+// ═══════════════════════════════════════════════════════════════════
+const FIRST_DATA_ROW  = 3;
+const HEADER_ROW      = 2;
+const OUTPUT_ROW      = 45;
+const DATES_COL       = 1;
+const FIRST_ROOM_COL  = 2;
+const EXCLUDED_SHEETS = ['Dati Centralizzati Realtime','Non toccare','Ricettività','LOG COMPLESSIVO','PRENOTAZIONI'];
 
 // Nomi mesi esatti come appaiono nei fogli Google (prima lettera maiuscola)
 const MONTHS_IT = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
@@ -512,12 +542,46 @@ let accessToken = null;
 let curM = new Date().getMonth();
 let curY = new Date().getFullYear();
 let selColor = '#D9D9D9', editId = null, nid = 1000;
-// Contatori letti: { m:0, s:0, c:0, aff:0 }
 let bedCounts = { m:0, s:0, c:0, aff:0 };
 let roomSettings = loadRoomSettings();
 let bookings = [];
-// Mappa: sheetName → { roomName → columnIndex }
-let sheetColumnMap = {};
+let sheetColumnMap = {};   // sheetName → { roomName → colIdx }
+
+// ── DATABASE state ──
+// Fogli annuali configurati (array di {year, sheetId, label})
+let annualSheets = loadAnnualSheets();
+// Righe raw del DATABASE (array di oggetti con chiavi DB_COLS)
+// Usato per sync e confronto timestamp
+let dbRowCache = []; // { rowNum, id, camera, nome, dal, al, disp, note, colore, anno, fonte, ts, deleted }
+
+// ── Helpers configurazione ──
+function loadAnnualSheets() {
+  try {
+    const s = localStorage.getItem('hotelAnnualSheets');
+    if (s) return JSON.parse(s);
+  } catch(e) {}
+  return JSON.parse(JSON.stringify(DEFAULT_ANNUAL_SHEETS));
+}
+function saveAnnualSheetsLS(arr) {
+  localStorage.setItem('hotelAnnualSheets', JSON.stringify(arr));
+}
+function loadDbSheetId() {
+  return localStorage.getItem('hotelDbSheetId') || '';
+}
+function saveDbSheetIdLS(id) {
+  localStorage.setItem('hotelDbSheetId', id);
+  DATABASE_SHEET_ID = id;
+}
+
+// Genera ID univoco prenotazione
+let _idSeq = 0;
+function genBookingId(year) {
+  _idSeq++;
+  const ts = Date.now().toString(36).toUpperCase();
+  return `PRE-${year}-${ts}-${String(_idSeq).padStart(3,'0')}`;
+}
+
+function nowISO() { return new Date().toISOString(); }
 
 // Genera stringa disposizione da contatori (es. "2m + 1s + 1c")
 function buildBedString(counts) {
@@ -649,7 +713,7 @@ function logout() {
   google.accounts.oauth2.revoke(accessToken, () => {});
   accessToken = null;
   bookings = [];
-  _sheetIdCache = null;
+  Object.keys(_sheetIdCaches).forEach(k => delete _sheetIdCaches[k]);
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('userAvatar').style.display = 'none';
 }
@@ -658,133 +722,365 @@ function logout() {
 // LETTURA DAL FOGLIO GOOGLE
 // ═══════════════════════════════════════════════════════════════════
 
-async function sheetsGet(range) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`;
+// Helpers generici per leggere da un foglio (usano il primo sheetId annuale disponibile se non specificato)
+function getDefaultSheetId() {
+  return annualSheets.find(e => e.sheetId)?.sheetId || '';
+}
+
+async function sheetsGet(range, spreadsheetId) {
+  const sid = spreadsheetId || getDefaultSheetId();
+  if (!sid) throw new Error('Nessun foglio annuale configurato.');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`;
   const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
   if (!r.ok) throw new Error(`Sheets API error ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
-async function sheetsGetWithFormats(range) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat/backgroundColor,note))))`;
+async function sheetsGetWithFormats(range, spreadsheetId) {
+  const sid = spreadsheetId || getDefaultSheetId();
+  if (!sid) throw new Error('Nessun foglio annuale configurato.');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat/backgroundColor,note))))`;
   const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
   if (!r.ok) throw new Error(`Sheets API error ${r.status}: ${await r.text()}`);
   return r.json();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CRUD FOGLIO DATABASE
+// ═══════════════════════════════════════════════════════════════════
+
+// Fetch generico su un foglio qualsiasi (per il DATABASE usiamo DATABASE_SHEET_ID)
+async function dbGet(range) {
+  const id = DATABASE_SHEET_ID;
+  if (!id) throw new Error('DATABASE_SHEET_ID non configurato. Vai in Impostazioni.');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`;
+  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+  if (!r.ok) throw new Error(`DB GET error ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function dbBatchUpdate(requests) {
+  const id = DATABASE_SHEET_ID;
+  if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests })
+  });
+  if (!r.ok) throw new Error(`DB batchUpdate error ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function dbAppendRow(values) {
+  const id = DATABASE_SHEET_ID;
+  if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(DB_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [values] })
+  });
+  if (!r.ok) throw new Error(`DB append error ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function dbUpdateRow(rowNum, values) {
+  // rowNum è 1-based (riga nel foglio Google)
+  const id = DATABASE_SHEET_ID;
+  if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
+  const range = `${DB_SHEET_NAME}!A${rowNum}:L${rowNum}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+  const r = await fetch(url, {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [values] })
+  });
+  if (!r.ok) throw new Error(`DB update error ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+// Crea array di valori per una riga del DB partendo da un oggetto booking
+function bookingToDbRow(b, fonte = 'app') {
+  const dal = b.s instanceof Date
+    ? `${String(b.s.getDate()).padStart(2,'0')}/${String(b.s.getMonth()+1).padStart(2,'0')}/${b.s.getFullYear()}`
+    : (b.dal || '');
+  const al  = b.e instanceof Date
+    ? `${String(b.e.getDate()).padStart(2,'0')}/${String(b.e.getMonth()+1).padStart(2,'0')}/${b.e.getFullYear()}`
+    : (b.al || '');
+  const anno = b.s instanceof Date ? b.s.getFullYear() : (b.anno || new Date().getFullYear());
+  const arr = new Array(12).fill('');
+  arr[DB_COLS.ID-1]      = b.dbId || b.id || genBookingId(anno);
+  arr[DB_COLS.CAMERA-1]  = b.cameraName || roomName(b.r) || '';
+  arr[DB_COLS.NOME-1]    = b.n || '';
+  arr[DB_COLS.DAL-1]     = dal;
+  arr[DB_COLS.AL-1]      = al;
+  arr[DB_COLS.DISP-1]    = b.d || '';
+  arr[DB_COLS.NOTE-1]    = b.note || '';
+  arr[DB_COLS.COLORE-1]  = b.c || '#D9D9D9';
+  arr[DB_COLS.ANNO-1]    = String(anno);
+  arr[DB_COLS.FONTE-1]   = fonte;
+  arr[DB_COLS.TS-1]      = b.ts || nowISO();
+  arr[DB_COLS.DELETED-1] = b.deleted ? 'true' : '';
+  return arr;
+}
+
+// Parsa una riga del DATABASE in oggetto booking
+function dbRowToBooking(row, rowNum) {
+  const get = (col) => (row[col-1] || '').toString().trim();
+  const dalStr = get(DB_COLS.DAL);
+  const alStr  = get(DB_COLS.AL);
+  const parseD = (s) => {
+    if (!s) return null;
+    const p = s.split('/');
+    if (p.length === 3) return new Date(+p[2], +p[1]-1, +p[0], 12);
+    return null;
+  };
+  const sd = parseD(dalStr), ed = parseD(alStr);
+  if (!sd || !ed) return null;
+  const camName = get(DB_COLS.CAMERA);
+  const room = ROOMS.find(r => r.name === camName || r.name === camName.replace(/\.0$/,''));
+  if (!room) return null;
+  return {
+    id:         rowNum * 10000 + 1, // id locale per la UI
+    dbId:       get(DB_COLS.ID),
+    dbRow:      rowNum,
+    r:          room.id,
+    cameraName: camName,
+    n:          get(DB_COLS.NOME),
+    d:          get(DB_COLS.DISP),
+    c:          get(DB_COLS.COLORE) || '#D9D9D9',
+    s:          sd,
+    e:          ed,
+    note:       get(DB_COLS.NOTE),
+    anno:       parseInt(get(DB_COLS.ANNO)) || sd.getFullYear(),
+    fonte:      get(DB_COLS.FONTE),
+    ts:         get(DB_COLS.TS),
+    deleted:    get(DB_COLS.DELETED) === 'true',
+    fromSheet:  true,
+    fromDb:     true,
+    sheetName:  null, // calcolato on-demand
+  };
+}
+
+// ── Leggi tutto il DATABASE ──
+async function readDatabase() {
+  const data = await dbGet(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:L9999`);
+  const rows = data.values || [];
+  dbRowCache = [];
+  const result = [];
+  rows.forEach((row, i) => {
+    const rowNum = DB_FIRST_ROW + i;
+    const b = dbRowToBooking(row, rowNum);
+    // Salva sempre in cache (anche deleted)
+    dbRowCache.push({ rowNum, raw: row });
+    if (b && !b.deleted) result.push(b);
+  });
+  return result;
+}
+
+// ── Assicura che la scheda PRENOTAZIONI abbia le intestazioni ──
+async function ensureDbHeaders() {
+  try {
+    const d = await dbGet(`${DB_SHEET_NAME}!A1:L1`);
+    const row = d.values?.[0] || [];
+    if (row[0] === 'ID') return; // già ok
+  } catch(e) {}
+  // Scrivi intestazioni
+  const id = DATABASE_SHEET_ID;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(DB_SHEET_NAME+'!A1:L1')}?valueInputOption=RAW`;
+  await fetch(url, {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [['ID','CAMERA','NOME','DAL','AL','DISPOSIZIONE','NOTE','COLORE','ANNO','FONTE','TS_MODIFICA','DELETED']] })
+  });
+}
+
+// ── Upsert: scrivi o aggiorna una prenotazione nel DATABASE ──
+async function dbUpsert(b, fonte = 'app') {
+  b.ts = nowISO();
+  const row = bookingToDbRow(b, fonte);
+  if (b.dbRow) {
+    // Aggiorna riga esistente
+    await dbUpdateRow(b.dbRow, row);
+  } else {
+    // Nuova riga
+    const resp = await dbAppendRow(row);
+    // Ricava il numero di riga appena creato
+    const updatedRange = resp.updates?.updatedRange || '';
+    const m = updatedRange.match(/(\d+):/);
+    if (m) b.dbRow = parseInt(m[1]);
+    if (!b.dbId) b.dbId = row[DB_COLS.ID-1];
+  }
+}
+
+// ── Soft-delete nel DATABASE ──
+async function dbDelete(b) {
+  if (!b.dbRow) return;
+  const row = bookingToDbRow(b, b.fonte || 'app');
+  row[DB_COLS.DELETED-1] = 'true';
+  row[DB_COLS.TS-1] = nowISO();
+  await dbUpdateRow(b.dbRow, row);
+}
+
+// ── Leggi tutte le prenotazioni dalle righe 45 di UN foglio annuale ──
+async function readAnnualSheet(entry) {
+  const { sheetId } = entry;
+  const result = [];
+
+  const metaR = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
+    { headers: { Authorization: 'Bearer ' + accessToken } }
+  );
+  if (!metaR.ok) return result;
+  const meta = await metaR.json();
+  const sheetNames = meta.sheets
+    .map(s => s.properties.title)
+    .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4}$/i.test(n));
+
+  for (const sName of sheetNames) {
+    try {
+      const base = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/`;
+      const enc  = s => encodeURIComponent(s);
+      const [hR, jR] = await Promise.all([
+        fetch(base + enc(`'${sName}'!B${HEADER_ROW}:AJ${HEADER_ROW}`) + '?valueRenderOption=FORMATTED_VALUE', { headers: { Authorization: 'Bearer ' + accessToken } }),
+        fetch(base + enc(`'${sName}'!B${OUTPUT_ROW}:AJ${OUTPUT_ROW}`) + '?valueRenderOption=FORMATTED_VALUE', { headers: { Authorization: 'Bearer ' + accessToken } }),
+      ]);
+      const headers = (await hR.json()).values?.[0] || [];
+      const jsonRow = (await jR.json()).values?.[0] || [];
+
+      sheetColumnMap[sName] = {};
+      headers.forEach((h, i) => {
+        if (!h) return;
+        const raw = String(h).trim(), norm = raw.replace(/\.0$/, '');
+        sheetColumnMap[sName][raw] = i + 2;
+        if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
+      });
+
+      jsonRow.forEach(cell => {
+        if (!cell || !cell.trim()) return;
+        try {
+          let s = cell.trim();
+          if (s.startsWith("'")) s = s.slice(1);
+          const bList = Array.isArray(JSON.parse(s)) ? JSON.parse(s) : [JSON.parse(s)];
+          bList.forEach(b => {
+            if (!b.dal || !b.al || !b.camera) return;
+            const [dd,mm,yy] = b.dal.split('/').map(Number);
+            const [de,me,ye] = b.al.split('/').map(Number);
+            const camNorm = String(b.camera).trim().replace(/\.0$/, '');
+            const room = ROOMS.find(r => r.name === camNorm || r.name.toLowerCase() === camNorm.toLowerCase());
+            if (!room) { console.warn('Camera non riconosciuta:', b.camera); return; }
+            const colorHex = (b.backgroundColor || '#D9D9D9').startsWith('#') ? (b.backgroundColor || '#D9D9D9') : '#' + b.backgroundColor;
+            result.push({
+              id: nid++, r: room.id, n: b.nome || '—', d: b.disposizione || '',
+              c: colorHex, s: new Date(yy,mm-1,dd,12), e: new Date(ye,me-1,de,12),
+              note: b.note || '', fromSheet: true, sheetName: sName,
+              cameraName: room.name, sheetId,
+              dbId: null, dbRow: null, ts: null, fonte: 'manuale',
+            });
+          });
+        } catch(e) {}
+      });
+    } catch(e) { console.warn(`Errore "${sName}":`, e.message); }
+  }
+  return result;
+}
+
+// ── SYNC BIDIREZIONALE: DATABASE vs righe 45 ──
+async function syncWithDatabase(annualBookings) {
+  if (!DATABASE_SHEET_ID) return annualBookings;
+
+  await ensureDbHeaders();
+  const dbBookings = await readDatabase();
+
+  const dbById = new Map(dbBookings.map(b => [b.dbId, b]));
+  const result  = [];
+  const toUpdateInDb = [];
+  const seen    = new Set();
+
+  // 1. Per ogni prenotazione annual: confronta con DB per timestamp
+  for (const ann of annualBookings) {
+    // Cerca corrispondenza nel DB per camera+nome+dal+al (le prenotazioni annual non hanno ancora dbId)
+    const match = dbBookings.find(db =>
+      db.cameraName === ann.cameraName &&
+      db.n          === ann.n &&
+      db.s.getTime() === ann.s.getTime() &&
+      db.e.getTime() === ann.e.getTime()
+    );
+
+    if (!match) {
+      // Nuova: non è nel DB → importa
+      ann.dbId  = genBookingId(ann.s.getFullYear());
+      ann.ts    = nowISO();
+      ann.fonte = 'manuale';
+      await dbUpsert(ann, 'manuale');
+      result.push(ann);
+    } else {
+      seen.add(match.dbId);
+      const dbTs  = match.ts  ? new Date(match.ts).getTime()  : 0;
+      const annTs = ann.ts    ? new Date(ann.ts).getTime()    : 0;
+      if (dbTs >= annTs) {
+        // DB vince (più recente o pari)
+        result.push(match);
+      } else {
+        // Annual vince → aggiorna DB
+        match.n = ann.n; match.d = ann.d; match.c = ann.c;
+        match.note = ann.note; match.ts = nowISO(); match.fonte = 'manuale';
+        toUpdateInDb.push(match);
+        result.push(match);
+      }
+    }
+  }
+
+  // 2. Prenotazioni solo nel DB (non trovate nell'annual) → aggiungi al risultato
+  for (const db of dbBookings) {
+    if (!seen.has(db.dbId)) result.push(db);
+  }
+
+  // 3. Aggiorna DB per le righe dove annual ha vinto
+  for (const b of toUpdateInDb) await dbUpsert(b, b.fonte);
+
+  return result;
 }
 
 async function loadFromSheets() {
   if (!accessToken) return;
-  showLoading('Lettura prenotazioni dal foglio Google…');
+  showLoading('Lettura prenotazioni…');
   document.getElementById('syncDot').classList.remove('show');
 
-  try {
-    // 1. Leggi i metadati del foglio per trovare i nomi dei fogli
-    const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties.title`;
-    const metaR = await fetch(metaUrl, { headers: { Authorization: 'Bearer ' + accessToken } });
-    const meta  = await metaR.json();
-    const sheetNames = meta.sheets
-      .map(s => s.properties.title)
-      .filter(n => !EXCLUDED_SHEETS.includes(n));
+  // Ricarica configurazione da localStorage
+  if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
+  annualSheets = loadAnnualSheets();
 
-    // 2. Per ogni foglio mensile, leggi i JSON dalla riga OUTPUT_ROW
+  try {
+    // 1. Leggi tutti i fogli annuali configurati
     bookings = [];
     sheetColumnMap = {};
+    let allAnnual = [];
 
-    for (const sName of sheetNames) {
-      // Controlla che il nome corrisponda a un mese (es. "Gennaio 2026")
-      const match = sName.match(/^([A-Za-zÀ-ÖØ-öø-ÿ]+)\s+(\d{4})$/i);
-      if (!match) continue;
-
-      try {
-        // Leggi riga 2 (intestazioni camere) e riga OUTPUT_ROW (JSON)
-        const headerRange = `'${sName}'!B${HEADER_ROW}:AJ${HEADER_ROW}`;
-        const jsonRange   = `'${sName}'!B${OUTPUT_ROW}:AJ${OUTPUT_ROW}`;
-
-        const [headerData, jsonData] = await Promise.all([
-          sheetsGet(headerRange),
-          sheetsGet(jsonRange)
-        ]);
-
-        const headers  = headerData.values?.[0] || [];
-        const jsonRow  = jsonData.values?.[0]   || [];
-
-        // Costruisci mappa colonna → nome camera (normalizziamo "21.0" → "21")
-        sheetColumnMap[sName] = {};
-        headers.forEach((h, i) => {
-          if (!h) return;
-          const raw = String(h).trim();
-          const norm = raw.replace(/\.0$/, "");
-          sheetColumnMap[sName][raw] = i + 2;
-          if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
-        });
-
-        // Parsa ogni JSON di camera
-        jsonRow.forEach((cell, i) => {
-          if (!cell || cell.trim() === '') return;
-          try {
-            // Il JSON potrebbe essere avvolto in apici o altro
-            let jsonStr = cell.trim();
-            if (jsonStr.startsWith("'")) jsonStr = jsonStr.slice(1);
-            const parsed = JSON.parse(jsonStr);
-            const bList  = Array.isArray(parsed) ? parsed : [parsed];
-
-            bList.forEach(b => {
-              if (!b.dal || !b.al || !b.camera) return;
-              const [dd,mm,yy] = b.dal.split('/').map(Number);
-              const [de,me,ye] = b.al.split('/').map(Number);
-
-              // Normalizza nome camera: "21.0" → "21", "1.0" → "1", "marasanta" → "marasanta"
-              const camNorm = String(b.camera).trim().replace(/\.0$/, '');
-              const room = ROOMS.find(r =>
-                r.name === camNorm ||
-                r.name === String(b.camera).trim() ||
-                r.name.toLowerCase() === camNorm.toLowerCase()
-              );
-              if (!room) {
-                console.warn(`Camera non riconosciuta: "${b.camera}" (normalizzata: "${camNorm}")`);
-                return;
-              }
-
-              const colorHex = b.backgroundColor
-                ? b.backgroundColor.startsWith('#') ? b.backgroundColor : '#' + b.backgroundColor
-                : '#D9D9D9';
-
-              bookings.push({
-                id: nid++,
-                r:  room.id,
-                n:  b.nome || '—',
-                d:  b.disposizione || '',
-                c:  colorHex,
-                s:  new Date(yy, mm-1, dd, 12),
-                e:  new Date(ye, me-1, de, 12),
-                note: b.note || '',
-                fromSheet: true,
-                sheetName: sName,
-                cameraName: room.name, // usa il nome normalizzato da ROOMS
-              });
-            });
-          } catch(pe) {
-            // JSON non valido in questa cella — ignora
-          }
-        });
-      } catch(sheetErr) {
-        console.warn(`Errore lettura foglio "${sName}":`, sheetErr.message);
-      }
+    for (const entry of annualSheets) {
+      if (!entry.sheetId) continue;
+      showLoading(`Lettura ${entry.label}…`);
+      const ann = await readAnnualSheet(entry);
+      allAnnual = allAnnual.concat(ann);
     }
 
-    // ── Ricongiungi prenotazioni che attraversano più mesi ──
-    bookings = mergeMultiMonthBookings(bookings);
+    // 2. Sync con DATABASE se configurato
+    if (DATABASE_SHEET_ID) {
+      showLoading('Sincronizzazione database…');
+      allAnnual = await syncWithDatabase(allAnnual);
+    }
 
-    hideLoading();
-    render();
+    // 3. Ricongiungi multi-mese
+    bookings = mergeMultiMonthBookings(allAnnual);
+
+    hideLoading(); render();
     showToast(`✓ ${bookings.length} prenotazioni caricate`, 'success');
     document.getElementById('syncDot').classList.add('show');
     setTimeout(() => document.getElementById('syncDot').classList.remove('show'), 4000);
 
   } catch(e) {
-    hideLoading();
-    console.error(e);
-    showToast('Errore lettura foglio: ' + e.message, 'error');
+    hideLoading(); console.error(e);
+    showToast('Errore lettura: ' + e.message, 'error');
   }
 }
 
@@ -828,14 +1124,25 @@ function splitBookingByMonth(b) {
 
 // Cache degli sheetId per evitare chiamate ripetute
 let _sheetIdCache = null;
-async function getSheetIdMap() {
-  if (_sheetIdCache) return _sheetIdCache;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets(properties(title,sheetId))`;
-  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+// Cache per sheetId per spreadsheet: { [spreadsheetId]: { sheetName: numericSheetId } }
+const _sheetIdCaches = {};
+
+async function getSheetIdMap(spreadsheetId) {
+  // Se non passato, usa il primo foglio annuale con sheetId configurato
+  if (!spreadsheetId) {
+    const first = annualSheets.find(e => e.sheetId);
+    spreadsheetId = first?.sheetId || '';
+  }
+  if (!spreadsheetId) throw new Error('Nessun foglio annuale configurato in Impostazioni.');
+  if (_sheetIdCaches[spreadsheetId]) return _sheetIdCaches[spreadsheetId];
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(title,sheetId))`,
+    { headers: { Authorization: 'Bearer ' + accessToken } }
+  );
   const d = await r.json();
-  _sheetIdCache = {};
-  d.sheets.forEach(s => { _sheetIdCache[s.properties.title] = s.properties.sheetId; });
-  return _sheetIdCache;
+  _sheetIdCaches[spreadsheetId] = {};
+  d.sheets.forEach(s => { _sheetIdCaches[spreadsheetId][s.properties.title] = s.properties.sheetId; });
+  return _sheetIdCaches[spreadsheetId];
 }
 
 // Scrive UN frammento mensile sul foglio (startDay..endDay incluso, testo solo nella prima cella)
@@ -898,7 +1205,8 @@ async function writeFragment(sName, cameraName, startDay, endDay, firstCellText,
     });
   }
 
-  const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`, {
+  const sid = arguments[8] || (annualSheets.find(e => e.sheetId)?.sheetId || '');
+  const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}:batchUpdate`, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests })
@@ -908,22 +1216,27 @@ async function writeFragment(sName, cameraName, startDay, endDay, firstCellText,
 
 async function writeBookingToSheet(b) {
   const firstCellText = `${b.n} ${b.d}`.trim();
-  const sheetIdMap    = await getSheetIdMap();
   const fragments     = splitBookingByMonth(b);
 
+  // 1. Scrivi celle+colori su tutti i fogli annuali coinvolti
   for (const frag of fragments) {
     const colorEnd = frag.isLastFrag ? frag.endDay - 1 : frag.endDay;
     if (colorEnd < frag.startDay) continue;
+    const fragYear  = frag.y;
+    const annEntry  = annualSheets.find(e => e.year === fragYear);
+    if (!annEntry?.sheetId) { console.warn('Nessun sheetId per anno ' + fragYear); continue; }
+    const sheetIdMap = await getSheetIdMap(annEntry.sheetId);
+    await writeFragment(frag.sName, b.cameraName, frag.startDay, colorEnd,
+                        firstCellText, b.note, b.c, sheetIdMap, annEntry.sheetId);
+    await triggerAppsScriptUpdate(frag.sName, b.cameraName, annEntry.sheetId);
+  }
 
-    await writeFragment(
-      frag.sName, b.cameraName,
-      frag.startDay, colorEnd,
-      firstCellText, b.note, b.c,
-      sheetIdMap
-    );
-
-    // Dopo aver scritto, triggera Apps Script per aggiornare il JSON riga 45
-    await triggerAppsScriptUpdate(frag.sName, b.cameraName);
+  // 2. Scrivi/aggiorna nel DATABASE
+  if (DATABASE_SHEET_ID) {
+    b.dbId  = b.dbId  || genBookingId(b.s.getFullYear());
+    b.ts    = nowISO();
+    b.fonte = 'app';
+    await dbUpsert(b, 'app');
   }
 }
 
@@ -933,15 +1246,14 @@ async function writeBookingToSheet(b) {
 // legge celle+colori della colonna, costruisce il JSON, lo scrive in riga 45.
 // ═══════════════════════════════════════════════════════════════════
 
-async function triggerAppsScriptUpdate(sName, cameraName) {
+async function triggerAppsScriptUpdate(sName, cameraName, spreadsheetId) {
   const colIdx = sheetColumnMap[sName]?.[cameraName];
-  if (!colIdx) {
-    console.warn(`updateJson: colonna non trovata per "${cameraName}" in "${sName}"`);
-    return;
-  }
+  if (!colIdx) { console.warn(`updateJson: colonna non trovata per "${cameraName}" in "${sName}"`); return; }
+  const sid = spreadsheetId || annualSheets.find(e => e.sheetId)?.sheetId || '';
+  if (!sid) return;
   try {
-    await updateJsonRow45(sName, colIdx, cameraName);
-    console.log(`✓ JSON riga 45 aggiornato: "${sName}" col ${colIdx} (${cameraName})`);
+    await updateJsonRow45(sName, colIdx, cameraName, sid);
+    console.log(`✓ JSON riga 45: "${sName}" col ${colIdx}`);
   } catch(err) {
     console.warn('updateJson fallito (non critico):', err.message);
   }
@@ -959,7 +1271,7 @@ async function updateJsonRow45(sName, colIdx, cameraName) {
   const datesRange = `'${sName}'!A${FIRST_DATA_ROW}:A${OUTPUT_ROW - 1}`;
 
   // Fetch valori + colori in un'unica chiamata usando spreadsheets.get
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}`
     + `?ranges=${encodeURIComponent(dataRange)}`
     + `&ranges=${encodeURIComponent(datesRange)}`
     + `&fields=sheets(data(rowData(values(userEnteredValue,effectiveFormat/backgroundColor,note))))`;
@@ -1135,7 +1447,7 @@ async function updateJsonRow45(sName, colIdx, cameraName) {
   const sheetId = sheetIdMap[sName];
   if (sheetId === undefined) throw new Error(`SheetId non trovato per "${sName}"`);
 
-  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`;
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sid}:batchUpdate`;
   const writeResp = await fetch(writeUrl, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
@@ -1160,17 +1472,14 @@ async function updateJsonRow45(sName, colIdx, cameraName) {
 // CANCELLAZIONE DAL FOGLIO (supporta multi-mese)
 // ═══════════════════════════════════════════════════════════════════
 
-async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap) {
+async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap, spreadsheetId) {
   let colIdx = sheetColumnMap[sName]?.[cameraName];
-  if (!colIdx) return; // foglio probabilmente non caricato, ignora
-
+  if (!colIdx) return;
   const sheetId = sheetIdMap[sName];
   if (sheetId === undefined) return;
-
   const startRow = FIRST_DATA_ROW + startDay - 1;
   const numRows  = endDay - startDay + 1;
   if (numRows <= 0) return;
-
   const requests = [
     {
       repeatCell: {
@@ -1187,8 +1496,8 @@ async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap) {
       }
     }
   ];
-
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`, {
+  const cSid = spreadsheetId || annualSheets.find(e => e.sheetId)?.sheetId || '';
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cSid}:batchUpdate`, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests })
@@ -1197,16 +1506,17 @@ async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap) {
 
 async function clearBookingFromSheet(b) {
   if (!b.fromSheet) return;
-  const sheetIdMap = await getSheetIdMap();
-  const fragments  = splitBookingByMonth(b);
-
+  const fragments = splitBookingByMonth(b);
   for (const frag of fragments) {
     const colorEnd = frag.isLastFrag ? frag.endDay - 1 : frag.endDay;
     if (colorEnd < frag.startDay) continue;
+    const annEntry = annualSheets.find(e => e.year === frag.y);
+    const sid = annEntry?.sheetId || b.sheetId || annualSheets.find(e=>e.sheetId)?.sheetId || '';
+    if (!sid) continue;
     try {
-      await clearFragment(frag.sName, b.cameraName, frag.startDay, colorEnd, sheetIdMap);
-      // Notifica Apps Script di aggiornare il JSON dopo la cancellazione
-      await triggerAppsScriptUpdate(frag.sName, b.cameraName);
+      const sheetIdMap = await getSheetIdMap(sid);
+      await clearFragment(frag.sName, b.cameraName, frag.startDay, colorEnd, sheetIdMap, sid);
+      await triggerAppsScriptUpdate(frag.sName, b.cameraName, sid);
     } catch(e) {
       console.warn(`Errore pulizia frammento ${frag.sName}:`, e.message);
     }
@@ -1419,9 +1729,10 @@ async function delBook(id){
   const b=bookings.find(x=>x.id===id); if(!b) return;
   if(!confirm(`Eliminare la prenotazione di "${b.n}"?\nQuesto rimuoverà anche i colori dal foglio Google.`)) return;
   closeDrawer();
-  showLoading('Rimozione dal foglio Google…');
+  showLoading('Rimozione…');
   try {
     if(b.fromSheet) await clearBookingFromSheet(b);
+    if(DATABASE_SHEET_ID && b.dbRow) await dbDelete(b);
     bookings=bookings.filter(x=>x.id!==id);
     hideLoading(); render();
     showToast('Prenotazione eliminata', 'success');
@@ -1587,12 +1898,18 @@ async function saveBooking(){
 
   const room = ROOMS.find(r=>r.id===rid);
   const bedStr = buildBedString(bedCounts);
+  // Preserva dbId/dbRow se stiamo modificando una prenotazione esistente
+  const existingB = editId ? bookings.find(b=>b.id===editId) : null;
   const newB = {
     id: editId || nid++, r: rid, n: name, d: bedStr, c: selColor,
     s: sd, e: ed, note, fromSheet: false,
     sheetName: sheetName(sd.getFullYear(), sd.getMonth()),
     cameraName: room?.name || rid,
-    pending: true
+    pending: true,
+    dbId:  existingB?.dbId  || null,
+    dbRow: existingB?.dbRow || null,
+    ts:    existingB?.ts    || null,
+    fonte: 'app',
   };
 
   // Aggiorna stato locale immediatamente (ottimistic UI)
@@ -1669,6 +1986,24 @@ function resetRoomSettings() {
 }
 
 function saveSettings() {
+  // ── Salva fogli annuali
+  const list = document.getElementById('annualSheetsList');
+  if (list) {
+    const newEntries = [];
+    Array.from(list.children).forEach((row, i) => {
+      const year = parseInt(document.getElementById('asr-year-' + i)?.value);
+      const sid  = (document.getElementById('asr-id-'   + i)?.value || '').trim();
+      if (year && sid) newEntries.push({ year, sheetId: sid, label: String(year) });
+    });
+    if (newEntries.length) {
+      annualSheets = newEntries;
+      saveAnnualSheetsLS(newEntries);
+    }
+  }
+  // ── Salva ID DATABASE
+  const dbId = (document.getElementById('sDbSheetId')?.value || '').trim();
+  if (dbId !== undefined) { DATABASE_SHEET_ID = dbId; saveDbSheetIdLS(dbId); }
+
   // Leggi tutti i valori dalla pagina impostazioni
   ROOMS.forEach(room => {
     const maxEl = document.getElementById('smax-' + room.id);
@@ -1692,6 +2027,57 @@ function renderSettingsBody() {
   const body = document.getElementById('settingsBody');
   const groups = [...new Set(ROOMS.map(r => r.g))];
   let html = '';
+
+  // ── Sezione Fogli annuali
+  const annEntries = (loadAnnualSheets().length ? loadAnnualSheets() : DEFAULT_ANNUAL_SHEETS);
+  const currentDbId = loadDbSheetId();
+  html += `
+    <div class="sgroup">
+      <div class="sgroup-title">📅 Fogli Google Annuali</div>
+      <div class="sroom-card">
+        <p style="font-size:11px;color:var(--text2);margin-bottom:12px;line-height:1.7;">
+          Aggiungi un foglio per ogni anno gestito. L'app leggerà le prenotazioni da tutti i fogli configurati.
+        </p>
+        <div id="annualSheetsList"></div>
+        <button class="btn" style="font-size:11px;margin-top:8px;" onclick="addAnnualSheetRow()">+ Aggiungi anno</button>
+      </div>
+    </div>
+    <div class="sgroup">
+      <div class="sgroup-title">🗄️ Foglio DATABASE Centrale</div>
+      <div class="sroom-card">
+        <p style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.7;">
+          Foglio Google separato con scheda <b>PRENOTAZIONI</b> — fonte di verità centrale per tutti gli anni.
+          Crea il foglio, poi incolla il suo ID qui sotto.
+        </p>
+        <div class="sfield">
+          <label>ID Foglio Database</label>
+          <input type="text" id="sDbSheetId" value="${currentDbId}"
+                 placeholder="es. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
+                 style="font-size:11px;font-family:monospace;">
+        </div>
+        <div style="margin-top:8px;">
+          <button class="btn" style="font-size:11px;" onclick="testDbConnection()">🔗 Testa connessione DB</button>
+          <span id="dbTestResult" style="font-size:11px;color:var(--text3);margin-left:8px;"></span>
+        </div>
+        <details style="margin-top:12px;">
+          <summary style="font-size:11px;font-weight:600;color:var(--accent);cursor:pointer;user-select:none;">Come trovare l'ID del foglio ▾</summary>
+          <p style="font-size:11px;color:var(--text2);margin-top:8px;line-height:1.8;">
+            Apri il foglio Google nel browser. L'URL è:<br>
+            <code style="font-size:10px;background:var(--surface2);padding:2px 6px;border-radius:4px;">docs.google.com/spreadsheets/d/<b>ID_QUI</b>/edit</code><br>
+            Copia la parte in grassetto.
+          </p>
+        </details>
+      </div>
+    </div>`;
+
+  // Popola lista fogli annuali con JS (dopo render)
+  setTimeout(() => {
+    const list = document.getElementById('annualSheetsList');
+    if (!list) return;
+    list.innerHTML = '';
+    const entries = loadAnnualSheets();
+    entries.forEach((e, i) => renderAnnualSheetRow(list, e, i));
+  }, 50);
 
   groups.forEach(g => {
     html += `<div class="sgroup"><div class="sgroup-title">${g}</div>`;
@@ -1727,6 +2113,72 @@ function renderSettingsBody() {
   });
 
   body.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// GESTIONE FOGLI ANNUALI NELLE IMPOSTAZIONI
+// ═══════════════════════════════════════════════════════════════════
+
+function renderAnnualSheetRow(container, entry, idx) {
+  const row = document.createElement('div');
+  row.id = 'asr-' + idx;
+  row.style.cssText = 'display:grid;grid-template-columns:80px 1fr auto;gap:8px;align-items:center;margin-bottom:8px;';
+  row.innerHTML = `
+    <input type="number" value="${entry.year}" min="2020" max="2040"
+           style="background:var(--surface2);border:1.5px solid var(--border);color:var(--text);
+                  font-family:inherit;font-size:12px;padding:7px 9px;border-radius:var(--radius);outline:none;width:100%;"
+           id="asr-year-${idx}" placeholder="Anno">
+    <input type="text" value="${entry.sheetId}"
+           style="background:var(--surface2);border:1.5px solid var(--border);color:var(--text);
+                  font-family:monospace;font-size:11px;padding:7px 9px;border-radius:var(--radius);outline:none;width:100%;"
+           id="asr-id-${idx}" placeholder="ID Foglio Google">
+    <button class="btn btn-icon" style="color:var(--danger);border-color:var(--danger);" onclick="removeAnnualSheetRow(${idx})">✕</button>`;
+  container.appendChild(row);
+}
+
+function addAnnualSheetRow() {
+  const list = document.getElementById('annualSheetsList');
+  if (!list) return;
+  const currentCount = list.children.length;
+  const nextYear = new Date().getFullYear() + 1;
+  renderAnnualSheetRow(list, { year: nextYear, sheetId: '', label: String(nextYear) }, currentCount);
+}
+
+function removeAnnualSheetRow(idx) {
+  const row = document.getElementById('asr-' + idx);
+  if (row) row.remove();
+  // Rinumera i rimanenti
+  const list = document.getElementById('annualSheetsList');
+  if (!list) return;
+  Array.from(list.children).forEach((el, i) => { el.id = 'asr-' + i; });
+}
+
+async function testDbConnection() {
+  const idEl = document.getElementById('sDbSheetId');
+  const res  = document.getElementById('dbTestResult');
+  const id   = idEl?.value.trim();
+  if (!id) { res.textContent = '⚠ Inserisci l'ID del foglio'; res.style.color='var(--danger)'; return; }
+  res.textContent = '⏳ Connessione…'; res.style.color='var(--text3)';
+  try {
+    const r = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=properties.title,sheets.properties.title`,
+      { headers: { Authorization: 'Bearer ' + accessToken } }
+    );
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    const sheetNames = d.sheets?.map(s => s.properties.title) || [];
+    const hasPren = sheetNames.includes('PRENOTAZIONI');
+    if (hasPren) {
+      res.textContent = `✓ Connesso: "${d.properties.title}" — scheda PRENOTAZIONI trovata`;
+      res.style.color = 'var(--accent)';
+    } else {
+      res.textContent = `⚠ Foglio trovato ma manca la scheda "PRENOTAZIONI". Creala nel foglio Google.`;
+      res.style.color = 'var(--danger)';
+    }
+  } catch(e) {
+    res.textContent = '✗ Errore: ' + e.message + ' — controlla l'ID e i permessi';
+    res.style.color = 'var(--danger)';
+  }
 }
 
 function buildRoomSelect(){
