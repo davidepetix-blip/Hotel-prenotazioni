@@ -2233,13 +2233,9 @@ window.addEventListener('resize',checkW);
 
 // Attendi Google Identity Services
 window.addEventListener('load', () => {
-  // Attendi che google.accounts sia disponibile
-  const waitGIS = setInterval(() => {
-    if (window.google?.accounts?.oauth2) {
-      clearInterval(waitGIS);
-      initGoogleAuth();
-    }
-  }, 200);
+  // Controlla subito il token nel fragment — non aspettare GSI
+  // (il redirect flow non ha bisogno di google.accounts)
+  handleOAuthRedirect();
 });
 
 buildRoomSelect();
