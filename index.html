@@ -216,6 +216,46 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .bed-ctr-val { font-size: 14px; font-weight: 600; color: var(--text); min-width: 18px; text-align: center; }
 .bed-preview { font-size: 11px; color: var(--accent); font-weight: 600; margin-top: 6px; min-height: 16px; letter-spacing: .01em; }
 
+/* ── DASHBOARD CAMERE ── */
+#roomDashPage { display:none; position:fixed; inset:0; background:var(--bg); z-index:200; flex-direction:column; overflow:hidden; }
+#roomDashPage.open { display:flex; }
+.rdash-filters { display:flex; gap:8px; padding:12px 16px; flex-wrap:wrap; border-bottom:1px solid var(--border); background:var(--surface); }
+.rdash-filter-btn { padding:5px 14px; border-radius:20px; font-size:11px; font-weight:600; border:1.5px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer; }
+.rdash-filter-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(45,106,79,.1); }
+.rdash-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(155px,1fr)); gap:10px; padding:14px; overflow-y:auto; flex:1; }
+.rdash-card { background:var(--surface); border:1.5px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; transition:.15s; }
+.rdash-card:active { opacity:.8; }
+.rdash-card.pulita         { border-left:4px solid #2d6a4f; }
+.rdash-card.da-pulire      { border-left:4px solid #e67e22; }
+.rdash-card.in-corso       { border-left:4px solid #3498db; }
+.rdash-card.fuori-servizio { border-left:4px solid #c0392b; }
+.rdash-cam-name  { font-size:15px; font-weight:700; color:var(--text); }
+.rdash-cam-group { font-size:9px; text-transform:uppercase; letter-spacing:.08em; color:var(--text3); margin-bottom:8px; }
+.rdash-badge { display:inline-block; padding:3px 9px; border-radius:12px; font-size:10px; font-weight:700; text-transform:uppercase; }
+.badge-pulita         { background:#d4edda; color:#155724; }
+.badge-da-pulire      { background:#fde8cc; color:#7d4e00; }
+.badge-in-corso       { background:#cce5ff; color:#004085; }
+.badge-fuori-servizio { background:#f8d7da; color:#721c24; }
+.rdash-config { font-size:11px; color:var(--text2); margin-top:6px; }
+.rdash-note   { font-size:10px; color:var(--text3); margin-top:4px; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rdash-ts     { font-size:9px; color:var(--text3); margin-top:6px; }
+.rstate-overlay { position:fixed; inset:0; z-index:500; background:rgba(0,0,0,.45); display:none; align-items:flex-end; }
+.rstate-overlay.open { display:flex; }
+.rstate-panel { background:var(--bg); border-radius:16px 16px 0 0; padding:20px 20px 36px; width:100%; max-width:500px; margin:0 auto; }
+.rstate-title { font-size:15px; font-weight:700; margin-bottom:14px; color:var(--text); }
+.rstate-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px; }
+.rstate-btn { padding:13px 8px; border-radius:10px; font-size:12px; font-weight:700; border:2px solid transparent; cursor:pointer; text-align:center; }
+.rstate-btn.sel { border-color:var(--accent) !important; }
+.rstate-btn.s-pulita         { background:#d4edda; color:#155724; }
+.rstate-btn.s-da-pulire      { background:#fde8cc; color:#7d4e00; }
+.rstate-btn.s-in-corso       { background:#cce5ff; color:#004085; }
+.rstate-btn.s-fuori-servizio { background:#f8d7da; color:#721c24; }
+.room-status-dot { width:6px; height:6px; border-radius:50%; display:inline-block; margin-left:5px; vertical-align:middle; flex-shrink:0; }
+.rsd-pulita         { background:#2d6a4f; }
+.rsd-da-pulire      { background:#e67e22; }
+.rsd-in-corso       { background:#3498db; }
+.rsd-fuori-servizio { background:#c0392b; }
+
 /* ── PAGINA IMPOSTAZIONI ── */
 #settingsPage { display: none; position: fixed; inset: 0; background: var(--bg); z-index: 150; flex-direction: column; overflow: hidden; }
 #settingsPage.open { display: flex; }
@@ -278,6 +318,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
   <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
+  <button class="btn btn-icon" onclick="openRoomDash()" title="Stato camere">🏠</button>
   <button class="btn btn-icon" onclick="openSettings()" title="Impostazioni camere">⚙</button>
   <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
   <button class="btn primary" id="btnAdd" style="display:none" onclick="openModal()">+ Nuova</button>
@@ -365,6 +406,16 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   </div>
 </div>
 
+<!-- ══ ROOM DASHBOARD PAGE ══ -->
+<div id="roomDashPage">
+  <div class="spage-bar">
+    <button class="btn btn-icon" onclick="closeRoomDash()">←</button>
+    <div class="spage-title">🏠 Stato Camere</div>
+    <button class="btn" onclick="forceSync(); closeRoomDash();" title="Aggiorna da database">↻ Sync</button>
+  </div>
+  <div class="spage-body" id="roomDashBody"></div>
+</div>
+
 <!-- ══ SETTINGS PAGE ══ -->
 <div id="settingsPage">
   <div class="spage-bar">
@@ -381,6 +432,26 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOAST ══ -->
 <div class="toast" id="toast"></div>
+
+<!-- ══ ROOM STATE MODAL ══ -->
+<div class="rstate-overlay" id="rstateOverlay" onclick="rstateOverlayClick(event)">
+  <div class="rstate-panel">
+    <div class="rstate-title" id="rstateCamTitle">Camera —</div>
+    <div class="rstate-grid" id="rstateButtons"></div>
+    <div class="fg" style="margin-bottom:12px;">
+      <label class="fl">Configurazione letti attuale</label>
+      <input type="text" class="fi" id="rstateConfig" placeholder="es. 2m, 1m+1s, 2s…">
+    </div>
+    <div class="fg" style="margin-bottom:16px;">
+      <label class="fl">Note operative</label>
+      <input type="text" class="fi" id="rstateNote" placeholder="es. guasto bagno, in manutenzione…">
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn" style="flex:1" onclick="closeRstateModal()">Annulla</button>
+      <button class="btn primary" style="flex:2" onclick="saveRoomState()">✓ Salva stato</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // ── Error handler globale per debug mobile ──
@@ -433,6 +504,19 @@ const DB_COLS = {
 const DB_SHEET_NAME  = 'PRENOTAZIONI';
 const DB_HEADER_ROW  = 1;
 const DB_FIRST_ROW   = 2;
+
+// ── Scheda CAMERE nel DATABASE ──
+const ROOMS_SHEET_NAME = 'CAMERE';
+const RCOLS = {
+  CAMERA: 1, MAX_OSPITI: 2, LETTI_AMMESSI: 3,
+  PULIZIA: 4, CONFIGURAZIONE: 5, NOTE_OPS: 6, TS: 7
+};
+const PULIZIA_STATI = [
+  { id:'pulita',         label:'Pulita',         cls:'s-pulita'         },
+  { id:'da-pulire',      label:'Da pulire',       cls:'s-da-pulire'      },
+  { id:'in-corso',       label:'In corso',        cls:'s-in-corso'       },
+  { id:'fuori-servizio', label:'Fuori servizio',  cls:'s-fuori-servizio' },
+];
 
 // ═══════════════════════════════════════════════════════════════════
 // COSTANTI FOGLIO ANNUALE — devono corrispondere al tuo Apps Script
@@ -555,7 +639,10 @@ let curY = new Date().getFullYear();
 let selColor = '#D9D9D9', editId = null, nid = 1000;
 let bedCounts = { m:0, s:0, c:0, aff:0 };
 let roomSettings = loadRoomSettings();
+let roomStates = {};   // { roomId: { pulizia, configurazione, noteOps, ts, dbRow } }
 let bookings = [];
+let _rdashFilter = 'tutti';  // filtro attivo nella dashboard
+let _rstateEditRoom = null;  // camera in editing nel modal
 let sheetColumnMap = {};   // sheetName → { roomName → colIdx }
 
 // ── DATABASE state ──
@@ -921,6 +1008,157 @@ function dbRowToBooking(row, rowNum) {
   };
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+// CRUD SCHEDA CAMERE (impostazioni + stato operativo)
+// ═══════════════════════════════════════════════════════════════════
+const ROOMS_CACHE_KEY = 'hotelRoomsCache';
+
+async function ensureRoomsSheet() {
+  try {
+    const d = await dbGet(`${ROOMS_SHEET_NAME}!A1:G1`);
+    if (d.values?.[0]?.[0] === 'CAMERA') return;
+  } catch(e) {}
+  const id = DATABASE_SHEET_ID;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(ROOMS_SHEET_NAME+'!A1:G1')}?valueInputOption=RAW`;
+  await fetch(url, {
+    method:'PUT',
+    headers:{ Authorization:'Bearer '+accessToken, 'Content-Type':'application/json' },
+    body: JSON.stringify({ values:[['CAMERA','MAX_OSPITI','LETTI_AMMESSI','PULIZIA','CONFIGURAZIONE','NOTE_OPS','TS_AGGIORNAMENTO']] })
+  });
+}
+
+async function readRoomsSheet() {
+  const data = await dbGet(`${ROOMS_SHEET_NAME}!A2:G9999`);
+  const rows = data.values || [];
+  const result = {};
+  rows.forEach((row, i) => {
+    const cam = (row[RCOLS.CAMERA-1] || '').trim();
+    if (!cam) return;
+    const room = ROOMS.find(r => r.name === cam);
+    if (!room) return;
+    result[room.id] = {
+      dbRow:         i + 2,
+      maxGuests:     parseInt(row[RCOLS.MAX_OSPITI-1]) || 2,
+      allowedBeds:   (row[RCOLS.LETTI_AMMESSI-1] || 'm,s').split(',').map(s=>s.trim()).filter(Boolean),
+      pulizia:       row[RCOLS.PULIZIA-1]       || 'da-pulire',
+      configurazione:row[RCOLS.CONFIGURAZIONE-1]|| '',
+      noteOps:       row[RCOLS.NOTE_OPS-1]      || '',
+      ts:            row[RCOLS.TS-1]            || '',
+    };
+  });
+  return result;
+}
+
+async function writeRoomsSheet(statesMap) {
+  // statesMap: { roomId: { maxGuests, allowedBeds, pulizia, configurazione, noteOps } }
+  const id = DATABASE_SHEET_ID;
+  if (!id) return;
+  const rows = ROOMS.map(room => {
+    const s = statesMap[room.id] || {};
+    return [
+      room.name,
+      s.maxGuests     || ROOM_DEFAULTS[room.id]?.maxGuests || 2,
+      (s.allowedBeds  || ROOM_DEFAULTS[room.id]?.allowedBeds || ['m','s']).join(','),
+      s.pulizia       || 'da-pulire',
+      s.configurazione|| '',
+      s.noteOps       || '',
+      nowISO(),
+    ];
+  });
+  const range = `${ROOMS_SHEET_NAME}!A2:G${1+rows.length}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+  await fetch(url, {
+    method:'PUT',
+    headers:{ Authorization:'Bearer '+accessToken, 'Content-Type':'application/json' },
+    body: JSON.stringify({ values: rows })
+  });
+  // Salva cache
+  try { localStorage.setItem(ROOMS_CACHE_KEY, JSON.stringify({ ts:Date.now(), data:statesMap })); } catch(e){}
+}
+
+async function updateSingleRoomState(roomId, patch) {
+  const id = DATABASE_SHEET_ID;
+  const room = ROOMS.find(r => r.id === roomId);
+  if (!room || !id) return;
+  roomStates[roomId] = { ...(roomStates[roomId]||{}), ...patch, ts: nowISO() };
+  // Scrivi solo questa riga
+  const s = roomStates[roomId];
+  const values = [[
+    room.name,
+    s.maxGuests     || ROOM_DEFAULTS[roomId]?.maxGuests || 2,
+    (s.allowedBeds  || ROOM_DEFAULTS[roomId]?.allowedBeds || ['m','s']).join(','),
+    s.pulizia       || 'da-pulire',
+    s.configurazione|| '',
+    s.noteOps       || '',
+    s.ts,
+  ]];
+  if (s.dbRow) {
+    const range = `${ROOMS_SHEET_NAME}!A${s.dbRow}:G${s.dbRow}`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+    await fetch(url, { method:'PUT', headers:{ Authorization:'Bearer '+accessToken,'Content-Type':'application/json'}, body:JSON.stringify({values}) });
+  } else {
+    // Nuova riga
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(ROOMS_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+    const resp = await fetch(url, { method:'POST', headers:{ Authorization:'Bearer '+accessToken,'Content-Type':'application/json'}, body:JSON.stringify({values}) });
+    const r2 = await resp.json();
+    const m = (r2.updates?.updatedRange||'').match(/(\d+):/);
+    if (m) roomStates[roomId].dbRow = parseInt(m[1]);
+  }
+  // Aggiorna cache
+  try { localStorage.setItem(ROOMS_CACHE_KEY, JSON.stringify({ ts:Date.now(), data:roomStates })); } catch(e){}
+}
+
+function loadRoomsCache() {
+  try {
+    const raw = localStorage.getItem(ROOMS_CACHE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (Date.now() - p.ts > 60*60*1000) return null;
+    return p.data;
+  } catch(e) { return null; }
+}
+
+async function loadRoomStates() {
+  if (!DATABASE_SHEET_ID) return;
+  const cached = loadRoomsCache();
+  if (cached) { roomStates = cached; syncRoomSettingsFromStates(); return; }
+  try {
+    await ensureRoomsSheet();
+    const fromDb = await readRoomsSheet();
+    if (Object.keys(fromDb).length > 0) {
+      roomStates = fromDb;
+    } else {
+      // Prima volta: inizializza con i default
+      ROOMS.forEach(r => {
+        roomStates[r.id] = {
+          maxGuests:      ROOM_DEFAULTS[r.id]?.maxGuests || 2,
+          allowedBeds:    ROOM_DEFAULTS[r.id]?.allowedBeds || ['m','s'],
+          pulizia:        'da-pulire',
+          configurazione: '',
+          noteOps:        '',
+          ts:             '',
+        };
+      });
+      await writeRoomsSheet(roomStates);
+    }
+    syncRoomSettingsFromStates();
+    try { localStorage.setItem(ROOMS_CACHE_KEY, JSON.stringify({ ts:Date.now(), data:roomStates })); } catch(e){}
+  } catch(e) { console.warn('loadRoomStates error:', e.message); }
+}
+
+// Sincronizza roomSettings (usato dal modal prenotazione) con i dati dal DB
+function syncRoomSettingsFromStates() {
+  ROOMS.forEach(r => {
+    const s = roomStates[r.id];
+    if (!s) return;
+    roomSettings[r.id] = {
+      maxGuests:   s.maxGuests   || ROOM_DEFAULTS[r.id]?.maxGuests  || 2,
+      allowedBeds: s.allowedBeds || ROOM_DEFAULTS[r.id]?.allowedBeds|| ['m','s'],
+    };
+  });
+}
+
 // ── Leggi tutto il DATABASE ──
 async function readDatabase() {
   const data = await dbGet(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:L9999`);
@@ -1206,6 +1444,9 @@ async function loadFromSheets() {
     if (DATABASE_SHEET_ID) {
       showLoading('Sincronizzazione database…');
       allAnnual = await syncWithDatabase(allAnnual, _forcingSync);
+      // Carica anche stato camere
+      showLoading('Caricamento stato camere…');
+      await loadRoomStates();
     }
 
     // 3. Ricongiungi multi-mese
@@ -1784,7 +2025,9 @@ function render() {
       });
       let tv='';
       if(isNow){ const tx=(tod-1)*CW+CW/2-1; tv=`<div class="tvline" style="left:${tx}px"></div>`; }
-      h+=`<div class="rrow"><div class="rlabel">${room.name}</div><div class="dcwrap">${cells}${bars}${tv}</div></div>`;
+      const _rs=roomStates[room.id]||{}, _rp=_rs.pulizia||'';
+      const _dot=_rp?`<span class="room-status-dot rsd-${_rp}" title="${_rp}"></span>`:'';
+      h+=`<div class="rrow"><div class="rlabel" onclick="event.stopPropagation();openRoomDrawer('${room.id}')" style="cursor:pointer;">${room.name}${_dot}</div><div class="dcwrap">${cells}${bars}${tv}</div></div>`;
     });
   });
 
@@ -1892,6 +2135,32 @@ function cellClick(rid,day){
 // DRAWER
 // ═══════════════════════════════════════════════════════════════════
 function openDrawer(){ document.getElementById('drawer').classList.add('open'); document.getElementById('dov').classList.add('open'); }
+
+function openRoomDrawer(roomId) {
+  const room = ROOMS.find(r=>r.id===roomId);
+  if (!room) return;
+  const rs    = roomStates[roomId] || {};
+  const pLabel= {'pulita':'Pulita','da-pulire':'Da pulire','in-corso':'In corso','fuori-servizio':'Fuori servizio'};
+  // Apri drawer con info camera
+  document.getElementById('drtitle').textContent = 'Camera ' + room.name;
+  document.getElementById('drsub').textContent   = room.g;
+  const stateHtml = `<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:12px;border:1px solid var(--border);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">Stato camera</span>
+      <button class="btn" style="font-size:10px;padding:3px 8px;" onclick="openRstateModal('${roomId}')">✎ Modifica</button>
+    </div>
+    <span class="rdash-badge badge-${rs.pulizia||'da-pulire'}">${pLabel[rs.pulizia||'da-pulire']||'—'}</span>
+    ${rs.configurazione?'<div style="font-size:11px;color:var(--text2);margin-top:5px;">🛏 '+rs.configurazione+'</div>':''}
+    ${rs.noteOps?'<div style="font-size:10px;color:var(--text3);margin-top:3px;font-style:italic;">'+rs.noteOps+'</div>':''}
+  </div>`;
+  // Prenotazioni della camera nel mese corrente
+  const ms=new Date(curY,curM,1), me=new Date(curY,curM+1,0);
+  const rbs=bookings.filter(b=>b.r===roomId&&b.s<=me&&b.e>=ms);
+  let bhtml='';
+  rbs.forEach(b=>{ bhtml+=`<div style="background:${b.c};padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:12px;"><strong>${b.n}</strong><br><span style="font-size:10px;">${fmt(b.s)} → ${fmt(b.e)}</span>${b.d?'<br><span style="font-size:10px;">'+b.d+'</span>':''}</div>`; });
+  document.getElementById('drbody').innerHTML = stateHtml + (bhtml||'<div class="empty" style="padding:20px 0;"><div style="font-size:11px;color:var(--text3);">Nessuna prenotazione questo mese</div></div>');
+  openDrawer();
+}
 function closeDrawer(){ document.getElementById('drawer').classList.remove('open'); document.getElementById('dov').classList.remove('open'); }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2156,6 +2425,13 @@ function saveSettings() {
     roomSettings[room.id] = { maxGuests, allowedBeds: allowedBeds.length ? allowedBeds : ['m','s'] };
   });
   saveRoomSettingsLS(roomSettings);
+  // Aggiorna roomStates e salva su DB
+  ROOMS.forEach(room => {
+    if (!roomStates[room.id]) roomStates[room.id] = {};
+    roomStates[room.id].maxGuests   = roomSettings[room.id]?.maxGuests   || 2;
+    roomStates[room.id].allowedBeds = roomSettings[room.id]?.allowedBeds || ['m','s'];
+  });
+  if (DATABASE_SHEET_ID) writeRoomsSheet(roomStates).catch(e => console.warn('writeRoomsSheet:', e.message));
   closeSettings();
   showToast('✓ Impostazioni salvate', 'success');
 }
@@ -2251,6 +2527,118 @@ function renderSettingsBody() {
   });
 
   body.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DASHBOARD CAMERE
+// ═══════════════════════════════════════════════════════════════════
+
+function puliziaBadge(p) {
+  const labels = { 'pulita':'Pulita','da-pulire':'Da pulire','in-corso':'In corso','fuori-servizio':'Fuori servizio' };
+  return `<span class="rdash-badge badge-${p}">${labels[p]||p}</span>`;
+}
+
+function openRoomDash() {
+  renderRoomDash();
+  document.getElementById('roomDashPage').classList.add('open');
+}
+function closeRoomDash() {
+  document.getElementById('roomDashPage').classList.remove('open');
+}
+
+function renderRoomDash() {
+  const body = document.getElementById('roomDashPage');
+  // Filtri
+  let filtersHtml = `<div class="rdash-filters">`;
+  const filtri = ['tutti','pulita','da-pulire','in-corso','fuori-servizio'];
+  const fLabel  = {'tutti':'Tutti','pulita':'Pulite','da-pulire':'Da pulire','in-corso':'In corso','fuori-servizio':'Fuori servizio'};
+  filtri.forEach(f => {
+    filtersHtml += `<button class="rdash-filter-btn${_rdashFilter===f?' active':''}" onclick="_rdashFilter='${f}';renderRoomDash()">${fLabel[f]}</button>`;
+  });
+  filtersHtml += `</div>`;
+
+  let gridHtml = `<div class="rdash-grid">`;
+  ROOMS.forEach(room => {
+    const s = roomStates[room.id] || {};
+    const p = s.pulizia || 'da-pulire';
+    if (_rdashFilter !== 'tutti' && p !== _rdashFilter) return;
+    const ts = s.ts ? new Date(s.ts).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    gridHtml += `
+      <div class="rdash-card ${p}" onclick="openRstateModal('${room.id}')">
+        <div class="rdash-cam-name">Camera ${room.name}</div>
+        <div class="rdash-cam-group">${room.g}</div>
+        ${puliziaBadge(p)}
+        <div class="rdash-config">${s.configurazione ? '🛏 '+s.configurazione : ''}</div>
+        <div class="rdash-note">${s.noteOps || ''}</div>
+        <div class="rdash-ts">${ts}</div>
+      </div>`;
+  });
+  gridHtml += `</div>`;
+
+  // Rimonta solo filters+grid (senza toccare la topbar)
+  const existingBar = body.querySelector('.spage-bar');
+  body.innerHTML = '';
+  if (existingBar) body.appendChild(existingBar);
+  body.insertAdjacentHTML('beforeend', filtersHtml + gridHtml);
+}
+
+// ── Modal modifica stato singola camera ──
+function openRstateModal(roomId) {
+  _rstateEditRoom = roomId;
+  const room = ROOMS.find(r => r.id === roomId);
+  const s = roomStates[roomId] || {};
+  document.getElementById('rstateCamTitle').textContent = `Camera ${room?.name || roomId}`;
+  document.getElementById('rstateConfig').value = s.configurazione || '';
+  document.getElementById('rstateNote').value   = s.noteOps || '';
+  // Costruisci bottoni stati
+  const btns = document.getElementById('rstateButtons');
+  btns.innerHTML = PULIZIA_STATI.map(st =>
+    `<button class="rstate-btn ${st.cls}${(s.pulizia||'da-pulire')===st.id?' sel':''}"
+             onclick="selectRstate('${st.id}')">${st.label}</button>`
+  ).join('');
+  document.getElementById('rstateOverlay').classList.add('open');
+}
+
+function selectRstate(statoId) {
+  document.querySelectorAll('.rstate-btn').forEach(b => b.classList.remove('sel'));
+  const btns = document.getElementById('rstateButtons');
+  const idx = PULIZIA_STATI.findIndex(s => s.id === statoId);
+  if (idx >= 0) btns.children[idx]?.classList.add('sel');
+  // Salva selezione temporanea nel dataset
+  btns.dataset.selected = statoId;
+}
+
+function closeRstateModal() {
+  document.getElementById('rstateOverlay').classList.remove('open');
+  _rstateEditRoom = null;
+}
+
+function rstateOverlayClick(e) {
+  if (e.target === document.getElementById('rstateOverlay')) closeRstateModal();
+}
+
+async function saveRoomState() {
+  if (!_rstateEditRoom) return;
+  const btns = document.getElementById('rstateButtons');
+  const pulizia = btns.dataset.selected
+    || document.querySelector('.rstate-btn.sel')?.textContent
+    || (roomStates[_rstateEditRoom]?.pulizia || 'da-pulire');
+  const configurazione = document.getElementById('rstateConfig').value.trim();
+  const noteOps        = document.getElementById('rstateNote').value.trim();
+
+  closeRstateModal();
+  showLoading('Salvataggio stato camera…');
+  try {
+    await updateSingleRoomState(_rstateEditRoom, { pulizia, configurazione, noteOps });
+    hideLoading();
+    showToast('✓ Stato camera aggiornato', 'success');
+    render(); // aggiorna dot nel gantt
+    // Se la dashboard è aperta, aggiorna la griglia
+    if (document.getElementById('roomDashPage').classList.contains('open')) renderRoomDash();
+  } catch(e) {
+    hideLoading();
+    showToast('Errore: ' + e.message, 'error');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
