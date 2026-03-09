@@ -685,7 +685,10 @@ function startLogin() {
     // ── Redirect flow: funziona su tutti i browser mobili ──
     const state = randomState();
     sessionStorage.setItem('oauth_state', state);
-    const redirectUri = location.origin + location.pathname;
+    // Normalizza: rimuovi "index.html" e assicura slash finale
+    // così un unico URI autorizzato copre tutte le varianti
+    const rawPath = location.pathname.replace(/\/index\.html$/, '/').replace(/([^/])$/, '$1/');
+    const redirectUri = location.origin + rawPath;
     const params = new URLSearchParams({
       client_id:     CLIENT_ID,
       redirect_uri:  redirectUri,
