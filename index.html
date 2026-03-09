@@ -661,105 +661,69 @@ function sheetsColorToHex(c) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// AUTENTICAZIONE GOOGLE — OAuth 2.0 implicit flow con fallback redirect
-// Su mobile i popup sono bloccati → usa redirect automaticamente
+// AUTENTICAZIONE GOOGLE — OAuth 2.0 redirect flow (funziona su tutti i browser)
 // ═══════════════════════════════════════════════════════════════════
-let tokenClient;
 
-// Genera state CSRF casuale
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map(b => b.toString(16).padStart(2,'0')).join('');
 }
 
-// Controlla se siamo su mobile (popup bloccati)
-function isMobile() {
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+function getRedirectUri() {
+  // Rimuovi index.html e assicura slash finale → un solo URI da registrare in Google Console
+  const path = location.pathname.replace(/\/index\.html$/, '/').replace(/([^/])$/, '$1/');
+  return location.origin + path;
 }
 
 function startLogin() {
-  const errEl = document.getElementById('loginErr');
-  errEl.textContent = '';
-
-  if (isMobile()) {
-    // ── Redirect flow: funziona su tutti i browser mobili ──
-    const state = randomState();
-    sessionStorage.setItem('oauth_state', state);
-    // Normalizza: rimuovi "index.html" e assicura slash finale
-    // così un unico URI autorizzato copre tutte le varianti
-    const rawPath = location.pathname.replace(/\/index\.html$/, '/').replace(/([^/])$/, '$1/');
-    const redirectUri = location.origin + rawPath;
-    const params = new URLSearchParams({
-      client_id:     CLIENT_ID,
-      redirect_uri:  redirectUri,
-      response_type: 'token',
-      scope:         SCOPES,
-      state,
-      include_granted_scopes: 'true',
-    });
-    location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
-    return;
-  }
-
-  // ── Popup flow: desktop ──
-  if (!tokenClient) {
-    errEl.textContent = 'Google Identity non ancora caricato. Riprova tra un secondo.';
-    return;
-  }
-  tokenClient.requestAccessToken();
+  document.getElementById('loginErr').textContent = '';
+  const state = randomState();
+  sessionStorage.setItem('oauth_state', state);
+  const params = new URLSearchParams({
+    client_id:     CLIENT_ID,
+    redirect_uri:  getRedirectUri(),
+    response_type: 'token',
+    scope:         SCOPES,
+    state,
+    include_granted_scopes: 'true',
+  });
+  location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
 }
 
-// Gestisce il token restituito dopo il redirect (fragment #access_token=…)
+// Chiamata subito al caricamento — intercetta il token se stiamo tornando da Google
 function handleOAuthRedirect() {
   const hash = location.hash.slice(1);
   if (!hash) return false;
   const params = new URLSearchParams(hash);
   const token  = params.get('access_token');
-  const state  = params.get('state');
   const error  = params.get('error');
+  const state  = params.get('state');
+
+  // Pulisci subito il fragment dall'URL (non mostrare token nella barra)
+  history.replaceState(null, '', location.pathname);
 
   if (error) {
     document.getElementById('loginErr').textContent = 'Accesso negato: ' + error;
-    history.replaceState(null, '', location.pathname); // pulisci URL
     return true;
   }
   if (!token) return false;
 
-  // Verifica state (CSRF)
-  const savedState = sessionStorage.getItem('oauth_state');
+  // Verifica CSRF state
+  const saved = sessionStorage.getItem('oauth_state');
   sessionStorage.removeItem('oauth_state');
-  if (savedState && state !== savedState) {
-    document.getElementById('loginErr').textContent = 'Errore di sicurezza. Riprova.';
-    history.replaceState(null, '', location.pathname);
+  if (saved && state !== saved) {
+    document.getElementById('loginErr').textContent = 'Errore sicurezza. Riprova.';
     return true;
   }
 
-  // Pulisci URL (rimuovi fragment sensibile) e salva token
-  history.replaceState(null, '', location.pathname);
   accessToken = token;
   onLoginSuccess();
   return true;
 }
 
 function initGoogleAuth() {
-  // Prima controlla se stiamo tornando da un redirect OAuth
-  if (handleOAuthRedirect()) return;
-
-  // Desktop: prepara tokenClient per popup
-  if (!isMobile() && typeof google !== 'undefined') {
-    tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID,
-      scope: SCOPES,
-      callback: async (resp) => {
-        if (resp.error) {
-          document.getElementById('loginErr').textContent = 'Accesso negato: ' + resp.error;
-          return;
-        }
-        accessToken = resp.access_token;
-        onLoginSuccess();
-      },
-    });
-  }
+  // Controlla subito se stiamo tornando da redirect Google
+  handleOAuthRedirect();
 }
 
 async function onLoginSuccess() {
@@ -780,9 +744,6 @@ async function onLoginSuccess() {
 
 function logout() {
   if (!confirm('Vuoi uscire?')) return;
-  if (typeof google !== 'undefined' && accessToken) {
-    google.accounts.oauth2.revoke(accessToken, () => {});
-  }
   accessToken = null;
   bookings = [];
   Object.keys(_sheetIdCaches).forEach(k => delete _sheetIdCaches[k]);
