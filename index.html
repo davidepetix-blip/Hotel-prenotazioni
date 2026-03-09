@@ -274,7 +274,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     <div class="mlabel" id="mlabel">GEN 2026</div>
     <button onclick="changeMonth(1)">›</button>
   </div>
-  <button class="btn btn-icon sync-btn" onclick="loadFromSheets()" title="Sincronizza dal foglio Google">
+  <button class="btn btn-icon sync-btn" onclick="forceSync()" title="Forza sincronizzazione completa">
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
   <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
@@ -755,11 +755,18 @@ async function onLoginSuccess() {
   await loadFromSheets();
 }
 
+function forceSync() {
+  loadFromSheets._forceNext = true;
+  invalidateDbCache();
+  loadFromSheets();
+}
+
 function logout() {
   if (!confirm('Vuoi uscire?')) return;
   accessToken = null;
   bookings = [];
   Object.keys(_sheetIdCaches).forEach(k => delete _sheetIdCaches[k]);
+  invalidateDbCache();
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('userAvatar').style.display = 'none';
 }
@@ -818,15 +825,21 @@ async function dbBatchUpdate(requests) {
 }
 
 async function dbAppendRow(values) {
+  return dbBatchAppendRows([values]);
+}
+
+// Scrivi N righe in una sola chiamata API (molto più veloce)
+async function dbBatchAppendRows(rowsArray) {
   const id = DATABASE_SHEET_ID;
   if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
+  if (!rowsArray.length) return null;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(DB_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
   const r = await fetch(url, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [values] })
+    body: JSON.stringify({ values: rowsArray })
   });
-  if (!r.ok) throw new Error(`DB append error ${r.status}: ${await r.text()}`);
+  if (!r.ok) throw new Error(`DB batch append error ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
@@ -1032,20 +1045,77 @@ async function readAnnualSheet(entry) {
 }
 
 // ── SYNC BIDIREZIONALE: DATABASE vs righe 45 ──
-async function syncWithDatabase(annualBookings) {
+// ── Cache locale del DATABASE in localStorage ──
+const DB_CACHE_KEY     = 'hotelDbCache';
+const DB_CACHE_TTL_MS  = 60 * 60 * 1000; // 1 ora
+const BATCH_SIZE       = 50; // righe per chiamata API durante import
+
+function saveDbCache(bookings) {
+  try {
+    const payload = {
+      ts: Date.now(),
+      data: bookings.map(b => ({
+        ...b,
+        s: b.s?.toISOString(),
+        e: b.e?.toISOString(),
+      }))
+    };
+    localStorage.setItem(DB_CACHE_KEY, JSON.stringify(payload));
+  } catch(e) { console.warn('Cache DB non salvata:', e.message); }
+}
+
+function loadDbCache() {
+  try {
+    const raw = localStorage.getItem(DB_CACHE_KEY);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    if (Date.now() - payload.ts > DB_CACHE_TTL_MS) return null; // scaduta
+    return payload.data.map(b => ({
+      ...b,
+      s: new Date(b.s),
+      e: new Date(b.e),
+    }));
+  } catch(e) { return null; }
+}
+
+function invalidateDbCache() {
+  localStorage.removeItem(DB_CACHE_KEY);
+}
+
+async function syncWithDatabase(annualBookings, forceSync = false) {
   if (!DATABASE_SHEET_ID) return annualBookings;
 
+  // ── Usa cache locale se non scaduta e non forzato ──
+  if (!forceSync) {
+    const cached = loadDbCache();
+    if (cached) {
+      showLoading(`✓ ${cached.length} prenotazioni da cache locale`);
+      // Merge: aggiungi prenotazioni annual non in cache (nuove da foglio)
+      const cachedIds = new Set(cached.map(b => b.dbId).filter(Boolean));
+      const newFromAnnual = annualBookings.filter(a => {
+        if (!a.dbId) return true; // non ha ancora dbId → potenzialmente nuova
+        return !cachedIds.has(a.dbId);
+      });
+      if (newFromAnnual.length > 0) {
+        // Ci sono nuove prenotazioni nel foglio non ancora in cache → sync completo
+        console.log(`${newFromAnnual.length} nuove prenotazioni nel foglio, sync completo`);
+      } else {
+        return cached; // tutto aggiornato
+      }
+    }
+  }
+
   await ensureDbHeaders();
+  showLoading('Lettura database…');
   const dbBookings = await readDatabase();
 
-  const dbById = new Map(dbBookings.map(b => [b.dbId, b]));
-  const result  = [];
-  const toUpdateInDb = [];
-  const seen    = new Set();
+  const result        = [];
+  const toUpdateInDb  = [];
+  const toImportBatch = []; // nuove da importare in batch
+  const seen          = new Set();
 
-  // 1. Per ogni prenotazione annual: confronta con DB per timestamp
+  // ── Confronta annual vs DB ──
   for (const ann of annualBookings) {
-    // Cerca corrispondenza nel DB per camera+nome+dal+al (le prenotazioni annual non hanno ancora dbId)
     const match = dbBookings.find(db =>
       db.cameraName === ann.cameraName &&
       db.n          === ann.n &&
@@ -1054,21 +1124,18 @@ async function syncWithDatabase(annualBookings) {
     );
 
     if (!match) {
-      // Nuova: non è nel DB → importa
       ann.dbId  = genBookingId(ann.s.getFullYear());
       ann.ts    = nowISO();
       ann.fonte = 'manuale';
-      await dbUpsert(ann, 'manuale');
+      toImportBatch.push(ann);
       result.push(ann);
     } else {
       seen.add(match.dbId);
-      const dbTs  = match.ts  ? new Date(match.ts).getTime()  : 0;
-      const annTs = ann.ts    ? new Date(ann.ts).getTime()    : 0;
+      const dbTs  = match.ts  ? new Date(match.ts).getTime() : 0;
+      const annTs = ann.ts    ? new Date(ann.ts).getTime()   : 0;
       if (dbTs >= annTs) {
-        // DB vince (più recente o pari)
         result.push(match);
       } else {
-        // Annual vince → aggiorna DB
         match.n = ann.n; match.d = ann.d; match.c = ann.c;
         match.note = ann.note; match.ts = nowISO(); match.fonte = 'manuale';
         toUpdateInDb.push(match);
@@ -1077,13 +1144,35 @@ async function syncWithDatabase(annualBookings) {
     }
   }
 
-  // 2. Prenotazioni solo nel DB (non trovate nell'annual) → aggiungi al risultato
+  // Prenotazioni solo nel DB
   for (const db of dbBookings) {
     if (!seen.has(db.dbId)) result.push(db);
   }
 
-  // 3. Aggiorna DB per le righe dove annual ha vinto
+  // ── Import batch: 50 righe per chiamata ──
+  if (toImportBatch.length > 0) {
+    const total = toImportBatch.length;
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      const chunk = toImportBatch.slice(i, i + BATCH_SIZE);
+      showLoading(`Importazione ${Math.min(i + BATCH_SIZE, total)}/${total}…`);
+      const rows = chunk.map(b => bookingToDbRow(b, 'manuale'));
+      const resp = await dbBatchAppendRows(rows);
+      // Aggiorna dbRow per ciascuno nel chunk (opzionale, best-effort)
+      const updRange = resp?.updates?.updatedRange || '';
+      const m = updRange.match(/(\d+):/);
+      if (m) {
+        let startRow = parseInt(m[1]) - chunk.length + 1;
+        chunk.forEach((b, idx) => { b.dbRow = startRow + idx; });
+      }
+    }
+    console.log(`✓ Importate ${total} prenotazioni nel DB`);
+  }
+
+  // ── Aggiornamenti singoli (cambiate da foglio) ──
   for (const b of toUpdateInDb) await dbUpsert(b, b.fonte);
+
+  // ── Salva cache ──
+  saveDbCache(result);
 
   return result;
 }
@@ -1096,6 +1185,9 @@ async function loadFromSheets() {
   // Ricarica configurazione da localStorage
   if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
   annualSheets = loadAnnualSheets();
+  // Il bottone ↻ forzato invalida la cache
+  const _forcingSync = loadFromSheets._forceNext === true;
+  loadFromSheets._forceNext = false;
 
   try {
     // 1. Leggi tutti i fogli annuali configurati
@@ -1113,7 +1205,7 @@ async function loadFromSheets() {
     // 2. Sync con DATABASE se configurato
     if (DATABASE_SHEET_ID) {
       showLoading('Sincronizzazione database…');
-      allAnnual = await syncWithDatabase(allAnnual);
+      allAnnual = await syncWithDatabase(allAnnual, _forcingSync);
     }
 
     // 3. Ricongiungi multi-mese
