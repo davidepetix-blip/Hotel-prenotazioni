@@ -314,6 +314,100 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .sbed-chip { padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 500; background: var(--surface2); border: 1.5px solid var(--border); cursor: pointer; transition: all .12s; color: var(--text2); }
 .sbed-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .ssave-bar { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ── CHECK-IN PAGE ── */
+#checkinPage { display:none; position:fixed; inset:0; background:var(--bg); z-index:200; flex-direction:column; overflow:hidden; }
+#checkinPage.open { display:flex; }
+
+.ci-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); padding:0 16px; background:var(--surface); flex-shrink:0; }
+.ci-tab  { padding:10px 16px; font-size:12px; font-weight:500; color:var(--text3); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; transition:color .15s,border-color .15s; }
+.ci-tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }
+
+.ci-body { flex:1; overflow-y:auto; padding:16px; }
+
+/* Lista arrivi */
+.ci-arrival-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:14px 16px; margin-bottom:10px; cursor:pointer;
+  display:flex; align-items:center; gap:12px;
+  transition: box-shadow .15s;
+}
+.ci-arrival-card:hover { box-shadow:var(--shadow-md); }
+.ci-arrival-card.done  { border-left:4px solid var(--accent); opacity:.85; }
+.ci-arrival-card.todo  { border-left:4px solid #e67e22; }
+.ci-status-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.ci-arrival-info { flex:1; min-width:0; }
+.ci-arrival-name { font-size:14px; font-weight:600; color:var(--text); }
+.ci-arrival-sub  { font-size:11px; color:var(--text3); margin-top:2px; }
+.ci-arrival-cam  { font-size:12px; font-weight:600; color:var(--accent); text-align:right; flex-shrink:0; }
+
+/* Riepilogo giornaliero */
+.ci-summary-box {
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:16px; margin-bottom:16px;
+  display:grid; grid-template-columns:repeat(3,1fr); gap:12px; text-align:center;
+}
+.ci-summary-num  { font-size:24px; font-weight:700; color:var(--accent); }
+.ci-summary-label{ font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:.06em; margin-top:2px; }
+
+/* Storico */
+.ci-search-bar { display:flex; gap:8px; margin-bottom:14px; }
+.ci-search-bar input { flex:1; padding:8px 12px; border:1px solid var(--border); border-radius:6px; font-size:13px; background:var(--surface); }
+.ci-history-row {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:10px 14px; margin-bottom:8px; cursor:pointer;
+  display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center;
+}
+.ci-history-row:hover { box-shadow:var(--shadow-sm); }
+.ci-history-name { font-size:13px; font-weight:600; }
+.ci-history-sub  { font-size:11px; color:var(--text3); margin-top:2px; }
+.ci-history-cam  { font-size:12px; font-weight:700; color:var(--accent); }
+
+/* Modale check-in */
+.ci-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:400; align-items:flex-end; }
+.ci-overlay.open { display:flex; }
+.ci-panel {
+  background:var(--surface); border-radius:20px 20px 0 0; width:100%; max-height:92dvh;
+  overflow-y:auto; padding:24px 20px 32px;
+  animation: slideUp .25s ease;
+}
+.ci-panel-title { font-family:'Playfair Display',serif; font-size:18px; font-weight:600; margin-bottom:4px; }
+.ci-panel-sub   { font-size:11px; color:var(--text3); margin-bottom:20px; }
+
+.ci-section-title { font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:.08em; margin:18px 0 10px; }
+.ci-ospite-block {
+  background:var(--surface2); border:1px solid var(--border); border-radius:10px;
+  padding:14px; margin-bottom:12px; position:relative;
+}
+.ci-ospite-block .ci-ospite-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.ci-ospite-num { font-size:11px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:.06em; }
+.ci-remove-btn { background:none; border:none; color:var(--danger); font-size:16px; cursor:pointer; padding:2px 6px; }
+
+.ci-field-row   { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; }
+.ci-field-row.full { grid-template-columns:1fr; }
+.ci-field-row.trio  { grid-template-columns:1fr 1fr 1fr; }
+.ci-field { display:flex; flex-direction:column; gap:4px; }
+.ci-field label { font-size:10px; font-weight:600; color:var(--text3); text-transform:uppercase; letter-spacing:.06em; }
+.ci-field input, .ci-field select {
+  padding:8px 10px; border:1px solid var(--border2); border-radius:6px;
+  font-size:13px; font-family:'IBM Plex Sans',sans-serif;
+  background:var(--surface); color:var(--text); outline:none;
+  transition:border-color .15s;
+}
+.ci-field input:focus, .ci-field select:focus { border-color:var(--accent); }
+.ci-field input.required-missing { border-color:var(--danger); }
+
+.ci-add-guest-btn {
+  width:100%; padding:10px; border:1.5px dashed var(--border2); background:none;
+  border-radius:8px; font-size:13px; color:var(--text3); cursor:pointer;
+  transition:border-color .15s, color .15s; margin-bottom:16px;
+}
+.ci-add-guest-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+.ci-actions { display:grid; grid-template-columns:1fr 2fr; gap:10px; margin-top:4px; }
+.ci-export-bar { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.ci-export-info { font-size:11px; color:var(--text2); line-height:1.5; }
+
 </style>
 </head>
 <body>
@@ -354,6 +448,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
   <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
+  <button class="btn btn-icon" onclick="openCheckin()" title="Check-in">🛎</button>
   <button class="btn btn-icon" onclick="openRoomDash()" title="Stato camere">🏠</button>
   <button class="btn btn-icon" onclick="openSettings()" title="Impostazioni camere">⚙</button>
   <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
@@ -463,6 +558,36 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div class="ssave-bar">
     <button class="btn" onclick="closeSettings()">Annulla</button>
     <button class="btn primary" onclick="saveSettings()">✓ Salva impostazioni</button>
+  </div>
+</div>
+
+
+<!-- ══ CHECK-IN PAGE ══ -->
+<div id="checkinPage">
+  <div class="spage-bar">
+    <button class="btn btn-icon" onclick="closeCheckin()">←</button>
+    <div class="spage-title">🛎 Check-in</div>
+    <button class="btn" onclick="exportAlloggiati()" title="Genera file Alloggiati Web">⬇ Alloggiati</button>
+  </div>
+  <!-- Tabs -->
+  <div class="ci-tabs">
+    <div class="ci-tab active" id="ciTab0" onclick="switchCiTab(0)">Oggi</div>
+    <div class="ci-tab" id="ciTab1" onclick="switchCiTab(1)">Storico</div>
+  </div>
+  <div class="ci-body" id="ciBody"></div>
+</div>
+
+<!-- ══ CHECK-IN MODAL ══ -->
+<div class="ci-overlay" id="ciOverlay" onclick="ciOverlayClick(event)">
+  <div class="ci-panel" id="ciPanel">
+    <div class="ci-panel-title" id="ciPanelTitle">Check-in</div>
+    <div class="ci-panel-sub" id="ciPanelSub"></div>
+    <div id="ciGuestsContainer"></div>
+    <button class="ci-add-guest-btn" onclick="ciAddGuest()">+ Aggiungi accompagnatore</button>
+    <div class="ci-actions">
+      <button class="btn" onclick="closeCiModal()">Annulla</button>
+      <button class="btn primary" onclick="saveCiCheckin()">✓ Salva check-in</button>
+    </div>
   </div>
 </div>
 
@@ -2652,6 +2777,24 @@ function renderSettingsBody() {
   const groups = [...new Set(ROOMS.map(r => r.g))];
   let html = '';
 
+  // ── Sezione Alloggiati Web
+  const _codStr = localStorage.getItem('hotelCodiceStruttura') || '';
+  html += `
+    <div class="sgroup">
+      <div class="sgroup-title">🛎 Alloggiati Web</div>
+      <div class="sroom-card">
+        <p style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.7;">
+          Codice struttura ricettiva (8 cifre) fornito dalla Questura per il file Alloggiati Web.
+        </p>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input type="text" class="fi" id="codStrutturaInput" value="${_codStr}"
+                 placeholder="es. 00123456" maxlength="9" style="max-width:180px;"
+                 onchange="localStorage.setItem('hotelCodiceStruttura',this.value)">
+          <span style="font-size:11px;color:var(--text3);">Visibile nella scheda Check-in</span>
+        </div>
+      </div>
+    </div>`;
+
   // ── Sezione Fogli annuali
   const annEntries = (loadAnnualSheets().length ? loadAnnualSheets() : DEFAULT_ANNUAL_SHEETS);
   const currentDbId = loadDbSheetId();
@@ -3157,6 +3300,565 @@ async function saveRoomState() {
     showToast('Errore salvataggio: ' + e.message, 'error');
   }
 }
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULO CHECK-IN
+// ═══════════════════════════════════════════════════════════════════
+
+const CI_SHEET_NAME  = 'CHECK-IN';
+const CI_CACHE_KEY   = 'hotelCiCache';
+const CI_CACHE_TTL   = 60 * 60 * 1000; // 1 ora
+
+// Colonne scheda CHECK-IN
+// A=ID_CHECKIN B=ID_PRENOTAZIONE C=CAMERA D=DATA_CHECKIN E=NUM_OSPITI
+// F=OSPITI_JSON G=TS_INSERIMENTO H=UTENTE
+
+// Tipi documento Alloggiati Web
+const TIPI_DOC = [
+  {cod:'IDENT', label:'Carta d\'identità'},
+  {cod:'PASOR', label:'Passaporto'},
+  {cod:'PATEN', label:'Patente di guida'},
+  {cod:'ALTRO', label:'Altro documento'},
+];
+
+// Mappa sessi
+const SESSI = [{cod:'M',label:'Maschio'},{cod:'F',label:'Femmina'}];
+
+// Stato check-in in memoria: { prenotazioneDbId: { guests:[], ciId, ciRow, ts } }
+let ciData = {};
+let _ciTab = 0;
+let _ciEditBookingId = null; // dbId della prenotazione in editing
+let _ciEditGuests = [];      // array ospiti nel form
+
+// ── Apertura / chiusura pagina ──
+function openCheckin() {
+  document.getElementById('checkinPage').classList.add('open');
+  loadCiData().then(() => renderCiTab());
+}
+function closeCheckin() {
+  document.getElementById('checkinPage').classList.remove('open');
+}
+function switchCiTab(n) {
+  _ciTab = n;
+  document.querySelectorAll('.ci-tab').forEach((t,i) => t.classList.toggle('active', i===n));
+  renderCiTab();
+}
+function renderCiTab() {
+  if (_ciTab === 0) renderCiToday();
+  else              renderCiHistory();
+}
+
+// ── Scheda CHECK-IN nel DATABASE ──
+async function ensureCiSheet() {
+  const id = DATABASE_SHEET_ID;
+  if (!id) return;
+  try {
+    const d = await dbGet(`${CI_SHEET_NAME}!A1:H1`);
+    if (d.values?.[0]?.[0] === 'ID_CHECKIN') return;
+  } catch(e) {
+    // Crea la scheda
+    try {
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+        method:'POST',
+        headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+        body: JSON.stringify({requests:[{addSheet:{properties:{title:CI_SHEET_NAME}}}]})
+      });
+      if (!r.ok) { const t=await r.text(); if (!t.includes('already')) throw new Error(t); }
+    } catch(e2) { if (!String(e2.message).includes('already')) throw e2; }
+  }
+  // Scrivi intestazioni
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CI_SHEET_NAME+'!A1:H1')}?valueInputOption=RAW`, {
+    method:'PUT',
+    headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+    body: JSON.stringify({values:[['ID_CHECKIN','ID_PRENOTAZIONE','CAMERA','DATA_CHECKIN','NUM_OSPITI','OSPITI_JSON','TS_INSERIMENTO','UTENTE']]})
+  });
+}
+
+async function readCiSheet() {
+  try {
+    const d = await dbGet(`${CI_SHEET_NAME}!A2:H9999`);
+    const rows = d.values || [];
+    const result = {};
+    rows.forEach((row, i) => {
+      const preId = row[1] || '';
+      if (!preId) return;
+      try {
+        result[preId] = {
+          ciId:   row[0] || '',
+          preId:  row[1] || '',
+          camera: row[2] || '',
+          data:   row[3] || '',
+          numOspiti: parseInt(row[4]) || 0,
+          guests: JSON.parse(row[5] || '[]'),
+          ts:     row[6] || '',
+          utente: row[7] || '',
+          ciRow:  i + 2,
+        };
+      } catch(e) {}
+    });
+    return result;
+  } catch(e) { return {}; }
+}
+
+async function writeCiRow(preId, data) {
+  const id = DATABASE_SHEET_ID;
+  if (!id) throw new Error('DATABASE non configurato');
+  await ensureCiSheet();
+  const row = [
+    data.ciId, preId, data.camera, data.data,
+    data.numOspiti, JSON.stringify(data.guests), data.ts, data.utente
+  ];
+  if (data.ciRow) {
+    const range = `${CI_SHEET_NAME}!A${data.ciRow}:H${data.ciRow}`;
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
+      method:'PUT', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+      body: JSON.stringify({values:[row]})
+    });
+  } else {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CI_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+    const resp = await fetch(url, {
+      method:'POST', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+      body: JSON.stringify({values:[row]})
+    });
+    const r2 = await resp.json();
+    const m = (r2.updates?.updatedRange||'').match(/(\d+):/);
+    if (m) data.ciRow = parseInt(m[1]);
+  }
+}
+
+async function loadCiData(force=false) {
+  if (!force) {
+    try {
+      const raw = localStorage.getItem(CI_CACHE_KEY);
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (Date.now() - p.ts < CI_CACHE_TTL) { ciData = p.data; return; }
+      }
+    } catch(e) {}
+  }
+  if (!DATABASE_SHEET_ID) return;
+  try {
+    await ensureCiSheet();
+    ciData = await readCiSheet();
+    localStorage.setItem(CI_CACHE_KEY, JSON.stringify({ts:Date.now(), data:ciData}));
+  } catch(e) { console.warn('loadCiData:', e.message); }
+}
+
+function invalidateCiCache() { localStorage.removeItem(CI_CACHE_KEY); }
+
+// ── Render tab Oggi ──
+function renderCiToday() {
+  const body = document.getElementById('ciBody');
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Arrivi di oggi
+  const arriviOggi = bookings.filter(b => {
+    const s = new Date(b.s); s.setHours(0,0,0,0);
+    return s.getTime() === today.getTime();
+  });
+
+  // Contatori riepilogo
+  const totArrivi   = arriviOggi.length;
+  const completati  = arriviOggi.filter(b => ciData[b.dbId]).length;
+  const daFare      = totArrivi - completati;
+  const totOspiti   = arriviOggi.reduce((sum,b) => {
+    const ci = ciData[b.dbId];
+    return sum + (ci ? ci.numOspiti : 0);
+  }, 0);
+
+  let html = `
+    <div class="ci-summary-box">
+      <div><div class="ci-summary-num">${totArrivi}</div><div class="ci-summary-label">Arrivi</div></div>
+      <div><div class="ci-summary-num" style="color:#e67e22">${daFare}</div><div class="ci-summary-label">Da fare</div></div>
+      <div><div class="ci-summary-num">${totOspiti}</div><div class="ci-summary-label">Ospiti reg.</div></div>
+    </div>`;
+
+  if (arriviOggi.length === 0) {
+    html += `<div style="text-align:center;padding:40px 20px;color:var(--text3);">Nessun arrivo previsto oggi</div>`;
+  } else {
+    // Ordina: da fare prima, completati dopo
+    arriviOggi.sort((a,b) => {
+      const ca = ciData[a.dbId] ? 1 : 0;
+      const cb = ciData[b.dbId] ? 1 : 0;
+      return ca - cb;
+    });
+    arriviOggi.forEach(b => {
+      const ci      = ciData[b.dbId];
+      const done    = !!ci;
+      const room    = ROOMS.find(r => r.id === b.r);
+      const roomName= room?.name || b.cameraName || '—';
+      const ospiti  = ci ? `${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''}` : (b.d || '');
+      html += `
+        <div class="ci-arrival-card ${done?'done':'todo'}" onclick="openCiModal('${b.dbId||''}')">
+          <span class="ci-status-dot" style="background:${done?'#2d6a4f':'#e67e22'}"></span>
+          <div class="ci-arrival-info">
+            <div class="ci-arrival-name">${b.n || '—'}</div>
+            <div class="ci-arrival-sub">${done ? '✓ Registrato · '+ospiti : 'Da registrare · '+(b.d||'')}
+              ${done && ci.guests[0] ? ' · '+ci.guests[0].cognome+' '+ci.guests[0].nome : ''}
+            </div>
+          </div>
+          <div class="ci-arrival-cam">${roomName}</div>
+        </div>`;
+    });
+  }
+
+  // Export bar
+  if (completati > 0) {
+    html += `
+      <div class="ci-export-bar">
+        <div class="ci-export-info">
+          <strong>${completati} check-in</strong> pronti per Alloggiati Web<br>
+          Genera il file .txt da caricare sul portale della Polizia di Stato
+        </div>
+        <button class="btn primary" style="flex-shrink:0" onclick="exportAlloggiati('today')">⬇ Genera .txt</button>
+      </div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+// ── Render tab Storico ──
+let _ciHistSearch = '';
+function renderCiHistory() {
+  const body = document.getElementById('ciBody');
+  const allCi = Object.values(ciData).sort((a,b) => b.data.localeCompare(a.data));
+  const filtered = _ciHistSearch
+    ? allCi.filter(ci => {
+        const q = _ciHistSearch.toLowerCase();
+        return ci.camera.toLowerCase().includes(q) ||
+               (ci.guests[0] && (ci.guests[0].cognome+' '+ci.guests[0].nome).toLowerCase().includes(q)) ||
+               ci.data.includes(q);
+      })
+    : allCi;
+
+  // Raggruppa per data
+  const byDate = {};
+  filtered.forEach(ci => {
+    const d = ci.data || '—';
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(ci);
+  });
+
+  let html = `
+    <div class="ci-search-bar">
+      <input type="text" placeholder="Cerca per nome, camera, data…"
+             value="${_ciHistSearch}"
+             oninput="_ciHistSearch=this.value; renderCiHistory()"
+             autocomplete="off">
+      ${_ciHistSearch ? `<button class="btn" onclick="_ciHistSearch=''; renderCiHistory()">✕</button>` : ''}
+    </div>`;
+
+  if (filtered.length === 0) {
+    html += `<div style="text-align:center;padding:40px 20px;color:var(--text3);">Nessun check-in trovato</div>`;
+  } else {
+    Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date => {
+      const items = byDate[date];
+      const d = date.split('-');
+      const dataLabel = d.length===3 ? `${d[2]}/${d[1]}/${d[0]}` : date;
+      html += `<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 8px;">${dataLabel} · ${items.length} arriv${items.length===1?'o':'i'}</div>`;
+      items.forEach(ci => {
+        const cap = ci.guests[0] || {};
+        const nomeCapo = cap.cognome ? cap.cognome+' '+cap.nome : '—';
+        html += `
+          <div class="ci-history-row" onclick="openCiModalFromCi('${ci.preId}')">
+            <div>
+              <div class="ci-history-name">${nomeCapo}</div>
+              <div class="ci-history-sub">Camera ${ci.camera} · ${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · ${ci.preId ? 'Prenotazione: '+ci.preId.slice(-5) : ''}</div>
+            </div>
+            <div class="ci-history-cam">${ci.camera}</div>
+          </div>`;
+      });
+    });
+  }
+
+  // Export tutto
+  if (filtered.length > 0) {
+    html += `
+      <div class="ci-export-bar" style="margin-top:16px;">
+        <div class="ci-export-info">Genera file Alloggiati Web per tutti i check-in${_ciHistSearch?' filtrati':''}</div>
+        <button class="btn primary" style="flex-shrink:0" onclick="exportAlloggiati('filtered')">⬇ Genera .txt</button>
+      </div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+// ── Modale check-in ──
+function openCiModal(bookingDbId) {
+  const b = bookings.find(b => b.dbId === bookingDbId);
+  if (!b) { showToast('Prenotazione non trovata', 'error'); return; }
+  _ciEditBookingId = bookingDbId;
+  const room = ROOMS.find(r => r.id === b.r);
+  document.getElementById('ciPanelTitle').textContent = `Check-in · Camera ${room?.name||b.cameraName}`;
+  document.getElementById('ciPanelSub').textContent = `${b.n} · ${fmtDate(b.s)} → ${fmtDate(b.e)}`;
+
+  // Carica ospiti esistenti o crea capogruppo vuoto
+  const existing = ciData[bookingDbId];
+  _ciEditGuests = existing ? JSON.parse(JSON.stringify(existing.guests)) : [emptyGuest(true)];
+  renderCiGuests();
+  document.getElementById('ciOverlay').classList.add('open');
+  document.getElementById('ciPanel').scrollTop = 0;
+}
+
+function openCiModalFromCi(preId) {
+  openCiModal(preId);
+}
+
+function closeCiModal() {
+  document.getElementById('ciOverlay').classList.remove('open');
+  _ciEditBookingId = null;
+  _ciEditGuests = [];
+}
+
+function ciOverlayClick(e) {
+  if (e.target === document.getElementById('ciOverlay')) closeCiModal();
+}
+
+function emptyGuest(isCapo=false) {
+  return { isCapo, nome:'', cognome:'', dataNascita:'', sesso:'M', cittadinanza:'IT',
+           luogoNascita:'', provNascita:'', statoEsteroNascita:'',
+           tipoDoc: isCapo ? 'IDENT' : '', numDoc: isCapo ? '' : undefined,
+           luogoRilascio: isCapo ? '' : undefined };
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  const dt = d instanceof Date ? d : new Date(d);
+  return dt.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit',year:'numeric'});
+}
+
+function renderCiGuests() {
+  const container = document.getElementById('ciGuestsContainer');
+  container.innerHTML = '';
+  _ciEditGuests.forEach((g, idx) => {
+    const isCapo   = idx === 0;
+    const titleTxt = isCapo ? '👤 Capogruppo' : `👤 Accompagnatore ${idx}`;
+    const block    = document.createElement('div');
+    block.className= 'ci-ospite-block';
+    block.innerHTML = `
+      <div class="ci-ospite-header">
+        <span class="ci-ospite-num">${titleTxt}</span>
+        ${!isCapo ? `<button class="ci-remove-btn" onclick="ciRemoveGuest(${idx})">✕</button>` : ''}
+      </div>
+      <!-- Nome / Cognome -->
+      <div class="ci-field-row">
+        <div class="ci-field">
+          <label>Cognome *</label>
+          <input type="text" value="${g.cognome||''}" placeholder="Rossi"
+                 oninput="_ciEditGuests[${idx}].cognome=this.value">
+        </div>
+        <div class="ci-field">
+          <label>Nome *</label>
+          <input type="text" value="${g.nome||''}" placeholder="Mario"
+                 oninput="_ciEditGuests[${idx}].nome=this.value">
+        </div>
+      </div>
+      <!-- Sesso / Data nascita -->
+      <div class="ci-field-row trio">
+        <div class="ci-field">
+          <label>Sesso *</label>
+          <select onchange="_ciEditGuests[${idx}].sesso=this.value">
+            ${SESSI.map(s=>`<option value="${s.cod}" ${g.sesso===s.cod?'selected':''}>${s.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="ci-field" style="grid-column:span 2">
+          <label>Data di nascita *</label>
+          <input type="date" value="${g.dataNascita||''}"
+                 oninput="_ciEditGuests[${idx}].dataNascita=this.value">
+        </div>
+      </div>
+      <!-- Luogo nascita -->
+      <div class="ci-field-row trio">
+        <div class="ci-field" style="grid-column:span 2">
+          <label>Comune di nascita *</label>
+          <input type="text" value="${g.luogoNascita||''}" placeholder="Roma"
+                 oninput="_ciEditGuests[${idx}].luogoNascita=this.value">
+        </div>
+        <div class="ci-field">
+          <label>Prov.</label>
+          <input type="text" value="${g.provNascita||''}" placeholder="RM" maxlength="2"
+                 oninput="_ciEditGuests[${idx}].provNascita=this.value.toUpperCase();this.value=this.value.toUpperCase()">
+        </div>
+      </div>
+      <!-- Stato estero (solo se non italiano) -->
+      <div class="ci-field-row full" id="ciEstero${idx}" style="${(g.provNascita||'').trim()==='' && (g.statoEsteroNascita||'')!=='' || g.cittadinanza!=='IT' ? '' : 'display:none'}">
+        <div class="ci-field">
+          <label>Stato estero di nascita</label>
+          <input type="text" value="${g.statoEsteroNascita||''}" placeholder="es. GERMANIA"
+                 oninput="_ciEditGuests[${idx}].statoEsteroNascita=this.value.toUpperCase();this.value=this.value.toUpperCase()">
+        </div>
+      </div>
+      <!-- Cittadinanza -->
+      <div class="ci-field-row full">
+        <div class="ci-field">
+          <label>Cittadinanza (codice ISO) *</label>
+          <input type="text" value="${g.cittadinanza||'IT'}" placeholder="IT" maxlength="3"
+                 oninput="_ciEditGuests[${idx}].cittadinanza=this.value.toUpperCase();this.value=this.value.toUpperCase();
+                          document.getElementById('ciEstero${idx}').style.display=this.value!=='IT'?'':'none'">
+        </div>
+      </div>
+      ${isCapo ? `
+      <!-- Documento (solo capogruppo) -->
+      <div class="ci-section-title" style="margin-top:12px;">Documento d'identità</div>
+      <div class="ci-field-row">
+        <div class="ci-field">
+          <label>Tipo documento *</label>
+          <select onchange="_ciEditGuests[${idx}].tipoDoc=this.value">
+            ${TIPI_DOC.map(t=>`<option value="${t.cod}" ${g.tipoDoc===t.cod?'selected':''}>${t.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="ci-field">
+          <label>Numero documento *</label>
+          <input type="text" value="${g.numDoc||''}" placeholder="AB1234567"
+                 oninput="_ciEditGuests[${idx}].numDoc=this.value.toUpperCase();this.value=this.value.toUpperCase()">
+        </div>
+      </div>
+      <div class="ci-field-row full">
+        <div class="ci-field">
+          <label>Luogo di rilascio</label>
+          <input type="text" value="${g.luogoRilascio||''}" placeholder="es. Roma"
+                 oninput="_ciEditGuests[${idx}].luogoRilascio=this.value">
+        </div>
+      </div>` : ''}
+    `;
+    container.appendChild(block);
+  });
+}
+
+function ciAddGuest() {
+  _ciEditGuests.push(emptyGuest(false));
+  renderCiGuests();
+  // Scroll in fondo
+  const panel = document.getElementById('ciPanel');
+  setTimeout(() => panel.scrollTop = panel.scrollHeight, 50);
+}
+
+function ciRemoveGuest(idx) {
+  _ciEditGuests.splice(idx, 1);
+  renderCiGuests();
+}
+
+async function saveCiCheckin() {
+  if (!_ciEditBookingId) return;
+
+  // Validazione campi obbligatori capogruppo
+  const capo = _ciEditGuests[0];
+  const missing = [];
+  if (!capo.cognome)     missing.push('Cognome');
+  if (!capo.nome)        missing.push('Nome');
+  if (!capo.dataNascita) missing.push('Data di nascita');
+  if (!capo.luogoNascita)missing.push('Luogo di nascita');
+  if (!capo.numDoc)      missing.push('Numero documento');
+  if (missing.length > 0) {
+    showToast('Campi obbligatori mancanti: ' + missing.join(', '), 'error');
+    return;
+  }
+
+  const b = bookings.find(b => b.dbId === _ciEditBookingId);
+  const room = ROOMS.find(r => r.id === b?.r);
+  const existing = ciData[_ciEditBookingId];
+
+  const ciId    = existing?.ciId || 'CI-' + Date.now().toString(36).toUpperCase();
+  const ciRow   = existing?.ciRow || null;
+  const data    = new Date(b.s).toISOString().slice(0,10);
+  const record  = {
+    ciId, preId: _ciEditBookingId,
+    camera: room?.name || b?.cameraName || '—',
+    data,
+    numOspiti: _ciEditGuests.length,
+    guests: _ciEditGuests,
+    ts: nowISO(),
+    utente: document.getElementById('userAvatar')?.title || '',
+    ciRow,
+  };
+
+  closeCiModal();
+  showLoading('Salvataggio check-in…');
+  try {
+    await writeCiRow(_ciEditBookingId, record);
+    ciData[_ciEditBookingId] = record;
+    invalidateCiCache();
+    localStorage.setItem(CI_CACHE_KEY, JSON.stringify({ts:Date.now(), data:ciData}));
+    hideLoading();
+    showToast('✓ Check-in salvato', 'success');
+    renderCiTab();
+  } catch(e) {
+    hideLoading();
+    showToast('Errore: ' + e.message, 'error');
+  }
+}
+
+// ── Generazione file Alloggiati Web ──
+// Formato fisso: record da 93 caratteri (versione 3)
+// Ref: specifiche tecniche Polizia di Stato – tracciato record tipo 20
+function exportAlloggiati(scope='today') {
+  const today = new Date().toISOString().slice(0,10);
+  let items;
+  if (scope === 'today') {
+    items = Object.values(ciData).filter(ci => ci.data === today);
+  } else {
+    // filtered = tutti quelli visibili nello storico
+    items = Object.values(ciData).filter(ci => {
+      if (!_ciHistSearch) return true;
+      const q = _ciHistSearch.toLowerCase();
+      const cap = ci.guests[0] || {};
+      return ci.camera.toLowerCase().includes(q) ||
+             ((cap.cognome||'')+' '+(cap.nome||'')).toLowerCase().includes(q) ||
+             ci.data.includes(q);
+    });
+  }
+
+  if (items.length === 0) { showToast('Nessun check-in da esportare', 'error'); return; }
+
+  // Trova il codice struttura (da impostazioni, fallback '00000000')
+  const codStruttura = localStorage.getItem('hotelCodiceStruttura') || '00000000';
+
+  let lines = [];
+  items.forEach(ci => {
+    const b = bookings.find(bk => bk.dbId === ci.preId);
+    const dataArr  = ci.data.replace(/-/g,'');       // YYYYMMDD
+    const dataFine = b ? new Date(b.e).toISOString().slice(0,10).replace(/-/g,'') : dataArr;
+
+    ci.guests.forEach((g, gIdx) => {
+      // Tipo record: 20=arrivo, campo fisso
+      const tipoRec  = '20';
+      const dataCin  = pad(dataArr, 8);
+      const dataFineP= pad(dataFine, 8);
+      const cognome  = padR(clean(g.cognome), 50);
+      const nome     = padR(clean(g.nome), 30);
+      const sesso    = (g.sesso||'M').charAt(0).toUpperCase();
+      const dataN    = (g.dataNascita||'').replace(/-/g,'');  // YYYYMMDD
+      const comuneN  = padR(clean(g.luogoNascita), 30);
+      const provN    = padR(g.provNascita||'EE', 2);  // EE = estero
+      const nazN     = padR(g.cittadinanza||'IT', 3);
+      const tipoDoc  = gIdx===0 ? padR(g.tipoDoc||'ALTRO',5) : padR('',5);
+      const numDoc   = gIdx===0 ? padR(clean(g.numDoc||''),20) : padR('',20);
+      const luogRil  = gIdx===0 ? padR(clean(g.luogoRilascio||''),30) : padR('',30);
+      const codStr   = padR(codStruttura, 9);
+
+      const record = tipoRec + dataCin + dataFineP + cognome + nome + sesso +
+                     dataN + comuneN + provN + nazN + tipoDoc + numDoc + luogRil + codStr;
+      lines.push(record);
+    });
+  });
+
+  const content = lines.join('\r\n') + '\r\n';
+  const blob    = new Blob([content], {type:'text/plain;charset=utf-8'});
+  const url     = URL.createObjectURL(blob);
+  const a       = document.createElement('a');
+  a.href = url;
+  a.download = `alloggiati_${today}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`✓ File generato · ${lines.length} record`, 'success');
+}
+
+// Helper testo Alloggiati
+function clean(s) { return (s||'').toUpperCase().replace(/[^A-Z0-9 '.,-]/g,''); }
+function padR(s, n) { const t=(s||'').substring(0,n); return t+' '.repeat(Math.max(0,n-t.length)); }
+function pad(s, n)  { const t=(s||'').substring(0,n); return '0'.repeat(Math.max(0,n-t.length))+t; }
+
 
 // ═══════════════════════════════════════════════════════════════════
 // GESTIONE FOGLI ANNUALI NELLE IMPOSTAZIONI
