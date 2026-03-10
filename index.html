@@ -258,6 +258,8 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .rdash-disp { font-size:10px; color:var(--text2); background:var(--surface2); padding:1px 5px; border-radius:4px; flex-shrink:0; }
 .rdash-arrow { font-size:14px; color:var(--accent); font-weight:700; }
 .rdash-note   { font-size:10px; color:var(--text3); margin-top:4px; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.badge-rassetto  { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; background:#e8f4fd; color:#1a5276; border:1px solid #aed6f1; margin-right:4px; }
+.badge-lenzuola  { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; background:#fdf2f8; color:#7d3c98; border:1px solid #d7bde2; margin-right:4px; }
 .rdash-ts     { font-size:9px; color:var(--text3); margin-top:6px; }
 /* Dot Gantt — stati operativi */
 .rsd-op-occupata       { background:#c0392b; }
@@ -2747,6 +2749,57 @@ function renderSettingsBody() {
 
 // Ritorna lo stato operativo di una camera per una data specifica
 // { opId, label, uscente, entrante } 
+// ── Calcola interventi automatici del giorno per una camera ──
+// Ritorna array di { tipo, label, urgenza }
+// tipo ∈ 'rassetto' | 'lenzuola'
+// urgenza ∈ 'alta' | 'normale'
+const GRUPPI_RASSETTO   = ['Scuola', 'Largo Roma'];     // solo questi gruppi
+const SOGLIA_LENZUOLA   = 7;                             // ogni N notti dal check-in
+
+function getRoomInterventions(roomId, date, room) {
+  const d = new Date(date); d.setHours(12,0,0,0);
+  const dMs = d.getTime();
+  const interventions = [];
+
+  // Cerca prenotazione attiva (ospite già dentro, non il giorno di check-in)
+  const occ = bookings.find(b =>
+    b.r === roomId &&
+    b.s.getTime() < dMs &&   // check-in PRIMA di oggi
+    b.e.getTime() > dMs      // check-out DOPO oggi
+  );
+  if (!occ) return interventions;
+
+  // Camere/appartamenti con disposizione "aff" → gestione autonoma, nessun intervento
+  const dispStr = (occ.d || '').toLowerCase();
+  const isAff = dispStr.includes('aff');
+  if (isAff || room.g === 'Appartamenti') {
+    // Solo cambio lenzuola per appartamenti (non aff), mai rassetto
+    if (room.g === 'Appartamenti' && !isAff) {
+      const nottiPassate = Math.round((dMs - occ.s.getTime()) / 86400000);
+      if (nottiPassate > 0 && nottiPassate % SOGLIA_LENZUOLA === 0) {
+        interventions.push({ tipo:'lenzuola', label:'Cambio lenzuola', urgenza:'alta' });
+      }
+    }
+    return interventions;
+  }
+
+  const nottiTotali  = Math.round((occ.e - occ.s) / 86400000);
+  const nottiPassate = Math.round((dMs - occ.s.getTime()) / 86400000);
+  const isCheckin    = occ.s.getTime() === dMs;
+
+  // ── RASSETTO: Scuola + Largo Roma, soggiorni > 1 notte, non il giorno di check-in ──
+  if (GRUPPI_RASSETTO.includes(room.g) && nottiTotali > 1 && !isCheckin) {
+    interventions.push({ tipo:'rassetto', label:'Rassetto', urgenza:'normale' });
+  }
+
+  // ── CAMBIO LENZUOLA: ogni 7 notti esatte dal check-in ──
+  if (nottiPassate > 0 && nottiPassate % SOGLIA_LENZUOLA === 0) {
+    interventions.push({ tipo:'lenzuola', label:'Cambio lenzuola', urgenza:'alta' });
+  }
+
+  return interventions;
+}
+
 // opId ∈ occupata|cambio|uscita|arrivo|pronta|da-preparare|fuori-servizio
 function getRoomDayStatus(roomId, date) {
   const d = new Date(date); d.setHours(12,0,0,0);
@@ -2826,9 +2879,9 @@ function renderRoomDash() {
   const todayStr = today.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
 
   // Filtri operativi
-  const filtri = ['tutti','cambio','controllare','da-preparare','arrivo','uscita','occupata','pronta','fuori-servizio'];
+  const filtri = ['tutti','interventi','cambio','controllare','da-preparare','arrivo','uscita','occupata','pronta','fuori-servizio'];
   const fLabel  = {
-    'tutti':'Tutti', 'cambio':'🔄 Cambio', 'controllare':'🟣 Controlla',
+    'tutti':'Tutti', 'interventi':'🧹 Interventi', 'cambio':'🔄 Cambio', 'controllare':'🟣 Controlla',
     'occupata':'🔴 Occupate', 'arrivo':'🔵 Arrivi', 'uscita':'🟡 Uscite',
     'pronta':'🟢 Pronte', 'da-preparare':'🟠 Da pulire', 'fuori-servizio':'⚫ Fuori serv.'
   };
@@ -2858,7 +2911,10 @@ function renderRoomDash() {
   const allCards = [];
   ROOMS.forEach(room => {
     const st = getRoomDayStatus(room.id, today);
-    if (_rdashFilter !== 'tutti' && st.opId !== _rdashFilter) return;
+    const _ivs_filter = (st.opId === 'occupata') ? getRoomInterventions(room.id, today, room) : [];
+    if (_rdashFilter === 'interventi') {
+      if (_ivs_filter.length === 0) return; // nascondi camere senza interventi
+    } else if (_rdashFilter !== 'tutti' && st.opId !== _rdashFilter) return;
 
     const rs    = roomStates[room.id] || {};
     const pul   = rs.pulizia || 'da-pulire';
@@ -2891,9 +2947,18 @@ function renderRoomDash() {
         }
         break;
 
-      case 'occupata':
-        bucket   = 8;
-        tiebreak = st.occupante ? st.occupante.e.getTime() : 0; break;
+      case 'occupata': {
+        const _ivs = getRoomInterventions(room.id, today, room);
+        const _hasLenz = _ivs.some(i => i.tipo === 'lenzuola');
+        const _hasRass = _ivs.some(i => i.tipo === 'rassetto');
+        // Cambio lenzuola = bucket 2b (dopo uscite, prima di da-preparare)
+        // Rassetto = bucket 2c
+        // Occupata senza interventi = bucket 8
+        if (_hasLenz)      { bucket = 2; tiebreak = 1; }
+        else if (_hasRass) { bucket = 2; tiebreak = 2; }
+        else               { bucket = 8; tiebreak = st.occupante ? st.occupante.e.getTime() : 0; }
+        break;
+      }
 
       case 'pronta':
         bucket = 9; tiebreak = gArr ?? Infinity; break;
@@ -2949,13 +3014,19 @@ function renderRoomDash() {
         }
       } else if (st.opId === 'occupata' && st.occupante) {
         const giorniRimasti = Math.round((st.occupante.e - today)/(86400000));
+        const interventions = getRoomInterventions(room.id, today, room);
+        // Badge interventi (rassetto e/o cambio lenzuola)
+        const badgesHtml = interventions.map(iv =>
+          `<span class="badge-${iv.tipo}">${iv.tipo === 'lenzuola' ? '🛏 ' : '🧹 '}${iv.label}</span>`
+        ).join('');
         detailHtml += `<div class="rdash-guest-row">
           <span class="rdash-guest-name">${st.occupante.n}</span>
           ${st.occupante.d ? `<span class="rdash-disp">${st.occupante.d}</span>` : ''}
         </div>
         <div style="font-size:10px;color:var(--text3);margin-top:3px;">
           Uscita: ${fmt(st.occupante.e)} · ancora ${giorniRimasti} ${giorniRimasti===1?'notte':'notti'}
-        </div>`;
+        </div>
+        ${badgesHtml ? `<div style="margin-top:6px;">${badgesHtml}</div>` : ''}`;
       } else if (st.opId === 'uscita' && st.uscente) {
         detailHtml += `<div class="rdash-guest-row">
           <span class="rdash-guest-name">${st.uscente.n}</span>
