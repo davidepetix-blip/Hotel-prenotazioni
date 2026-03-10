@@ -84,6 +84,10 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .sync-btn { position: relative; }
 .sync-dot { position: absolute; top: -3px; right: -3px; width: 7px; height: 7px; background: var(--success); border-radius: 50%; display: none; }
 .sync-dot.show { display: block; }
+.sync-dot.pulsing { display:block; animation: syncPulse 1.4s ease-in-out infinite; }
+@keyframes syncPulse { 0%,100%{opacity:.3;transform:scale(.8)} 50%{opacity:1;transform:scale(1.3)} }
+.bg-sync-toast { position:fixed; bottom:72px; left:50%; transform:translateX(-50%); background:var(--accent); color:#fff; font-size:12px; font-weight:600; padding:7px 18px; border-radius:20px; opacity:0; pointer-events:none; transition:opacity .4s; z-index:999; white-space:nowrap; box-shadow:0 3px 12px rgba(0,0,0,.25); }
+.bg-sync-toast.show { opacity:1; }
 
 /* ── BODY ── */
 .body { flex: 1; display: flex; overflow: hidden; }
@@ -275,7 +279,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .rstate-btn.sel { border-color:var(--accent) !important; }
 .rstate-btn.s-pulita         { background:#d4edda; color:#155724; }
 .rstate-btn.s-da-pulire      { background:#fde8cc; color:#7d4e00; }
-.rstate-btn.s-in-corso       { background:#cce5ff; color:#004085; }
+.rstate-btn.s-in-corso       { background:#e8d5f5; color:#5b2c6f; }
 .rstate-btn.s-fuori-servizio { background:#f8d7da; color:#721c24; }
 .room-status-dot { width:6px; height:6px; border-radius:50%; display:inline-block; margin-left:5px; vertical-align:middle; flex-shrink:0; }
 .rsd-pulita         { background:#2d6a4f; }
@@ -459,6 +463,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOAST ══ -->
 <div class="toast" id="toast"></div>
+<div class="bg-sync-toast" id="bgSyncToast"></div>
 
 <!-- ══ ROOM STATE MODAL ══ -->
 <div class="rstate-overlay" id="rstateOverlay" onclick="rstateOverlayClick(event)">
@@ -541,7 +546,7 @@ const RCOLS = {
 const PULIZIA_STATI = [
   { id:'pulita',         label:'Pulita',         cls:'s-pulita'         },
   { id:'da-pulire',      label:'Da pulire',       cls:'s-da-pulire'      },
-  { id:'in-corso',       label:'In corso',        cls:'s-in-corso'       },
+  { id:'in-corso',       label:'Controllare/Rassettare', cls:'s-in-corso' },
   { id:'fuori-servizio', label:'Fuori servizio',  cls:'s-fuori-servizio' },
 ];
 
@@ -872,6 +877,7 @@ async function onLoginSuccess() {
 function forceSync() {
   loadFromSheets._forceNext = true;
   invalidateDbCache();
+  stopBgSync();
   loadFromSheets();
 }
 
@@ -881,6 +887,7 @@ function logout() {
   bookings = [];
   Object.keys(_sheetIdCaches).forEach(k => delete _sheetIdCaches[k]);
   invalidateDbCache();
+  stopBgSync();
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('userAvatar').style.display = 'none';
 }
@@ -1442,47 +1449,171 @@ async function syncWithDatabase(annualBookings, forceSync = false) {
   return result;
 }
 
-async function loadFromSheets() {
-  if (!accessToken) return;
-  showLoading('Lettura prenotazioni…');
-  document.getElementById('syncDot').classList.remove('show');
+// ═══════════════════════════════════════════════════════════════════
+// BACKGROUND SYNC — controlla fogli annuali ogni 5 min in silenzio
+// ═══════════════════════════════════════════════════════════════════
+let _bgSyncTimer = null;
+let _bgSyncRunning = false;
 
-  // Ricarica configurazione da localStorage
-  if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
-  annualSheets = loadAnnualSheets();
-  // Il bottone ↻ forzato invalida la cache
-  const _forcingSync = loadFromSheets._forceNext === true;
-  loadFromSheets._forceNext = false;
+function startBgSync() {
+  if (_bgSyncTimer) clearInterval(_bgSyncTimer);
+  _bgSyncTimer = setInterval(bgSync, 5 * 60 * 1000); // ogni 5 minuti
+}
 
+function stopBgSync() {
+  if (_bgSyncTimer) { clearInterval(_bgSyncTimer); _bgSyncTimer = null; }
+}
+
+function showBgToast(msg, duration = 2500) {
+  const el = document.getElementById('bgSyncToast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), duration);
+}
+
+function setSyncPulsing(on) {
+  const dot = document.getElementById('syncDot');
+  if (!dot) return;
+  dot.classList.toggle('pulsing', on);
+  if (!on) dot.classList.remove('show');
+}
+
+async function bgSync() {
+  if (!accessToken || _bgSyncRunning) return;
+  _bgSyncRunning = true;
+  setSyncPulsing(true);
   try {
-    // 1. Leggi tutti i fogli annuali configurati
-    bookings = [];
-    sheetColumnMap = {};
-    let allAnnual = [];
+    annualSheets = loadAnnualSheets();
+    if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
 
-    for (const entry of annualSheets) {
-      if (!entry.sheetId) continue;
-      showLoading(`Lettura ${entry.label}…`);
-      const ann = await readAnnualSheet(entry);
-      allAnnual = allAnnual.concat(ann);
+    // 1. Leggi fogli annuali in parallelo (molto più veloce)
+    const annualResults = await Promise.all(
+      annualSheets.filter(e => e.sheetId).map(e => readAnnualSheet(e).catch(() => []))
+    );
+    const allAnnual = annualResults.flat();
+
+    // 2. Confronta con bookings attuali — cerca novità
+    const currentIds = new Set(bookings.map(b => b.dbId || (b.r+'|'+b.n+'|'+b.s.getTime())));
+    const hasNew = allAnnual.some(a => {
+      const key = a.dbId || (a.r+'|'+a.n+'|'+a.s.getTime());
+      return !currentIds.has(key);
+    });
+    const currentLen = bookings.length;
+
+    if (!hasNew && allAnnual.length === currentLen) {
+      // Nessuna novità dai fogli — controlla solo se il DB ha aggiornamenti recenti
+      // (es. modifica fatta da altro dispositivo tramite app)
+      const dbFresh = await readDatabase();
+      const dbHasNew = dbFresh.some(db => {
+        const existing = bookings.find(b => b.dbId === db.dbId);
+        if (!existing) return true;
+        return db.ts && existing.ts && db.ts > existing.ts;
+      });
+      if (!dbHasNew) {
+        setSyncPulsing(false);
+        _bgSyncRunning = false;
+        return; // tutto uguale
+      }
+      // Aggiorna da DB silenziosamente
+      bookings = mergeMultiMonthBookings(dbFresh);
+      saveDbCache(dbFresh);
+      render();
+      showBgToast('↻ Aggiornato');
+    } else {
+      // Ci sono novità dai fogli → sync completo silenzioso
+      invalidateDbCache();
+      const synced = await syncWithDatabase(allAnnual, true);
+      bookings = mergeMultiMonthBookings(synced);
+      render();
+      const diff = bookings.length - currentLen;
+      showBgToast(diff > 0 ? `↻ +${diff} nuove prenotazioni` : '↻ Aggiornato');
     }
 
-    // 2. Sync con DATABASE se configurato
+    // Aggiorna anche stato camere se cambiato
+    await loadRoomStates();
+    if (document.getElementById('roomDashPage').classList.contains('open')) renderRoomDash();
+
+  } catch(e) {
+    console.warn('bgSync error:', e.message);
+  } finally {
+    setSyncPulsing(false);
+    _bgSyncRunning = false;
+  }
+}
+
+// ── Caricamento iniziale DB-first ──
+async function loadFromSheets() {
+  if (!accessToken) return;
+  document.getElementById('syncDot').classList.remove('show');
+  document.getElementById('syncDot').classList.remove('pulsing');
+
+  if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
+  annualSheets = loadAnnualSheets();
+  const forcing = loadFromSheets._forceNext === true;
+  loadFromSheets._forceNext = false;
+
+  stopBgSync();
+
+  try {
+    bookings = [];
+    sheetColumnMap = {};
+
+    if (DATABASE_SHEET_ID && !forcing) {
+      // ── FAST PATH: leggi cache locale o DATABASE direttamente ──
+      const cached = loadDbCache();
+      if (cached && cached.length > 0) {
+        // Usa cache → mostra subito
+        showLoading(`Caricamento da cache (${cached.length} prenotazioni)…`);
+        bookings = mergeMultiMonthBookings(cached);
+        await loadRoomStates();
+        hideLoading(); render();
+        showToast(`✓ ${bookings.length} prenotazioni (cache)`, 'success');
+        // Poi lancia sync fogli in background dopo 2s
+        setTimeout(bgSync, 2000);
+        startBgSync();
+        return;
+      } else {
+        // Nessuna cache → leggi DB (1 chiamata sola)
+        showLoading('Lettura database…');
+        await ensureDbHeaders();
+        const dbBookings = await readDatabase();
+        if (dbBookings.length > 0) {
+          bookings = mergeMultiMonthBookings(dbBookings);
+          saveDbCache(dbBookings);
+          await loadRoomStates();
+          hideLoading(); render();
+          showToast(`✓ ${bookings.length} prenotazioni caricate`, 'success');
+          // Sync fogli in background subito dopo
+          setTimeout(bgSync, 1500);
+          startBgSync();
+          return;
+        }
+        // DB vuoto → fallback al percorso completo
+      }
+    }
+
+    // ── FULL PATH: primo avvio o forceSync o DB non configurato ──
+    showLoading('Lettura fogli annuali…');
+    const annualResults = await Promise.all(
+      annualSheets.filter(e => e.sheetId).map(async (entry, i) => {
+        showLoading(`Lettura ${entry.label}…`);
+        return readAnnualSheet(entry).catch(() => []);
+      })
+    );
+    let allAnnual = annualResults.flat();
+
     if (DATABASE_SHEET_ID) {
       showLoading('Sincronizzazione database…');
-      allAnnual = await syncWithDatabase(allAnnual, _forcingSync);
-      // Carica anche stato camere
+      allAnnual = await syncWithDatabase(allAnnual, true);
       showLoading('Caricamento stato camere…');
       await loadRoomStates();
     }
 
-    // 3. Ricongiungi multi-mese
     bookings = mergeMultiMonthBookings(allAnnual);
-
     hideLoading(); render();
     showToast(`✓ ${bookings.length} prenotazioni caricate`, 'success');
-    document.getElementById('syncDot').classList.add('show');
-    setTimeout(() => document.getElementById('syncDot').classList.remove('show'), 4000);
+    startBgSync();
 
   } catch(e) {
     hideLoading(); console.error(e);
@@ -2169,7 +2300,7 @@ function openRoomDrawer(roomId) {
   const room = ROOMS.find(r=>r.id===roomId);
   if (!room) return;
   const rs    = roomStates[roomId] || {};
-  const pLabel= {'pulita':'Pulita','da-pulire':'Da pulire','in-corso':'In corso','fuori-servizio':'Fuori servizio'};
+  const pLabel= {'pulita':'Pulita','da-pulire':'Da pulire','in-corso':'Controllare/Rassettare','fuori-servizio':'Fuori servizio'};
   // Apri drawer con info camera
   document.getElementById('drtitle').textContent = 'Camera ' + room.name;
   document.getElementById('drsub').textContent   = room.g;
@@ -2614,7 +2745,7 @@ function getRoomDayStatus(roomId, date) {
 }
 
 function puliziaBadge(p) {
-  const labels = { 'pulita':'Pulita','da-pulire':'Da pulire','in-corso':'In corso','fuori-servizio':'Fuori servizio' };
+  const labels = { 'pulita':'Pulita','da-pulire':'Da pulire','in-corso':'Controllare/Rassettare','fuori-servizio':'Fuori servizio' };
   return `<span class="rdash-badge badge-${p}">${labels[p]||p}</span>`;
 }
 
@@ -2636,11 +2767,11 @@ function renderRoomDash() {
   const todayStr = today.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
 
   // Filtri operativi
-  const filtri = ['tutti','cambio','occupata','arrivo','uscita','pronta','da-preparare','fuori-servizio'];
+  const filtri = ['tutti','cambio','da-preparare','arrivo','occupata','uscita','pronta','fuori-servizio'];
   const fLabel  = {
     'tutti':'Tutti', 'cambio':'🔄 Cambio', 'occupata':'🔴 Occupate',
     'arrivo':'🔵 Arrivi', 'uscita':'🟡 Uscite', 'pronta':'🟢 Pronte',
-    'da-preparare':'🟠 Da prep.', 'fuori-servizio':'⚫ Fuori serv.'
+    'da-preparare':'🟠 Da pulire', 'fuori-servizio':'⚫ Fuori serv.'
   };
   let filtersHtml = `<div style="padding:10px 14px 4px;font-size:11px;color:var(--text3);font-weight:600;">Oggi: ${todayStr}</div>
   <div class="rdash-filters">`;
@@ -2650,7 +2781,7 @@ function renderRoomDash() {
   filtersHtml += `</div>`;
 
   // Raggruppa per stato operativo (cambio prima, poi occupata, uscita, arrivo, da-preparare, pronta, fuori-servizio)
-  const ordine = ['cambio','occupata','uscita','arrivo','da-preparare','pronta','fuori-servizio'];
+  const ordine = ['cambio','da-preparare','arrivo','occupata','uscita','pronta','fuori-servizio'];
   const grouped = {}; ordine.forEach(o => grouped[o] = []);
 
   ROOMS.forEach(room => {
@@ -2716,7 +2847,7 @@ function renderRoomDash() {
         detailHtml += `<div style="font-size:10px;color:#2d6a4f;margin-top:2px;">✓ Camera pronta</div>`;
         if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 ${rs.configurazione}</div>`;
       } else if (st.opId === 'da-preparare') {
-        const pulLabel = {'da-pulire':'Da pulire','in-corso':'Pulizia in corso'};
+        const pulLabel = {'da-pulire':'Da pulire','in-corso':'Controllare/Rassettare'};
         detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:2px;">${pulLabel[rs.pulizia||'da-pulire']||'Da preparare'}</div>`;
         if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 Attuale: ${rs.configurazione}</div>`;
       }
