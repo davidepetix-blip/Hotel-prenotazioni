@@ -1056,16 +1056,40 @@ function dbRowToBooking(row, rowNum) {
 const ROOMS_CACHE_KEY = 'hotelRoomsCache';
 
 async function ensureRoomsSheet() {
+  const id = DATABASE_SHEET_ID;
+  if (!id) return;
+
+  // 1. Controlla se la scheda esiste già e ha già le intestazioni
   try {
     const d = await dbGet(`${ROOMS_SHEET_NAME}!A1:G1`);
-    if (d.values?.[0]?.[0] === 'CAMERA') return;
-  } catch(e) {}
-  const id = DATABASE_SHEET_ID;
+    if (d.values?.[0]?.[0] === 'CAMERA') return; // tutto ok
+  } catch(e) {
+    // La scheda non esiste → creala prima tramite batchUpdate
+    try {
+      const addSheet = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`,
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests: [{ addSheet: { properties: { title: ROOMS_SHEET_NAME } } }] })
+        }
+      );
+      if (!addSheet.ok) {
+        const err = await addSheet.text();
+        // Se l'errore è "already exists" va bene, altrimenti rilancia
+        if (!err.includes('already exists') && !err.includes('ALREADY_EXISTS')) throw new Error(err);
+      }
+    } catch(e2) {
+      if (!String(e2.message).includes('already')) throw e2;
+    }
+  }
+
+  // 2. Scrivi le intestazioni (la scheda ora esiste di sicuro)
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(ROOMS_SHEET_NAME+'!A1:G1')}?valueInputOption=RAW`;
   await fetch(url, {
-    method:'PUT',
-    headers:{ Authorization:'Bearer '+accessToken, 'Content-Type':'application/json' },
-    body: JSON.stringify({ values:[['CAMERA','MAX_OSPITI','LETTI_AMMESSI','PULIZIA','CONFIGURAZIONE','NOTE_OPS','TS_AGGIORNAMENTO']] })
+    method: 'PUT',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [['CAMERA','MAX_OSPITI','LETTI_AMMESSI','PULIZIA','CONFIGURAZIONE','NOTE_OPS','TS_AGGIORNAMENTO']] })
   });
 }
 
@@ -1122,6 +1146,7 @@ async function updateSingleRoomState(roomId, patch) {
   const id = DATABASE_SHEET_ID;
   const room = ROOMS.find(r => r.id === roomId);
   if (!room || !id) return;
+  await ensureRoomsSheet();  // crea scheda CAMERE se mancante
   roomStates[roomId] = { ...(roomStates[roomId]||{}), ...patch, ts: nowISO() };
   // Scrivi solo questa riga
   const s = roomStates[roomId];
@@ -1148,6 +1173,7 @@ async function updateSingleRoomState(roomId, patch) {
   }
   // Aggiorna cache
   try { localStorage.setItem(ROOMS_CACHE_KEY, JSON.stringify({ ts:Date.now(), data:roomStates })); } catch(e){}
+  syncRoomSettingsFromStates();
 }
 
 function loadRoomsCache() {
