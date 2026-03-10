@@ -769,10 +769,14 @@ function showToast(msg, type='') {
   setTimeout(() => { t.className = 'toast'; }, 3000);
 }
 function showLoading(msg='Caricamento…') {
+  if (_bgSyncRunning) return;  // mai bloccare l'UI durante bgSync
   document.getElementById('loadMsg').textContent = msg;
   document.getElementById('loadingOverlay').classList.add('show');
 }
-function hideLoading() { document.getElementById('loadingOverlay').classList.remove('show'); }
+function hideLoading() {
+  if (_bgSyncRunning) return;
+  document.getElementById('loadingOverlay').classList.remove('show');
+}
 
 // Converti colore hex → { red, green, blue } 0..1 per Sheets API
 function hexToSheetsColor(hex) {
@@ -1484,56 +1488,39 @@ function setSyncPulsing(on) {
 
 async function bgSync() {
   if (!accessToken || _bgSyncRunning) return;
-  _bgSyncRunning = true;
+  _bgSyncRunning = true;   // blocca showLoading/hideLoading
   setSyncPulsing(true);
+  const currentLen = bookings.length;
+
   try {
     annualSheets = loadAnnualSheets();
     if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
 
-    // 1. Leggi fogli annuali in parallelo (molto più veloce)
-    const annualResults = await Promise.all(
-      annualSheets.filter(e => e.sheetId).map(e => readAnnualSheet(e).catch(() => []))
-    );
-    const allAnnual = annualResults.flat();
+    // Leggi solo il DATABASE (1 chiamata) — fonte primaria
+    const dbFresh = await readDatabase();
 
-    // 2. Confronta con bookings attuali — cerca novità
-    const currentIds = new Set(bookings.map(b => b.dbId || (b.r+'|'+b.n+'|'+b.s.getTime())));
-    const hasNew = allAnnual.some(a => {
-      const key = a.dbId || (a.r+'|'+a.n+'|'+a.s.getTime());
-      return !currentIds.has(key);
-    });
-    const currentLen = bookings.length;
+    // Confronta timestamps per capire se c'è qualcosa di nuovo
+    const dbMap = new Map(dbFresh.map(b => [b.dbId, b]));
+    const localMap = new Map(bookings.map(b => [b.dbId, b]).filter(([k]) => k));
 
-    if (!hasNew && allAnnual.length === currentLen) {
-      // Nessuna novità dai fogli — controlla solo se il DB ha aggiornamenti recenti
-      // (es. modifica fatta da altro dispositivo tramite app)
-      const dbFresh = await readDatabase();
-      const dbHasNew = dbFresh.some(db => {
-        const existing = bookings.find(b => b.dbId === db.dbId);
-        if (!existing) return true;
-        return db.ts && existing.ts && db.ts > existing.ts;
-      });
-      if (!dbHasNew) {
-        setSyncPulsing(false);
-        _bgSyncRunning = false;
-        return; // tutto uguale
+    let changed = dbFresh.length !== localMap.size;
+    if (!changed) {
+      for (const [id, db] of dbMap) {
+        const local = localMap.get(id);
+        if (!local || (db.ts && local.ts && db.ts > local.ts)) { changed = true; break; }
       }
-      // Aggiorna da DB silenziosamente
+    }
+
+    if (changed) {
+      // Aggiorna silenziosamente senza toccare l'overlay
       bookings = mergeMultiMonthBookings(dbFresh);
       saveDbCache(dbFresh);
       render();
-      showBgToast('↻ Aggiornato');
-    } else {
-      // Ci sono novità dai fogli → sync completo silenzioso
-      invalidateDbCache();
-      const synced = await syncWithDatabase(allAnnual, true);
-      bookings = mergeMultiMonthBookings(synced);
-      render();
-      const diff = bookings.length - currentLen;
-      showBgToast(diff > 0 ? `↻ +${diff} nuove prenotazioni` : '↻ Aggiornato');
+      const diff = dbFresh.length - currentLen;
+      showBgToast(diff > 0 ? `↻ +${diff} prenotazioni` : diff < 0 ? `↻ Aggiornato` : '↻ Aggiornato');
     }
 
-    // Aggiorna anche stato camere se cambiato
+    // Aggiorna stato camere (leggero, dalla cache se possibile)
     await loadRoomStates();
     if (document.getElementById('roomDashPage').classList.contains('open')) renderRoomDash();
 
@@ -2934,8 +2921,10 @@ function openRstateModal(roomId) {
   document.getElementById('rstateNote').value   = s.noteOps || '';
   // Costruisci bottoni stati
   const btns = document.getElementById('rstateButtons');
+  btns.dataset.selected = '';  // reset selezione precedente
   btns.innerHTML = PULIZIA_STATI.map(st =>
     `<button class="rstate-btn ${st.cls}${(s.pulizia||'da-pulire')===st.id?' sel':''}"
+             data-state-id="${st.id}"
              onclick="selectRstate('${st.id}')">${st.label}</button>`
   ).join('');
   document.getElementById('rstateOverlay').classList.add('open');
@@ -2962,24 +2951,29 @@ function rstateOverlayClick(e) {
 async function saveRoomState() {
   if (!_rstateEditRoom) return;
   const btns = document.getElementById('rstateButtons');
-  const pulizia = btns.dataset.selected
-    || document.querySelector('.rstate-btn.sel')?.textContent
+
+  // Leggi l'id dal dataset (impostato da selectRstate) oppure dal bottone .sel
+  // MAI usare textContent — quello è il label visivo, non l'id
+  const selBtn = btns.querySelector('.rstate-btn.sel');
+  const pulizia = btns.dataset.selected          // cliccato durante questa sessione
+    || selBtn?.dataset?.stateId                  // id nel dataset del bottone (v. sotto)
     || (roomStates[_rstateEditRoom]?.pulizia || 'da-pulire');
+
   const configurazione = document.getElementById('rstateConfig').value.trim();
   const noteOps        = document.getElementById('rstateNote').value.trim();
+  const roomId         = _rstateEditRoom;        // salva prima di closeRstateModal
 
   closeRstateModal();
   showLoading('Salvataggio stato camera…');
   try {
-    await updateSingleRoomState(_rstateEditRoom, { pulizia, configurazione, noteOps });
+    await updateSingleRoomState(roomId, { pulizia, configurazione, noteOps });
     hideLoading();
     showToast('✓ Stato camera aggiornato', 'success');
-    render(); // aggiorna dot nel gantt
-    // Se la dashboard è aperta, aggiorna la griglia
+    render();
     if (document.getElementById('roomDashPage').classList.contains('open')) renderRoomDash();
   } catch(e) {
     hideLoading();
-    showToast('Errore: ' + e.message, 'error');
+    showToast('Errore salvataggio: ' + e.message, 'error');
   }
 }
 
