@@ -1420,6 +1420,12 @@ async function syncWithDatabase(annualBookings, forceSync = false) {
   const seen          = new Set();
 
   // ── Confronta annual vs DB ──
+  // Costruisci un set "fingerprint" per identificare ogni prenotazione del foglio
+  // Fingerprint = camera|nome|dataInizio|dataFine (tutto normalizzato)
+  const annualFingerprints = new Set(annualBookings.map(a =>
+    `${a.cameraName}|${a.n}|${a.s.getTime()}|${a.e.getTime()}`
+  ));
+
   for (const ann of annualBookings) {
     const match = dbBookings.find(db =>
       db.cameraName === ann.cameraName &&
@@ -1449,10 +1455,31 @@ async function syncWithDatabase(annualBookings, forceSync = false) {
     }
   }
 
-  // Prenotazioni solo nel DB
+  // ── Prenotazioni solo nel DB ──
+  // Se fonte='manuale' (dal foglio) e non si trova più nel foglio → cancellata lì → DELETED
+  // Se fonte='app' (dall'app) e non nel foglio → è normale (non ancora nel foglio o DB-only) → tieni
+  const toDeleteInDb = [];
   for (const db of dbBookings) {
-    if (!seen.has(db.dbId)) result.push(db);
+    if (seen.has(db.dbId)) continue;
+    const fp = `${db.cameraName}|${db.n}|${db.s.getTime()}|${db.e.getTime()}`;
+    const stillInFoglio = annualFingerprints.has(fp);
+    if (!stillInFoglio && db.fonte === 'manuale') {
+      // Era nel foglio, ora non c'è più → cancellata direttamente nel foglio
+      console.log(`Cancellazione rilevata dal foglio: ${db.cameraName} / ${db.n}`);
+      db.deleted = true;
+      toDeleteInDb.push(db);
+      // NON aggiungere a result
+    } else {
+      // fonte='app' o ancora nel foglio (non dovrebbe succedere) → tieni
+      result.push(db);
+    }
   }
+
+  // Soft-delete in batch nel DB
+  for (const b of toDeleteInDb) {
+    try { await dbDelete(b); } catch(e) { console.warn('dbDelete error:', e.message); }
+  }
+  if (toDeleteInDb.length > 0) console.log(`✓ ${toDeleteInDb.length} prenotazioni rimosse (cancellate dal foglio)`);
 
   // ── Import batch: 50 righe per chiamata ──
   if (toImportBatch.length > 0) {
@@ -1537,13 +1564,18 @@ async function bgSync() {
       }
     }
 
-    if (changed) {
-      // Aggiorna silenziosamente senza toccare l'overlay
+    // Controlla anche cancellazioni: prenotazioni in memoria non più nel DB
+    const dbIds = new Set(dbFresh.map(b => b.dbId).filter(Boolean));
+    const cancellate = bookings.filter(b => b.dbId && !dbIds.has(b.dbId));
+
+    if (changed || cancellate.length > 0) {
       bookings = mergeMultiMonthBookings(dbFresh);
       saveDbCache(dbFresh);
       render();
       const diff = dbFresh.length - currentLen;
-      showBgToast(diff > 0 ? `↻ +${diff} prenotazioni` : diff < 0 ? `↻ Aggiornato` : '↻ Aggiornato');
+      const msg = cancellate.length > 0 ? `↻ ${cancellate.length} rimoss${cancellate.length===1?'a':'e'}` :
+                  diff > 0 ? `↻ +${diff} prenotazioni` : '↻ Aggiornato';
+      showBgToast(msg);
     }
 
     // Aggiorna stato camere (leggero, dalla cache se possibile)
