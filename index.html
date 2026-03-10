@@ -2807,41 +2807,45 @@ function renderRoomDash() {
   });
   filtersHtml += `</div>`;
 
-  const ordine = ['cambio','controllare','da-preparare','arrivo','uscita','occupata','pronta','fuori-servizio'];
-  const grouped = {}; ordine.forEach(o => grouped[o] = []);
-
+  // Costruisci lista piatta e ordina globalmente per prossimo arrivo
+  // Le camere con arrivo più imminente vengono prima; senza arrivi in fondo
+  const allCards = [];
   ROOMS.forEach(room => {
     const st = getRoomDayStatus(room.id, today);
     if (_rdashFilter !== 'tutti' && st.opId !== _rdashFilter) return;
-    grouped[st.opId]?.push({ room, st });
+
+    // Data di riferimento per l'ordinamento:
+    // - cambio/arrivo/uscita → today (sempre in cima)
+    // - occupata → data checkout (più lontano = più in fondo)
+    // - controllare/da-preparare → data prossimo arrivo
+    // - pronta/fuori-servizio → Infinity (in fondo)
+    let sortKey;
+    if (['cambio','arrivo','uscita'].includes(st.opId)) {
+      sortKey = today.getTime();                               // oggi → primissimi
+    } else if (st.opId === 'occupata' && st.occupante) {
+      sortKey = st.occupante.e.getTime() + 1e12;              // dopo arrivi, ordinati per checkout
+    } else if (st.prossimoArrivo) {
+      sortKey = st.prossimoArrivo.s.getTime();                // prossimo arrivo
+    } else {
+      sortKey = Infinity;                                      // nessun arrivo → ultimi
+    }
+
+    // Secondario: priorità opId (cambio prima di arrivo, arrivo prima di uscita, ecc.)
+    const opPriority = {cambio:0, controllare:1, 'da-preparare':1, arrivo:2, uscita:3, occupata:4, pronta:5, 'fuori-servizio':6};
+    const pri = opPriority[st.opId] ?? 9;
+
+    allCards.push({ room, st, sortKey, pri });
   });
 
-  // Ordina per data prossimo arrivo: camere con arrivo imminente prima
-  ['controllare','da-preparare'].forEach(opId => {
-    grouped[opId].sort((a, b) => {
-      const ta = a.st.prossimoArrivo?.s?.getTime() ?? Infinity;
-      const tb = b.st.prossimoArrivo?.s?.getTime() ?? Infinity;
-      return ta - tb;
-    });
+  allCards.sort((a, b) => {
+    if (a.sortKey !== b.sortKey) return a.sortKey - b.sortKey;
+    if (a.pri !== b.pri) return a.pri - b.pri;
+    return a.room.name.localeCompare(b.room.name, 'it', {numeric:true});
   });
-  // Arrivi oggi: ordina per nome camera
-  grouped['arrivo'].sort((a, b) => a.room.name.localeCompare(b.room.name, 'it', {numeric:true}));
-
-  // Helper: pallino stato pulizia inline
-  function puliziaDot(pulizia) {
-    const cfg = {
-      'pulita':         { bg:'#2d6a4f', label:'Pulita' },
-      'da-pulire':      { bg:'#e67e22', label:'Da pulire' },
-      'in-corso':       { bg:'#8e44ad', label:'Controllare/Rassettare' },
-      'fuori-servizio': { bg:'#c0392b', label:'Fuori servizio' },
-    };
-    const c = cfg[pulizia] || cfg['da-pulire'];
-    return `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c.bg};margin-right:5px;vertical-align:middle;flex-shrink:0;" title="${c.label}"></span>`;
-  }
 
   let gridHtml = `<div class="rdash-grid">`;
-  ordine.forEach(opId => {
-    (grouped[opId] || []).forEach(({ room, st }) => {
+  allCards.forEach(({ room, st }) => {
+    const opId = st.opId;
       const rs = roomStates[room.id] || {};
       const pulizia = rs.pulizia || 'da-pulire';
       const ts = rs.ts ? new Date(rs.ts).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
@@ -2937,7 +2941,6 @@ function renderRoomDash() {
           <div class="rdash-ts">${ts ? 'Agg: '+ts : ''}</div>
         </div>`;
     });
-  });
   gridHtml += `</div>`;
 
   const body = document.getElementById('roomDashPage');
