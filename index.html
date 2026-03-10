@@ -2807,39 +2807,78 @@ function renderRoomDash() {
   });
   filtersHtml += `</div>`;
 
-  // Costruisci lista piatta e ordina globalmente per prossimo arrivo
-  // Le camere con arrivo più imminente vengono prima; senza arrivi in fondo
+  // ── Ordinamento per ordine di lavoro del personale ──
+  // Bucket numerici: numero più basso = più urgente
+  // 0  cambio cliente (doppio lavoro oggi)
+  // 1  arrivo oggi + camera non pulita  (da fare SUBITO)
+  // 2  uscita oggi (checkout → poi pulire)
+  // 3  da preparare/controllare con arrivo imminente (oggi o domani)
+  // 4  arrivo oggi + camera già pulita (pronta, nessuna azione)
+  // 5  da preparare/controllare con arrivo tra 2-7gg
+  // 6  da preparare/controllare con arrivo tra 8+gg
+  // 7  da preparare/controllare senza arrivo previsto
+  // 8  occupata (nessuna azione oggi), ordinate per checkout
+  // 9  pronta senza arrivo imminente
+  // 10 fuori servizio
+
+  const todayMs = today.getTime();
+
   const allCards = [];
   ROOMS.forEach(room => {
     const st = getRoomDayStatus(room.id, today);
     if (_rdashFilter !== 'tutti' && st.opId !== _rdashFilter) return;
 
-    // Data di riferimento per l'ordinamento:
-    // - cambio/arrivo/uscita → today (sempre in cima)
-    // - occupata → data checkout (più lontano = più in fondo)
-    // - controllare/da-preparare → data prossimo arrivo
-    // - pronta/fuori-servizio → Infinity (in fondo)
-    let sortKey;
-    if (['cambio','arrivo','uscita'].includes(st.opId)) {
-      sortKey = today.getTime();                               // oggi → primissimi
-    } else if (st.opId === 'occupata' && st.occupante) {
-      sortKey = st.occupante.e.getTime() + 1e12;              // dopo arrivi, ordinati per checkout
-    } else if (st.prossimoArrivo) {
-      sortKey = st.prossimoArrivo.s.getTime();                // prossimo arrivo
-    } else {
-      sortKey = Infinity;                                      // nessun arrivo → ultimi
+    const rs    = roomStates[room.id] || {};
+    const pul   = rs.pulizia || 'da-pulire';
+    const gArr  = st.prossimoArrivo ? Math.round((st.prossimoArrivo.s - today) / 86400000) : null;
+
+    let bucket, tiebreak;
+
+    switch (st.opId) {
+      case 'cambio':
+        bucket = 0; tiebreak = 0; break;
+
+      case 'arrivo':
+        // Arrivo oggi: prima le non pulite (da fare subito), poi le già pronte
+        bucket   = (pul === 'pulita') ? 4 : 1;
+        tiebreak = 0; break;
+
+      case 'uscita':
+        bucket = 2; tiebreak = 0; break;
+
+      case 'controllare':
+      case 'da-preparare':
+        if (gArr === null) {
+          bucket = 7; tiebreak = 0;
+        } else if (gArr <= 1) {
+          bucket = 3; tiebreak = gArr;
+        } else if (gArr <= 7) {
+          bucket = 5; tiebreak = gArr;
+        } else {
+          bucket = 6; tiebreak = gArr;
+        }
+        break;
+
+      case 'occupata':
+        bucket   = 8;
+        tiebreak = st.occupante ? st.occupante.e.getTime() : 0; break;
+
+      case 'pronta':
+        bucket = 9; tiebreak = gArr ?? Infinity; break;
+
+      case 'fuori-servizio':
+        bucket = 10; tiebreak = 0; break;
+
+      default:
+        bucket = 99; tiebreak = 0;
     }
 
-    // Secondario: priorità opId (cambio prima di arrivo, arrivo prima di uscita, ecc.)
-    const opPriority = {cambio:0, controllare:1, 'da-preparare':1, arrivo:2, uscita:3, occupata:4, pronta:5, 'fuori-servizio':6};
-    const pri = opPriority[st.opId] ?? 9;
-
-    allCards.push({ room, st, sortKey, pri });
+    allCards.push({ room, st, bucket, tiebreak });
   });
 
   allCards.sort((a, b) => {
-    if (a.sortKey !== b.sortKey) return a.sortKey - b.sortKey;
-    if (a.pri !== b.pri) return a.pri - b.pri;
+    if (a.bucket !== b.bucket) return a.bucket - b.bucket;
+    if (a.tiebreak !== b.tiebreak) return a.tiebreak - b.tiebreak;
     return a.room.name.localeCompare(b.room.name, 'it', {numeric:true});
   });
 
