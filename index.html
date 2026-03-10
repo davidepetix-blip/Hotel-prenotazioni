@@ -2807,7 +2807,6 @@ function renderRoomDash() {
   });
   filtersHtml += `</div>`;
 
-  // Raggruppa per stato operativo (cambio prima, poi occupata, uscita, arrivo, da-preparare, pronta, fuori-servizio)
   const ordine = ['cambio','controllare','da-preparare','arrivo','uscita','occupata','pronta','fuori-servizio'];
   const grouped = {}; ordine.forEach(o => grouped[o] = []);
 
@@ -2817,16 +2816,48 @@ function renderRoomDash() {
     grouped[st.opId]?.push({ room, st });
   });
 
+  // Ordina per data prossimo arrivo: camere con arrivo imminente prima
+  ['controllare','da-preparare'].forEach(opId => {
+    grouped[opId].sort((a, b) => {
+      const ta = a.st.prossimoArrivo?.s?.getTime() ?? Infinity;
+      const tb = b.st.prossimoArrivo?.s?.getTime() ?? Infinity;
+      return ta - tb;
+    });
+  });
+  // Arrivi oggi: ordina per nome camera
+  grouped['arrivo'].sort((a, b) => a.room.name.localeCompare(b.room.name, 'it', {numeric:true}));
+
+  // Helper: pallino stato pulizia inline
+  function puliziaDot(pulizia) {
+    const cfg = {
+      'pulita':         { bg:'#2d6a4f', label:'Pulita' },
+      'da-pulire':      { bg:'#e67e22', label:'Da pulire' },
+      'in-corso':       { bg:'#8e44ad', label:'Controllare/Rassettare' },
+      'fuori-servizio': { bg:'#c0392b', label:'Fuori servizio' },
+    };
+    const c = cfg[pulizia] || cfg['da-pulire'];
+    return `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c.bg};margin-right:5px;vertical-align:middle;flex-shrink:0;" title="${c.label}"></span>`;
+  }
+
   let gridHtml = `<div class="rdash-grid">`;
   ordine.forEach(opId => {
     (grouped[opId] || []).forEach(({ room, st }) => {
       const rs = roomStates[room.id] || {};
+      const pulizia = rs.pulizia || 'da-pulire';
       const ts = rs.ts ? new Date(rs.ts).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+
+      // Pallino pulizia: mostrato su tutte le card (prominente sugli arrivi)
+      const dotSize   = (opId === 'arrivo') ? '11px' : '9px';
+      const dotCfg    = { 'pulita':['#2d6a4f','Pulita'], 'da-pulire':['#e67e22','Da pulire'], 'in-corso':['#8e44ad','Controllare/Rassettare'], 'fuori-servizio':['#c0392b','Fuori servizio'] };
+      const [dotColor, dotLabel] = dotCfg[pulizia] || dotCfg['da-pulire'];
+      const puliziaDotHtml = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;color:${dotColor};font-weight:600;">
+        <span style="width:${dotSize};height:${dotSize};border-radius:50%;background:${dotColor};display:inline-block;flex-shrink:0;"></span>
+        ${opId === 'arrivo' ? dotLabel : ''}
+      </span>`;
 
       let detailHtml = '';
 
       if (st.opId === 'cambio') {
-        // Uscente + entrante con disposizioni
         detailHtml += `<div class="rdash-section-title">In uscita</div>
           <div class="rdash-guest-row">
             <span class="rdash-guest-name">↑ ${st.uscente.n}</span>
@@ -2839,12 +2870,9 @@ function renderRoomDash() {
             ${st.entrante.d ? `<span class="rdash-disp">${st.entrante.d}</span>` : ''}
           </div>`;
         if (st.uscente.d !== st.entrante.d) {
-          detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:5px;font-weight:600;">
-            ⚙ ${st.uscente.d||'—'} → ${st.entrante.d||'—'}
-          </div>`;
+          detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:5px;font-weight:600;">⚙ ${st.uscente.d||'—'} → ${st.entrante.d||'—'}</div>`;
         }
       } else if (st.opId === 'occupata' && st.occupante) {
-        const notti = Math.round((st.occupante.e - st.occupante.s)/(86400000));
         const giorniRimasti = Math.round((st.occupante.e - today)/(86400000));
         detailHtml += `<div class="rdash-guest-row">
           <span class="rdash-guest-name">${st.occupante.n}</span>
@@ -2860,56 +2888,35 @@ function renderRoomDash() {
         </div>
         <div style="font-size:10px;color:var(--text3);margin-top:3px;">Da pulire dopo uscita</div>`;
       } else if (st.opId === 'arrivo' && st.entrante) {
-        detailHtml += `<div class="rdash-guest-row">
+        detailHtml += `<div class="rdash-guest-row" style="margin-top:2px;">
           <span class="rdash-guest-name">${st.entrante.n}</span>
           ${st.entrante.d ? `<span class="rdash-disp">${st.entrante.d}</span>` : ''}
         </div>`;
         if (rs.configurazione) {
           const dispOk = rs.configurazione.replace(/\s/g,'').toLowerCase() === (st.entrante.d||'').replace(/\s/g,'').toLowerCase();
           detailHtml += `<div style="font-size:10px;margin-top:3px;color:${dispOk?'#2d6a4f':'#e67e22'};">
-            ${dispOk ? '✓ Configurazione ok' : `⚙ Attuale: ${rs.configurazione} → Necessaria: ${st.entrante.d||'—'}`}
+            ${dispOk ? '✓ Configurazione ok' : '⚙ ' + rs.configurazione + ' → ' + (st.entrante.d||'—')}
           </div>`;
         }
       } else if (st.opId === 'pronta') {
         detailHtml += `<div style="font-size:10px;color:#2d6a4f;margin-top:2px;">✓ Camera pronta</div>`;
         if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 ${rs.configurazione}</div>`;
-      } else if (st.opId === 'controllare') {
-        // Camera da controllare/rassettare — mostra prossimo arrivo
+      } else if (st.opId === 'controllare' || st.opId === 'da-preparare') {
         if (st.prossimoArrivo) {
           const giorniAl = Math.round((st.prossimoArrivo.s - today) / 86400000);
-          const dataArr = fmt(st.prossimoArrivo.s);
-          const urgenza = giorniAl <= 1 ? 'color:#c0392b;font-weight:700' : giorniAl <= 3 ? 'color:#e67e22;font-weight:600' : 'color:var(--text3)';
+          const urgenza = giorniAl <= 0 ? 'color:#c0392b;font-weight:700' : giorniAl === 1 ? 'color:#e67e22;font-weight:600' : 'color:var(--text3)';
+          const quando = giorniAl <= 0 ? '⚠ OGGI' : giorniAl === 1 ? '⚠ domani' : fmt(st.prossimoArrivo.s) + ' (tra ' + giorniAl + 'gg)';
           detailHtml += `<div class="rdash-guest-row" style="margin-top:4px;">
             <span class="rdash-guest-name" style="font-size:11px;">${st.prossimoArrivo.n}</span>
-            ${st.prossimoArrivo.d ? `<span class="rdash-disp">${st.prossimoArrivo.d}</span>` : ''}
+            ${st.prossimoArrivo.d ? '<span class="rdash-disp">' + st.prossimoArrivo.d + '</span>' : ''}
           </div>
-          <div style="font-size:10px;margin-top:2px;${urgenza}">
-            Arrivo: ${dataArr}${giorniAl===0?' (oggi!)':giorniAl===1?' (domani)':' (tra '+giorniAl+'gg)'}
-          </div>`;
+          <div style="font-size:10px;margin-top:2px;${urgenza}">Arrivo: ${quando}</div>`;
           if (rs.configurazione && st.prossimoArrivo.d) {
             const dispOk = rs.configurazione.replace(/\s/g,'').toLowerCase() === st.prossimoArrivo.d.replace(/\s/g,'').toLowerCase();
-            if (!dispOk) detailHtml += `<div style="font-size:10px;color:#8e44ad;margin-top:2px;">⚙ ${rs.configurazione} → ${st.prossimoArrivo.d}</div>`;
+            if (!dispOk) detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:2px;">⚙ ${rs.configurazione} → ${st.prossimoArrivo.d}</div>`;
           }
         } else {
-          detailHtml += `<div style="font-size:10px;color:#8e44ad;margin-top:2px;">Nessun arrivo in programma</div>`;
-          if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 ${rs.configurazione}</div>`;
-        }
-      } else if (st.opId === 'da-preparare') {
-        // Mostra prossimo arrivo con urgenza
-        if (st.prossimoArrivo) {
-          const giorniAl = Math.round((st.prossimoArrivo.s - today) / 86400000);
-          const dataArr = fmt(st.prossimoArrivo.s);
-          const urgenza = giorniAl <= 1 ? 'color:#c0392b;font-weight:700' : giorniAl <= 3 ? 'color:#e67e22;font-weight:600' : 'color:var(--text3)';
-          detailHtml += `<div class="rdash-guest-row" style="margin-top:4px;">
-            <span class="rdash-guest-name" style="font-size:11px;">${st.prossimoArrivo.n}</span>
-            ${st.prossimoArrivo.d ? `<span class="rdash-disp">${st.prossimoArrivo.d}</span>` : ''}
-          </div>
-          <div style="font-size:10px;margin-top:2px;${urgenza}">
-            Prossimo arrivo: ${dataArr}${giorniAl===0?' ⚠ OGGI!':giorniAl===1?' ⚠ domani':' (tra '+giorniAl+'gg)'}
-          </div>`;
-          if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);margin-top:2px;">🛏 Attuale: ${rs.configurazione}</div>`;
-        } else {
-          detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:2px;">Nessun arrivo in programma</div>`;
+          detailHtml += `<div style="font-size:10px;color:var(--text3);margin-top:2px;">Nessun arrivo in programma</div>`;
           if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 ${rs.configurazione}</div>`;
         }
       }
@@ -2918,13 +2925,16 @@ function renderRoomDash() {
 
       gridHtml += `
         <div class="rdash-card op-${st.opId}" onclick="openRstateModal('${room.id}')">
-          <div style="display:flex;align-items:baseline;justify-content:space-between;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
             <div class="rdash-cam-name">${room.name}</div>
-            <div class="rdash-cam-group" style="margin-bottom:0;">${room.g}</div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              ${puliziaDotHtml}
+              <div class="rdash-cam-group" style="margin-bottom:0;">${room.g}</div>
+            </div>
           </div>
-          <div style="margin:5px 0 6px;">${opBadge(st.opId, st.label)}</div>
+          <div style="margin-bottom:6px;">${opBadge(st.opId, st.label)}</div>
           ${detailHtml}
-          <div class="rdash-ts">${ts ? 'Aggiornato: '+ts : ''}</div>
+          <div class="rdash-ts">${ts ? 'Agg: '+ts : ''}</div>
         </div>`;
     });
   });
