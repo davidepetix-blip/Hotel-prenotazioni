@@ -235,6 +235,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .rdash-card.op-arrivo         { background:#eef6ff; border-left:4px solid #2980b9; }
 .rdash-card.op-pronta         { background:#f0faf5; border-left:4px solid #2d6a4f; }
 .rdash-card.op-da-preparare   { background:#fdf6ec; border-left:4px solid #e67e22; }
+.rdash-card.op-controllare    { background:#f5eeff; border-left:4px solid #8e44ad; }
 .rdash-card.op-fuori-servizio { background:#f5f5f5; border-left:4px solid #7f8c8d; }
 @keyframes pulseBorder {
   0%,100% { border-left-color:#e67e22; }
@@ -249,6 +250,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .badge-op-arrivo         { background:#cce5ff; color:#004085; }
 .badge-op-pronta         { background:#d4edda; color:#155724; }
 .badge-op-da-preparare   { background:#fde8cc; color:#7d4e00; }
+.badge-op-controllare    { background:#e8d5f5; color:#5b2c6f; }
 .badge-op-fuori-servizio { background:#e2e3e5; color:#495057; }
 .rdash-section-title { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--text3); margin:4px 0 2px; }
 .rdash-guest-row { display:flex; align-items:center; gap:6px; font-size:11px; margin-top:3px; }
@@ -264,6 +266,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .rsd-op-arrivo         { background:#2980b9; }
 .rsd-op-pronta         { background:#2d6a4f; }
 .rsd-op-da-preparare   { background:#e67e22; }
+.rsd-op-controllare    { background:#8e44ad; }
 .rsd-op-fuori-servizio { background:#7f8c8d; }
 /* mantieni classi pulizia per badge nel modal */
 .badge-pulita         { background:#d4edda; color:#155724; }
@@ -2185,7 +2188,7 @@ function render() {
       if(isNow){ const tx=(tod-1)*CW+CW/2-1; tv=`<div class="tvline" style="left:${tx}px"></div>`; }
       const _today=new Date(); _today.setHours(12,0,0,0);
       const _opst=getRoomDayStatus(room.id,_today);
-      const _opLabels={'cambio':'Cambio','occupata':'Occupata','uscita':'Uscita oggi','arrivo':'Arrivo oggi','pronta':'Pronta','da-preparare':'Da preparare','fuori-servizio':'Fuori servizio'};
+      const _opLabels={'cambio':'Cambio','occupata':'Occupata','uscita':'Uscita oggi','arrivo':'Arrivo oggi','pronta':'Pronta','da-preparare':'Da preparare','controllare':'Controllare/Rassettare','fuori-servizio':'Fuori servizio'};
       const _dot=`<span class="room-status-dot rsd-op-${_opst.opId}" title="${_opLabels[_opst.opId]||''}"></span>`;
       h+=`<div class="rrow"><div class="rlabel" onclick="event.stopPropagation();openRoomDrawer('${room.id}')" style="cursor:pointer;">${room.name}${_dot}</div><div class="dcwrap">${cells}${bars}${tv}</div></div>`;
     });
@@ -2713,23 +2716,20 @@ function getRoomDayStatus(roomId, date) {
   // Trova prenotazioni attive / che iniziano / che finiscono in questa data
   const occupante = bookings.find(b =>
     b.r === roomId &&
-    b.s.getTime() < dStr &&    // check-in PRIMA di oggi (già dentro)
-    b.e.getTime() > dStr       // check-out DOPO oggi (non ancora uscito)
+    b.s.getTime() < dStr &&
+    b.e.getTime() > dStr
   );
   const uscente = bookings.find(b =>
     b.r === roomId &&
-    b.e.getTime() === dStr     // check-out esattamente oggi
+    b.e.getTime() === dStr
   );
   const entrante = bookings.find(b =>
     b.r === roomId &&
-    b.s.getTime() === dStr     // check-in esattamente oggi
+    b.s.getTime() === dStr
   );
 
   if (uscente && entrante) {
     return { opId:'cambio', label:'Cambio cliente', uscente, entrante };
-  }
-  if (occupante) {
-    return { opId:'occupata', label:'Occupata', uscente:null, entrante:null, occupante };
   }
   if (uscente) {
     return { opId:'uscita', label:'Check-out oggi', uscente, entrante:null };
@@ -2737,11 +2737,25 @@ function getRoomDayStatus(roomId, date) {
   if (entrante) {
     return { opId:'arrivo', label:'Arrivo oggi', uscente:null, entrante };
   }
-  // Libera — controlla stato pulizia
-  const puliziaOk = rs.pulizia === 'pulita';
-  return { opId: puliziaOk ? 'pronta' : 'da-preparare',
-           label: puliziaOk ? 'Pronta' : 'Da preparare',
-           uscente:null, entrante:null };
+  if (occupante) {
+    return { opId:'occupata', label:'Occupata', uscente:null, entrante:null, occupante };
+  }
+
+  // Camera libera — cerca il prossimo arrivo futuro
+  const prossimoArrivo = bookings
+    .filter(b => b.r === roomId && b.s.getTime() > dStr)
+    .sort((a,b) => a.s - b.s)[0] || null;
+
+  // Distingui "controllare/rassettare" da semplice "da pulire"
+  const pulizia = rs.pulizia || 'da-pulire';
+  if (pulizia === 'pulita') {
+    return { opId:'pronta', label:'Pronta', uscente:null, entrante:null, prossimoArrivo };
+  }
+  if (pulizia === 'in-corso') {
+    return { opId:'controllare', label:'Controllare/Rassettare', uscente:null, entrante:null, prossimoArrivo };
+  }
+  // da-pulire
+  return { opId:'da-preparare', label:'Da preparare', uscente:null, entrante:null, prossimoArrivo };
 }
 
 function puliziaBadge(p) {
@@ -2767,11 +2781,11 @@ function renderRoomDash() {
   const todayStr = today.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
 
   // Filtri operativi
-  const filtri = ['tutti','cambio','da-preparare','arrivo','occupata','uscita','pronta','fuori-servizio'];
+  const filtri = ['tutti','cambio','controllare','da-preparare','arrivo','uscita','occupata','pronta','fuori-servizio'];
   const fLabel  = {
-    'tutti':'Tutti', 'cambio':'🔄 Cambio', 'occupata':'🔴 Occupate',
-    'arrivo':'🔵 Arrivi', 'uscita':'🟡 Uscite', 'pronta':'🟢 Pronte',
-    'da-preparare':'🟠 Da pulire', 'fuori-servizio':'⚫ Fuori serv.'
+    'tutti':'Tutti', 'cambio':'🔄 Cambio', 'controllare':'🟣 Controlla',
+    'occupata':'🔴 Occupate', 'arrivo':'🔵 Arrivi', 'uscita':'🟡 Uscite',
+    'pronta':'🟢 Pronte', 'da-preparare':'🟠 Da pulire', 'fuori-servizio':'⚫ Fuori serv.'
   };
   let filtersHtml = `<div style="padding:10px 14px 4px;font-size:11px;color:var(--text3);font-weight:600;">Oggi: ${todayStr}</div>
   <div class="rdash-filters">`;
@@ -2781,7 +2795,7 @@ function renderRoomDash() {
   filtersHtml += `</div>`;
 
   // Raggruppa per stato operativo (cambio prima, poi occupata, uscita, arrivo, da-preparare, pronta, fuori-servizio)
-  const ordine = ['cambio','da-preparare','arrivo','occupata','uscita','pronta','fuori-servizio'];
+  const ordine = ['cambio','controllare','da-preparare','arrivo','uscita','occupata','pronta','fuori-servizio'];
   const grouped = {}; ordine.forEach(o => grouped[o] = []);
 
   ROOMS.forEach(room => {
@@ -2846,10 +2860,45 @@ function renderRoomDash() {
       } else if (st.opId === 'pronta') {
         detailHtml += `<div style="font-size:10px;color:#2d6a4f;margin-top:2px;">✓ Camera pronta</div>`;
         if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 ${rs.configurazione}</div>`;
+      } else if (st.opId === 'controllare') {
+        // Camera da controllare/rassettare — mostra prossimo arrivo
+        if (st.prossimoArrivo) {
+          const giorniAl = Math.round((st.prossimoArrivo.s - today) / 86400000);
+          const dataArr = fmt(st.prossimoArrivo.s);
+          const urgenza = giorniAl <= 1 ? 'color:#c0392b;font-weight:700' : giorniAl <= 3 ? 'color:#e67e22;font-weight:600' : 'color:var(--text3)';
+          detailHtml += `<div class="rdash-guest-row" style="margin-top:4px;">
+            <span class="rdash-guest-name" style="font-size:11px;">${st.prossimoArrivo.n}</span>
+            ${st.prossimoArrivo.d ? `<span class="rdash-disp">${st.prossimoArrivo.d}</span>` : ''}
+          </div>
+          <div style="font-size:10px;margin-top:2px;${urgenza}">
+            Arrivo: ${dataArr}${giorniAl===0?' (oggi!)':giorniAl===1?' (domani)':' (tra '+giorniAl+'gg)'}
+          </div>`;
+          if (rs.configurazione && st.prossimoArrivo.d) {
+            const dispOk = rs.configurazione.replace(/\s/g,'').toLowerCase() === st.prossimoArrivo.d.replace(/\s/g,'').toLowerCase();
+            if (!dispOk) detailHtml += `<div style="font-size:10px;color:#8e44ad;margin-top:2px;">⚙ ${rs.configurazione} → ${st.prossimoArrivo.d}</div>`;
+          }
+        } else {
+          detailHtml += `<div style="font-size:10px;color:#8e44ad;margin-top:2px;">Nessun arrivo in programma</div>`;
+          if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 ${rs.configurazione}</div>`;
+        }
       } else if (st.opId === 'da-preparare') {
-        const pulLabel = {'da-pulire':'Da pulire','in-corso':'Controllare/Rassettare'};
-        detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:2px;">${pulLabel[rs.pulizia||'da-pulire']||'Da preparare'}</div>`;
-        if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 Attuale: ${rs.configurazione}</div>`;
+        // Mostra prossimo arrivo con urgenza
+        if (st.prossimoArrivo) {
+          const giorniAl = Math.round((st.prossimoArrivo.s - today) / 86400000);
+          const dataArr = fmt(st.prossimoArrivo.s);
+          const urgenza = giorniAl <= 1 ? 'color:#c0392b;font-weight:700' : giorniAl <= 3 ? 'color:#e67e22;font-weight:600' : 'color:var(--text3)';
+          detailHtml += `<div class="rdash-guest-row" style="margin-top:4px;">
+            <span class="rdash-guest-name" style="font-size:11px;">${st.prossimoArrivo.n}</span>
+            ${st.prossimoArrivo.d ? `<span class="rdash-disp">${st.prossimoArrivo.d}</span>` : ''}
+          </div>
+          <div style="font-size:10px;margin-top:2px;${urgenza}">
+            Prossimo arrivo: ${dataArr}${giorniAl===0?' ⚠ OGGI!':giorniAl===1?' ⚠ domani':' (tra '+giorniAl+'gg)'}
+          </div>`;
+          if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);margin-top:2px;">🛏 Attuale: ${rs.configurazione}</div>`;
+        } else {
+          detailHtml += `<div style="font-size:10px;color:#e67e22;margin-top:2px;">Nessun arrivo in programma</div>`;
+          if (rs.configurazione) detailHtml += `<div style="font-size:10px;color:var(--text2);">🛏 ${rs.configurazione}</div>`;
+        }
       }
 
       if (rs.noteOps) detailHtml += `<div class="rdash-note" style="margin-top:5px;">📌 ${rs.noteOps}</div>`;
