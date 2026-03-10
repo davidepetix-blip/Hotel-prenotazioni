@@ -635,7 +635,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div class="ci-ocr-label" id="ciOcrLabel">Analisi documento in corso…</div>
 </div>
 <!-- Input file nascosto per la fotocamera -->
-<input type="file" id="ciDocInput" accept="image/*" capture="environment"
+<input type="file" id="ciDocInput" accept="image/*"
        style="display:none" onchange="ciHandleDocImage(this)">
 
 <!-- ══ TOAST ══ -->
@@ -4023,7 +4023,10 @@ Regole:
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,
