@@ -408,6 +408,43 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .ci-export-bar { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .ci-export-info { font-size:11px; color:var(--text2); line-height:1.5; }
 
+
+/* ── OCR DOCUMENTO ── */
+.ci-scan-btn {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  width:100%; padding:11px; margin-bottom:8px;
+  background: linear-gradient(135deg, #1a1916 0%, #2d6a4f 100%);
+  color:#fff; border:none; border-radius:10px;
+  font-size:13px; font-weight:600; font-family:'IBM Plex Sans',sans-serif;
+  cursor:pointer; letter-spacing:.01em;
+  transition: opacity .15s, transform .1s;
+}
+.ci-scan-btn:active { opacity:.85; transform:scale(.98); }
+.ci-scan-btn.loading { opacity:.7; pointer-events:none; }
+
+.ci-scan-preview {
+  width:100%; border-radius:10px; border:1px solid var(--border);
+  max-height:200px; object-fit:cover; margin-bottom:10px; display:none;
+}
+
+.ci-ocr-overlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,.6);
+  z-index:500; align-items:center; justify-content:center; flex-direction:column; gap:16px;
+}
+.ci-ocr-overlay.open { display:flex; }
+.ci-ocr-spinner {
+  width:48px; height:48px; border:4px solid rgba(255,255,255,.2);
+  border-top-color:#fff; border-radius:50%;
+  animation: spin .8s linear infinite;
+}
+.ci-ocr-label { color:#fff; font-size:14px; font-weight:500; }
+
+.ci-scan-result-badge {
+  display:flex; align-items:center; gap:8px; padding:8px 12px;
+  background:var(--success-light); border:1px solid #b7e4c7; border-radius:8px;
+  font-size:11px; color:var(--accent); font-weight:600; margin-bottom:10px;
+}
+
 </style>
 </head>
 <body>
@@ -590,6 +627,16 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     </div>
   </div>
 </div>
+
+
+<!-- ══ OCR OVERLAY ══ -->
+<div class="ci-ocr-overlay" id="ciOcrOverlay">
+  <div class="ci-ocr-spinner"></div>
+  <div class="ci-ocr-label" id="ciOcrLabel">Analisi documento in corso…</div>
+</div>
+<!-- Input file nascosto per la fotocamera -->
+<input type="file" id="ciDocInput" accept="image/*" capture="environment"
+       style="display:none" onchange="ciHandleDocImage(this)">
 
 <!-- ══ TOAST ══ -->
 <div class="toast" id="toast"></div>
@@ -3677,6 +3724,13 @@ function renderCiGuests() {
         <span class="ci-ospite-num">${titleTxt}</span>
         ${!isCapo ? `<button class="ci-remove-btn" onclick="ciRemoveGuest(${idx})">✕</button>` : ''}
       </div>
+      ${isCapo ? `
+      <button class="ci-scan-btn" id="ciScanBtn" onclick="ciTriggerScan(${idx})">
+        📷 Scansiona documento d'identità
+      </button>
+      <img class="ci-scan-preview" id="ciScanPreview" alt="Anteprima documento">
+      <div id="ciScanBadge"></div>
+      ` : ''}
       <!-- Nome / Cognome -->
       <div class="ci-field-row">
         <div class="ci-field">
@@ -3895,6 +3949,156 @@ function clean(s) { return (s||'').toUpperCase().replace(/[^A-Z0-9 '.,-]/g,''); 
 function padR(s, n) { const t=(s||'').substring(0,n); return t+' '.repeat(Math.max(0,n-t.length)); }
 function pad(s, n)  { const t=(s||'').substring(0,n); return '0'.repeat(Math.max(0,n-t.length))+t; }
 
+
+
+// ═══════════════════════════════════════════════════════════════════
+// OCR DOCUMENTO — Estrazione dati con Claude Vision
+// ═══════════════════════════════════════════════════════════════════
+
+let _ciOcrGuestIdx = 0; // indice ospite per cui stiamo scansionando
+
+function ciTriggerScan(guestIdx) {
+  _ciOcrGuestIdx = guestIdx;
+  const inp = document.getElementById('ciDocInput');
+  inp.value = '';
+  inp.click();
+}
+
+async function ciHandleDocImage(input) {
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+
+  // Mostra anteprima
+  const preview = document.getElementById('ciScanPreview');
+  if (preview) {
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = 'block';
+  }
+
+  // Converti in base64
+  const base64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload  = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('Lettura file fallita'));
+    r.readAsDataURL(file);
+  });
+
+  const mediaType = file.type || 'image/jpeg';
+
+  // Mostra overlay spinner
+  const overlay = document.getElementById('ciOcrOverlay');
+  const label   = document.getElementById('ciOcrLabel');
+  overlay.classList.add('open');
+  label.textContent = 'Analisi documento in corso…';
+
+  // Aggiorna bottone
+  const btn = document.getElementById('ciScanBtn');
+  if (btn) { btn.classList.add('loading'); btn.textContent = '⏳ Analisi in corso…'; }
+
+  try {
+    const systemPrompt = `Sei un assistente per la reception di un albergo italiano.
+Analizza l'immagine di un documento d'identità e restituisci SOLO un oggetto JSON valido con questi campi:
+{
+  "cognome": "",
+  "nome": "",
+  "sesso": "M" oppure "F",
+  "dataNascita": "YYYY-MM-DD",
+  "luogoNascita": "",
+  "provNascita": "XX",
+  "statoEsteroNascita": "",
+  "cittadinanza": "IT" (o codice ISO 3 lettere),
+  "tipoDoc": "IDENT" | "PASOR" | "PATEN" | "ALTRO",
+  "numDoc": "",
+  "luogoRilascio": ""
+}
+Regole:
+- dataNascita sempre in formato YYYY-MM-DD
+- provNascita: 2 lettere maiuscole (sigla italiana), vuoto se nato all'estero
+- statoEsteroNascita: nome paese in italiano maiuscolo, solo se nato fuori Italia
+- cittadinanza: codice ISO 3 lettere (ITA→IT, USA→US, DEU→DE, FRA→FR, GBR→GB ecc) oppure 2 lettere
+- tipoDoc: IDENT per carta d'identità, PASOR per passaporto, PATEN per patente
+- numDoc: esattamente come appare sul documento, senza spazi
+- Se un campo non è leggibile, lascialo stringa vuota ""
+- NON aggiungere spiegazioni, solo il JSON puro`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: mediaType, data: base64 }
+            },
+            {
+              type: 'text',
+              text: 'Estrai i dati da questo documento e restituisci il JSON.'
+            }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || 'Errore API');
+
+    // Estrai JSON dalla risposta
+    const rawText = data.content?.find(c => c.type === 'text')?.text || '';
+    let extracted;
+    try {
+      // Pulisci eventuali backtick markdown
+      const clean = rawText.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
+      extracted = JSON.parse(clean);
+    } catch(e) {
+      // Prova a trovare il JSON nel testo
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) extracted = JSON.parse(match[0]);
+      else throw new Error('Risposta non parsabile: ' + rawText.slice(0,100));
+    }
+
+    // Aggiorna il guest corrispondente
+    const idx = _ciOcrGuestIdx;
+    const g   = _ciEditGuests[idx];
+    if (!g) throw new Error('Ospite non trovato');
+
+    // Merge: sovrascrive solo i campi non vuoti estratti
+    const fields = ['cognome','nome','sesso','dataNascita','luogoNascita',
+                    'provNascita','statoEsteroNascita','cittadinanza',
+                    'tipoDoc','numDoc','luogoRilascio'];
+    let filled = 0;
+    fields.forEach(f => {
+      if (extracted[f] && extracted[f].toString().trim() !== '') {
+        g[f] = extracted[f].toString().trim();
+        filled++;
+      }
+    });
+
+    overlay.classList.remove('open');
+    renderCiGuests();
+
+    // Badge successo
+    const badge = document.getElementById('ciScanBadge');
+    if (badge) {
+      badge.innerHTML = `<div class="ci-scan-result-badge">✓ ${filled} campi compilati automaticamente — verifica e correggi se necessario</div>`;
+    }
+
+    showToast(`✓ Documento analizzato · ${filled} campi estratti`, 'success');
+
+  } catch(e) {
+    overlay.classList.remove('open');
+    console.error('OCR error:', e);
+    showToast('Errore analisi documento: ' + e.message, 'error');
+
+    // Ripristina bottone
+    const btn2 = document.getElementById('ciScanBtn');
+    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '📷 Scansiona documento d\'identità'; }
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // GESTIONE FOGLI ANNUALI NELLE IMPOSTAZIONI
