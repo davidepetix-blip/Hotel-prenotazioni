@@ -1547,19 +1547,51 @@ async function syncWithDatabase(annualBookings, forceSync = false) {
   const seen          = new Set();
 
   // ── Confronta annual vs DB ──
-  // Costruisci un set "fingerprint" per identificare ogni prenotazione del foglio
-  // Fingerprint = camera|nome|dataInizio|dataFine (tutto normalizzato)
-  const annualFingerprints = new Set(annualBookings.map(a =>
-    `${a.cameraName}|${a.n}|${a.s.getTime()}|${a.e.getTime()}`
-  ));
+  // Strategia di matching a 3 livelli (dal più preciso al più tollerante):
+  // 1. Match esatto: camera + nome + dataInizio + dataFine
+  // 2. Match parziale: camera + nome + dataInizio (tolera modifica data fine / disposizione)
+  // 3. Match approssimato: camera + nome + dataInizio ±1gg (tolera off-by-one da convenzione dd/mm)
+  //
+  // La chiave "canonica" per rilevare cancellazioni usa solo camera+nome+dataInizio
+  // perché è l'unica combinazione stabile quando si modifica una prenotazione nel foglio.
+
+  const DAY_MS = 86400000;
+
+  function findDbMatch(ann, dbList) {
+    // 1. Esatto
+    let m = dbList.find(db =>
+      db.cameraName === ann.cameraName && db.n === ann.n &&
+      db.s.getTime() === ann.s.getTime() && db.e.getTime() === ann.e.getTime()
+    );
+    if (m) return m;
+    // 2. Stessa camera + nome + dataInizio, data fine diversa (modifica durata/disposizione)
+    m = dbList.find(db =>
+      db.cameraName === ann.cameraName && db.n === ann.n &&
+      db.s.getTime() === ann.s.getTime()
+    );
+    if (m) return m;
+    // 3. Off-by-one sulla data fine (convenzione foglio vs app: ±1 giorno)
+    m = dbList.find(db =>
+      db.cameraName === ann.cameraName && db.n === ann.n &&
+      Math.abs(db.s.getTime() - ann.s.getTime()) <= DAY_MS &&
+      Math.abs(db.e.getTime() - ann.e.getTime()) <= DAY_MS
+    );
+    return m || null;
+  }
+
+  // Fingerprint per rilevare cancellazioni: camera|nome|dataInizio (±1gg tolleranza)
+  // Costruiamo una mappa daInizio → booking annuale per lookup rapido
+  const annByKey = new Map();
+  annualBookings.forEach(a => {
+    const key = `${a.cameraName}|${a.n}|${a.s.getTime()}`;
+    annByKey.set(key, a);
+    // Aggiungi anche chiavi ±1gg per la tolleranza off-by-one
+    annByKey.set(`${a.cameraName}|${a.n}|${a.s.getTime()-DAY_MS}`, a);
+    annByKey.set(`${a.cameraName}|${a.n}|${a.s.getTime()+DAY_MS}`, a);
+  });
 
   for (const ann of annualBookings) {
-    const match = dbBookings.find(db =>
-      db.cameraName === ann.cameraName &&
-      db.n          === ann.n &&
-      db.s.getTime() === ann.s.getTime() &&
-      db.e.getTime() === ann.e.getTime()
-    );
+    const match = findDbMatch(ann, dbBookings);
 
     if (!match) {
       ann.dbId  = genBookingId(ann.s.getFullYear());
@@ -1569,35 +1601,39 @@ async function syncWithDatabase(annualBookings, forceSync = false) {
       result.push(ann);
     } else {
       seen.add(match.dbId);
-      const dbTs  = match.ts  ? new Date(match.ts).getTime() : 0;
-      const annTs = ann.ts    ? new Date(ann.ts).getTime()   : 0;
-      if (dbTs >= annTs) {
-        result.push(match);
-      } else {
-        match.n = ann.n; match.d = ann.d; match.c = ann.c;
-        match.note = ann.note; match.ts = nowISO(); match.fonte = 'manuale';
+      // Aggiorna sempre disposizione, note, colore e data fine dal foglio
+      // (il foglio è la fonte di verità per le modifiche manuali)
+      const changed = match.d !== ann.d || match.c !== ann.c ||
+                      match.note !== ann.note ||
+                      match.e.getTime() !== ann.e.getTime() ||
+                      match.s.getTime() !== ann.s.getTime();
+      if (changed) {
+        match.d = ann.d; match.c = ann.c; match.note = ann.note;
+        match.e = ann.e; match.s = ann.s;  // aggiorna anche le date se cambiate
+        match.ts = nowISO(); match.fonte = 'manuale';
         toUpdateInDb.push(match);
-        result.push(match);
       }
+      result.push(match);
     }
   }
 
   // ── Prenotazioni solo nel DB ──
-  // Se fonte='manuale' (dal foglio) e non si trova più nel foglio → cancellata lì → DELETED
-  // Se fonte='app' (dall'app) e non nel foglio → è normale (non ancora nel foglio o DB-only) → tieni
+  // Se fonte='manuale' e NON trovabile nel foglio neanche con tolleranza ±1gg → DELETED
+  // Se fonte='app' → mantieni sempre (inserita dall'app, non necessariamente nel foglio)
   const toDeleteInDb = [];
   for (const db of dbBookings) {
     if (seen.has(db.dbId)) continue;
-    const fp = `${db.cameraName}|${db.n}|${db.s.getTime()}|${db.e.getTime()}`;
-    const stillInFoglio = annualFingerprints.has(fp);
+    // Cerca nel foglio con tolleranza
+    const keyExact = `${db.cameraName}|${db.n}|${db.s.getTime()}`;
+    const keyM1    = `${db.cameraName}|${db.n}|${db.s.getTime()-DAY_MS}`;
+    const keyP1    = `${db.cameraName}|${db.n}|${db.s.getTime()+DAY_MS}`;
+    const stillInFoglio = annByKey.has(keyExact) || annByKey.has(keyM1) || annByKey.has(keyP1);
+
     if (!stillInFoglio && db.fonte === 'manuale') {
-      // Era nel foglio, ora non c'è più → cancellata direttamente nel foglio
-      console.log(`Cancellazione rilevata dal foglio: ${db.cameraName} / ${db.n}`);
+      console.log(`Cancellazione rilevata: ${db.cameraName} / ${db.n}`);
       db.deleted = true;
       toDeleteInDb.push(db);
-      // NON aggiungere a result
     } else {
-      // fonte='app' o ancora nel foglio (non dovrebbe succedere) → tieni
       result.push(db);
     }
   }
