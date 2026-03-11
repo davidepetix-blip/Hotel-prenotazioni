@@ -2887,10 +2887,11 @@ function renderSettingsBody() {
                  style="font-size:11px;"
                  onchange="localStorage.setItem('hotelOcrProxyUrl',this.value.trim())"
                  autocomplete="off" autocorrect="off" autocapitalize="off">
-          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <button class="btn" style="font-size:11px;" onclick="testOcrProxy()">Testa connessione</button>
             <span id="proxyTestResult" style="font-size:11px;color:var(--text3);"></span>
           </div>
+          <div id="proxyTestDetail" style="margin-top:6px;font-size:10px;color:var(--text2);line-height:1.6;"></div>
         </div>
       </div>
     </div>`;
@@ -3992,15 +3993,74 @@ function ciTriggerScan(guestIdx) {
 async function testOcrProxy() {
   const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
   const result   = document.getElementById('proxyTestResult');
-  if (!proxyUrl) { result.textContent = '⚠ URL non inserito'; result.style.color='#e67e22'; return; }
-  result.textContent = 'Test in corso…'; result.style.color='var(--text3)';
+  const detail   = document.getElementById('proxyTestDetail');
+  if (!proxyUrl) {
+    result.textContent = '⚠ URL non inserito';
+    result.style.color = '#e67e22';
+    return;
+  }
+
+  // Valida formato URL
+  if (!proxyUrl.includes('script.google.com')) {
+    result.textContent = '⚠ URL non sembra un Apps Script';
+    if (detail) detail.textContent = 'Deve iniziare con https://script.google.com/macros/s/…/exec';
+    result.style.color = '#e67e22';
+    return;
+  }
+
+  result.textContent = 'Test in corso…';
+  result.style.color = 'var(--text3)';
+  if (detail) detail.textContent = '';
+
   try {
-    const r = await fetch(proxyUrl);
-    const d = await r.json();
-    if (d.status) { result.textContent = '✓ Proxy attivo'; result.style.color='var(--accent)'; }
-    else          { result.textContent = '⚠ Risposta inattesa'; result.style.color='#e67e22'; }
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 10000);
+    const r = await fetch(proxyUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    const text = await r.text();
+    let d;
+    try { d = JSON.parse(text); } catch(pe) {
+      // Risposta non JSON — probabilmente pagina di autorizzazione Google
+      if (text.includes('accounts.google') || text.includes('signin')) {
+        result.textContent = '⚠ Richiede autorizzazione';
+        result.style.color = '#e67e22';
+        if (detail) detail.innerHTML = 'Apri l’URL del proxy in una nuova scheda, autorizza e riprova.<br><a href="'+proxyUrl+'" target="_blank" style="color:var(--accent)">→ Apri proxy</a>';
+      } else {
+        result.textContent = '⚠ Risposta non JSON (HTTP ' + r.status + ')';
+        result.style.color = '#e67e22';
+        if (detail) detail.textContent = text.slice(0, 120);
+      }
+      return;
+    }
+
+    if (d.status || d.model) {
+      result.textContent = '✓ Proxy attivo — ' + (d.model || 'OK');
+      result.style.color = 'var(--accent)';
+      if (detail) detail.textContent = '';
+    } else if (d.error) {
+      result.textContent = '⚠ Proxy risponde ma con errore';
+      result.style.color = '#e67e22';
+      if (detail) detail.textContent = d.error;
+    } else {
+      result.textContent = '⚠ Risposta inattesa';
+      result.style.color = '#e67e22';
+      if (detail) detail.textContent = JSON.stringify(d).slice(0,100);
+    }
+
   } catch(e) {
-    result.textContent = '✗ Non raggiungibile: ' + e.message.slice(0,40);
+    if (e.name === 'AbortError') {
+      result.textContent = '✗ Timeout (10s) — proxy non risponde';
+    } else {
+      result.textContent = '✗ Failed to fetch';
+      if (detail) detail.innerHTML = [
+        'Cause possibili:',
+        '1. URL copiato male &mdash; deve finire con <code>/exec</code>',
+        '2. Proxy non ancora distribuito &mdash; vai su Distribuisci &rarr; Gestisci distribuzioni',
+        '3. Accesso non impostato su <b>Chiunque</b>',
+        '4. Apri il proxy nel browser per autorizzarlo: <a href="' + proxyUrl + '" target="_blank" style="color:var(--accent)">&rarr; Apri</a>'
+      ].join('<br>');
+    }
     result.style.color = 'var(--danger)';
   }
 }
