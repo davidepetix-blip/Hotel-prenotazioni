@@ -2888,7 +2888,8 @@ function renderSettingsBody() {
                  onchange="localStorage.setItem('hotelOcrProxyUrl',this.value.trim())"
                  autocomplete="off" autocorrect="off" autocapitalize="off">
           <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <button class="btn" style="font-size:11px;" onclick="testOcrProxy()">Testa connessione</button>
+            <button class="btn" style="font-size:11px;" onclick="testOcrProxy()">Testa GET</button>
+            <button class="btn" style="font-size:11px;" onclick="testOcrProxyPost()">Testa POST</button>
             <span id="proxyTestResult" style="font-size:11px;color:var(--text3);"></span>
           </div>
           <div id="proxyTestDetail" style="margin-top:6px;font-size:10px;color:var(--text2);line-height:1.6;"></div>
@@ -4059,6 +4060,71 @@ async function testOcrProxy() {
         '2. Proxy non ancora distribuito &mdash; vai su Distribuisci &rarr; Gestisci distribuzioni',
         '3. Accesso non impostato su <b>Chiunque</b>',
         '4. Apri il proxy nel browser per autorizzarlo: <a href="' + proxyUrl + '" target="_blank" style="color:var(--accent)">&rarr; Apri</a>'
+      ].join('<br>');
+    }
+    result.style.color = 'var(--danger)';
+  }
+}
+
+async function testOcrProxyPost() {
+  const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
+  const result   = document.getElementById('proxyTestResult');
+  const detail   = document.getElementById('proxyTestDetail');
+  if (!proxyUrl) { result.textContent = '⚠ URL non inserito'; return; }
+
+  result.textContent = 'Test POST in corso…';
+  result.style.color = 'var(--text3)';
+  if (detail) detail.textContent = '';
+
+  // Immagine 1x1 pixel trasparente PNG — test minimo senza foto reale
+  const tiny1x1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  try {
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 15000);
+
+    const r = await fetch(proxyUrl, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ base64: tiny1x1, mimeType: 'image/png' }),
+      signal:  controller.signal
+    });
+    clearTimeout(timeout);
+
+    const text = await r.text();
+    let d;
+    try { d = JSON.parse(text); } catch(e) {
+      result.textContent = '✗ POST risposta non JSON (HTTP ' + r.status + ')';
+      result.style.color = 'var(--danger)';
+      if (detail) detail.textContent = text.slice(0, 200);
+      return;
+    }
+
+    if (d.ok || d.data) {
+      result.textContent = '✓ POST funziona — proxy completamente operativo';
+      result.style.color = 'var(--accent)';
+    } else if (d.error) {
+      // Errore dall'interno del proxy — il POST arriva ma c'è un problema
+      result.textContent = '⚠ POST ricevuto, errore interno: ' + d.error.slice(0,60);
+      result.style.color = '#e67e22';
+      if (detail) detail.textContent = 'Il proxy riceve la richiesta ma Gemini risponde con errore. Verifica la API key.';
+    } else {
+      result.textContent = '⚠ POST risposta inattesa';
+      result.style.color = '#e67e22';
+      if (detail) detail.textContent = JSON.stringify(d).slice(0,100);
+    }
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      result.textContent = '✗ POST Timeout — il proxy non risponde alle richieste POST';
+    } else {
+      result.textContent = '✗ POST Failed to fetch';
+      result.style.color = 'var(--danger)';
+      if (detail) detail.innerHTML = [
+        '<b>Il GET funziona ma il POST no.</b> Soluzione:',
+        '1. Vai su Apps Script → Distribuisci → <b>Nuova distribuzione</b> (non aggiornare)',
+        '2. Tipo: App Web, Esegui come: <b>Me</b>, Accesso: <b>Chiunque</b>',
+        '3. Copia il <b>nuovo URL</b> e incollalo qui sopra',
+        '4. Apri il nuovo URL nel browser e autorizza'
       ].join('<br>');
     }
     result.style.color = 'var(--danger)';
