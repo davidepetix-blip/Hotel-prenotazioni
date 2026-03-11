@@ -832,7 +832,22 @@ const ROOM_DEFAULTS = {
 function loadRoomSettings() {
   try {
     const saved = localStorage.getItem('hotelRoomSettings');
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const settings = JSON.parse(saved);
+      // Migrazione: aggiunge 'ms' dopo 'm' per tutte le camere che ce l'hanno
+      let migrated = false;
+      for (const rid of Object.keys(settings)) {
+        const beds = settings[rid].allowedBeds || [];
+        if (beds.includes('m') && !beds.includes('ms')) {
+          const idx = beds.indexOf('m');
+          beds.splice(idx + 1, 0, 'ms');
+          settings[rid].allowedBeds = beds;
+          migrated = true;
+        }
+      }
+      if (migrated) localStorage.setItem('hotelRoomSettings', JSON.stringify(settings));
+      return settings;
+    }
   } catch(e) {}
   return JSON.parse(JSON.stringify(ROOM_DEFAULTS)); // deep copy
 }
