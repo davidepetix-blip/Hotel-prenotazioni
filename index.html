@@ -3745,7 +3745,9 @@ function renderCiGuests() {
       <button class="ci-scan-btn" id="ciScanBtn" onclick="ciTriggerScan(${idx})">
         📷 Scansiona documento d'identità
       </button>
-      <img class="ci-scan-preview" id="ciScanPreview" alt="Anteprima documento">
+      <img class="ci-scan-preview" id="ciScanPreview" alt="Anteprima documento"
+           ${g._previewSrc ? 'src="'+g._previewSrc+'"' : ''}
+           style="${g._previewSrc ? 'display:block' : 'display:none'}">
       <div id="ciScanBadge"></div>
       ` : ''}
       <!-- Nome / Cognome -->
@@ -4007,12 +4009,12 @@ async function ciHandleDocImage(input) {
   if (!input.files || !input.files[0]) return;
   const file = input.files[0];
 
-  // Mostra anteprima
+  // Mostra anteprima e salva src nel guest per sopravvivere al renderCiGuests
   const preview = document.getElementById('ciScanPreview');
-  if (preview) {
-    preview.src = URL.createObjectURL(file);
-    preview.style.display = 'block';
-  }
+  const objUrl  = URL.createObjectURL(file);
+  if (preview) { preview.src = objUrl; preview.style.display = 'block'; }
+  // Salva nell'oggetto guest per poterlo ripristinare dopo render
+  if (_ciEditGuests[_ciOcrGuestIdx]) _ciEditGuests[_ciOcrGuestIdx]._previewSrc = objUrl;
 
   // Converti in base64
   const base64 = await new Promise((res, rej) => {
@@ -4075,11 +4077,15 @@ Regole:
     if (!data.ok || !data.data) throw new Error('Risposta proxy non valida');
 
     const extracted = data.data;
+    console.log('OCR extracted:', JSON.stringify(extracted));
 
     // Aggiorna il guest corrispondente
     const idx = _ciOcrGuestIdx;
     const g   = _ciEditGuests[idx];
     if (!g) throw new Error('Ospite non trovato');
+
+    // Salva src preview prima che renderCiGuests azzeri il DOM
+    const previewSrc = document.getElementById('ciScanPreview')?.src || '';
 
     // Merge: sovrascrive solo i campi non vuoti estratti
     const fields = ['cognome','nome','sesso','dataNascita','luogoNascita',
@@ -4087,31 +4093,44 @@ Regole:
                     'tipoDoc','numDoc','luogoRilascio'];
     let filled = 0;
     fields.forEach(f => {
-      if (extracted[f] && extracted[f].toString().trim() !== '') {
-        g[f] = extracted[f].toString().trim();
-        filled++;
-      }
+      const val = (extracted[f] || '').toString().trim();
+      if (val !== '') { g[f] = val; filled++; }
     });
 
     overlay.classList.remove('open');
-    renderCiGuests();
+    renderCiGuests(); // ricrea il DOM — imposta badge e preview DOPO
 
-    // Badge successo
-    const badge = document.getElementById('ciScanBadge');
-    if (badge) {
-      badge.innerHTML = `<div class="ci-scan-result-badge">✓ ${filled} campi compilati automaticamente — verifica e correggi se necessario</div>`;
+    // Ripristina preview (renderCiGuests la azzera)
+    const p2 = document.getElementById('ciScanPreview');
+    if (p2 && previewSrc && previewSrc !== 'about:blank') {
+      p2.src = previewSrc;
+      p2.style.display = 'block';
     }
 
-    showToast(`✓ Documento analizzato · ${filled} campi estratti`, 'success');
+    // Badge successo (dopo renderCiGuests che ha ricreato il DOM)
+    const badge = document.getElementById('ciScanBadge');
+    if (badge) {
+      badge.innerHTML = filled > 0
+        ? `<div class="ci-scan-result-badge">✓ ${filled} campi compilati — verifica e correggi se necessario</div>`
+        : `<div class="ci-scan-result-badge" style="background:#fdecea;border-color:#f5c6cb;color:var(--danger);">⚠ Nessun campo estratto — riprova con foto più nitida</div>`;
+    }
+
+    // Ripristina bottone
+    const btn2 = document.getElementById('ciScanBtn');
+    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '📷 Scansiona di nuovo'; }
+
+    if (filled > 0) {
+      showToast('✓ Documento analizzato · ' + filled + ' campi estratti', 'success');
+    } else {
+      showToast('Gemini non ha estratto dati — verifica la foto', 'error');
+    }
 
   } catch(e) {
     overlay.classList.remove('open');
     console.error('OCR error:', e);
-    showToast('Errore analisi documento: ' + e.message, 'error');
-
-    // Ripristina bottone
+    showToast('Errore OCR: ' + e.message, 'error');
     const btn2 = document.getElementById('ciScanBtn');
-    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '📷 Scansiona documento d\'identità'; }
+    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '📷 Scansiona documento d\u2019identit\u00e0'; }
   }
 }
 
