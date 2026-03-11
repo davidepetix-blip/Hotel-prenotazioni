@@ -2860,9 +2860,9 @@ function renderSettingsBody() {
   const groups = [...new Set(ROOMS.map(r => r.g))];
   let html = '';
 
-  // ── Sezione Alloggiati Web + OCR proxy
-  const _codStr   = localStorage.getItem('hotelCodiceStruttura') || '';
-  const _proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
+  // ── Sezione Alloggiati Web + OCR (Gemini diretto, no proxy)
+  const _codStr    = localStorage.getItem('hotelCodiceStruttura') || '';
+  const _geminiKey = localStorage.getItem('hotelGeminiApiKey') || '';
   html += `
     <div class="sgroup">
       <div class="sgroup-title">🛎 Alloggiati Web & OCR</div>
@@ -2878,18 +2878,17 @@ function renderSettingsBody() {
         </div>
         <div style="border-top:1px solid var(--border);padding-top:14px;">
           <p style="font-size:11px;color:var(--text2);margin-bottom:8px;line-height:1.7;">
-            <strong>URL Proxy OCR</strong> — necessario per la scansione automatica dei documenti.<br>
-            Installa il file <code style="font-size:10px;background:var(--surface2);padding:1px 5px;border-radius:3px;">claude_ocr_proxy.gs</code>
-            su Google Apps Script e incolla qui l'URL generato.
+            <strong>API Key Gemini</strong> — gratuita, per la scansione automatica dei documenti.<br>
+            Ottienila su <a href="https://aistudio.google.com/apikey" target="_blank"
+            style="color:var(--accent)">aistudio.google.com/apikey</a> → Create API Key.
           </p>
-          <input type="text" class="fi" value="${_proxyUrl}"
-                 placeholder="https://script.google.com/macros/s/…/exec"
-                 style="font-size:11px;"
-                 onchange="localStorage.setItem('hotelOcrProxyUrl',this.value.trim())"
-                 autocomplete="off" autocorrect="off" autocapitalize="off">
+          <input type="text" class="fi" value="${_geminiKey}"
+                 placeholder="AIza..."
+                 style="font-size:12px;font-family:monospace;"
+                 onchange="localStorage.setItem('hotelGeminiApiKey',this.value.trim())"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
           <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <button class="btn" style="font-size:11px;" onclick="testOcrProxy()">Testa GET</button>
-            <button class="btn" style="font-size:11px;" onclick="testOcrProxyPost()">Testa POST</button>
+            <button class="btn" style="font-size:11px;" onclick="testGeminiKey()">Testa chiave</button>
             <span id="proxyTestResult" style="font-size:11px;color:var(--text3);"></span>
           </div>
           <div id="proxyTestDetail" style="margin-top:6px;font-size:10px;color:var(--text2);line-height:1.6;"></div>
@@ -3978,11 +3977,11 @@ function pad(s, n)  { const t=(s||'').substring(0,n); return '0'.repeat(Math.max
 
 let _ciOcrGuestIdx = 0; // indice ospite per cui stiamo scansionando
 
+
 function ciTriggerScan(guestIdx) {
-  // Controlla che il proxy sia configurato prima di aprire il selettore file
-  const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
-  if (!proxyUrl) {
-    showToast('Configura prima l’URL Proxy OCR nelle Impostazioni (⚙)', 'error');
+  const apiKey = localStorage.getItem('hotelGeminiApiKey') || '';
+  if (!apiKey) {
+    showToast('Inserisci prima la API Key Gemini nelle \u2699 Impostazioni', 'error');
     return;
   }
   _ciOcrGuestIdx = guestIdx;
@@ -3991,142 +3990,32 @@ function ciTriggerScan(guestIdx) {
   inp.click();
 }
 
-async function testOcrProxy() {
-  const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
-  const result   = document.getElementById('proxyTestResult');
-  const detail   = document.getElementById('proxyTestDetail');
-  if (!proxyUrl) {
-    result.textContent = '⚠ URL non inserito';
-    result.style.color = '#e67e22';
-    return;
-  }
-
-  // Valida formato URL
-  if (!proxyUrl.includes('script.google.com')) {
-    result.textContent = '⚠ URL non sembra un Apps Script';
-    if (detail) detail.textContent = 'Deve iniziare con https://script.google.com/macros/s/…/exec';
-    result.style.color = '#e67e22';
-    return;
-  }
-
-  result.textContent = 'Test in corso…';
-  result.style.color = 'var(--text3)';
+async function testGeminiKey() {
+  const apiKey = localStorage.getItem('hotelGeminiApiKey') || '';
+  const result = document.getElementById('proxyTestResult');
+  const detail = document.getElementById('proxyTestDetail');
+  if (!apiKey) { result.textContent = '\u26a0 Chiave non inserita'; result.style.color='#e67e22'; return; }
+  if (!apiKey.startsWith('AIza')) { result.textContent = '\u26a0 Formato non valido (deve iniziare con AIza)'; result.style.color='#e67e22'; return; }
+  result.textContent = 'Test in corso\u2026'; result.style.color='var(--text3)';
   if (detail) detail.textContent = '';
-
   try {
-    const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 10000);
-    const r = await fetch(proxyUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    const text = await r.text();
-    let d;
-    try { d = JSON.parse(text); } catch(pe) {
-      // Risposta non JSON — probabilmente pagina di autorizzazione Google
-      if (text.includes('accounts.google') || text.includes('signin')) {
-        result.textContent = '⚠ Richiede autorizzazione';
-        result.style.color = '#e67e22';
-        if (detail) detail.innerHTML = 'Apri l’URL del proxy in una nuova scheda, autorizza e riprova.<br><a href="'+proxyUrl+'" target="_blank" style="color:var(--accent)">→ Apri proxy</a>';
-      } else {
-        result.textContent = '⚠ Risposta non JSON (HTTP ' + r.status + ')';
-        result.style.color = '#e67e22';
-        if (detail) detail.textContent = text.slice(0, 120);
-      }
-      return;
-    }
-
-    if (d.status || d.model) {
-      result.textContent = '✓ Proxy attivo — ' + (d.model || 'OK');
-      result.style.color = 'var(--accent)';
-      if (detail) detail.textContent = '';
-    } else if (d.error) {
-      result.textContent = '⚠ Proxy risponde ma con errore';
-      result.style.color = '#e67e22';
-      if (detail) detail.textContent = d.error;
-    } else {
-      result.textContent = '⚠ Risposta inattesa';
-      result.style.color = '#e67e22';
-      if (detail) detail.textContent = JSON.stringify(d).slice(0,100);
-    }
-
-  } catch(e) {
-    if (e.name === 'AbortError') {
-      result.textContent = '✗ Timeout (10s) — proxy non risponde';
-    } else {
-      result.textContent = '✗ Failed to fetch';
-      if (detail) detail.innerHTML = [
-        'Cause possibili:',
-        '1. URL copiato male &mdash; deve finire con <code>/exec</code>',
-        '2. Proxy non ancora distribuito &mdash; vai su Distribuisci &rarr; Gestisci distribuzioni',
-        '3. Accesso non impostato su <b>Chiunque</b>',
-        '4. Apri il proxy nel browser per autorizzarlo: <a href="' + proxyUrl + '" target="_blank" style="color:var(--accent)">&rarr; Apri</a>'
-      ].join('<br>');
-    }
-    result.style.color = 'var(--danger)';
-  }
-}
-
-async function testOcrProxyPost() {
-  const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
-  const result   = document.getElementById('proxyTestResult');
-  const detail   = document.getElementById('proxyTestDetail');
-  if (!proxyUrl) { result.textContent = '⚠ URL non inserito'; return; }
-
-  result.textContent = 'Test POST in corso…';
-  result.style.color = 'var(--text3)';
-  if (detail) detail.textContent = '';
-
-  // Immagine 1x1 pixel trasparente PNG — test minimo senza foto reale
-  const tiny1x1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-
-  try {
-    const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 15000);
-
-    const r = await fetch(proxyUrl, {
-      method:  'POST',
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey;
+    const r = await fetch(url, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ base64: tiny1x1, mimeType: 'image/png' }),
-      signal:  controller.signal
+      body: JSON.stringify({ contents: [{ parts: [{ text: 'rispondi solo con: ok' }] }] })
     });
-    clearTimeout(timeout);
-
-    const text = await r.text();
-    let d;
-    try { d = JSON.parse(text); } catch(e) {
-      result.textContent = '✗ POST risposta non JSON (HTTP ' + r.status + ')';
-      result.style.color = 'var(--danger)';
-      if (detail) detail.textContent = text.slice(0, 200);
-      return;
-    }
-
-    if (d.ok || d.data) {
-      result.textContent = '✓ POST funziona — proxy completamente operativo';
+    const d = await r.json();
+    if (r.ok && d.candidates) {
+      result.textContent = '\u2713 Chiave valida \u2014 Gemini operativo';
       result.style.color = 'var(--accent)';
-    } else if (d.error) {
-      // Errore dall'interno del proxy — il POST arriva ma c'è un problema
-      result.textContent = '⚠ POST ricevuto, errore interno: ' + d.error.slice(0,60);
-      result.style.color = '#e67e22';
-      if (detail) detail.textContent = 'Il proxy riceve la richiesta ma Gemini risponde con errore. Verifica la API key.';
     } else {
-      result.textContent = '⚠ POST risposta inattesa';
-      result.style.color = '#e67e22';
-      if (detail) detail.textContent = JSON.stringify(d).slice(0,100);
+      result.textContent = '\u2715 Errore: ' + (d.error && d.error.message || 'risposta inattesa');
+      result.style.color = 'var(--danger)';
+      if (detail) detail.textContent = 'Verifica che la chiave sia corretta e che Gemini API sia abilitata.';
     }
   } catch(e) {
-    if (e.name === 'AbortError') {
-      result.textContent = '✗ POST Timeout — il proxy non risponde alle richieste POST';
-    } else {
-      result.textContent = '✗ POST Failed to fetch';
-      result.style.color = 'var(--danger)';
-      if (detail) detail.innerHTML = [
-        '<b>Il GET funziona ma il POST no.</b> Soluzione:',
-        '1. Vai su Apps Script → Distribuisci → <b>Nuova distribuzione</b> (non aggiornare)',
-        '2. Tipo: App Web, Esegui come: <b>Me</b>, Accesso: <b>Chiunque</b>',
-        '3. Copia il <b>nuovo URL</b> e incollalo qui sopra',
-        '4. Apri il nuovo URL nel browser e autorizza'
-      ].join('<br>');
-    }
+    result.textContent = '\u2715 ' + e.message;
     result.style.color = 'var(--danger)';
   }
 }
@@ -4135,14 +4024,11 @@ async function ciHandleDocImage(input) {
   if (!input.files || !input.files[0]) return;
   const file = input.files[0];
 
-  // Mostra anteprima e salva src nel guest per sopravvivere al renderCiGuests
   const preview = document.getElementById('ciScanPreview');
   const objUrl  = URL.createObjectURL(file);
   if (preview) { preview.src = objUrl; preview.style.display = 'block'; }
-  // Salva nell'oggetto guest per poterlo ripristinare dopo render
   if (_ciEditGuests[_ciOcrGuestIdx]) _ciEditGuests[_ciOcrGuestIdx]._previewSrc = objUrl;
 
-  // Converti in base64
   const base64 = await new Promise((res, rej) => {
     const r = new FileReader();
     r.onload  = () => res(r.result.split(',')[1]);
@@ -4151,115 +4037,99 @@ async function ciHandleDocImage(input) {
   });
 
   const mediaType = file.type || 'image/jpeg';
-
-  // Mostra overlay spinner
-  const overlay = document.getElementById('ciOcrOverlay');
-  const label   = document.getElementById('ciOcrLabel');
+  const overlay   = document.getElementById('ciOcrOverlay');
+  const label     = document.getElementById('ciOcrLabel');
   overlay.classList.add('open');
-  label.textContent = 'Analisi documento in corso…';
+  label.textContent = 'Analisi documento in corso\u2026';
 
-  // Aggiorna bottone
   const btn = document.getElementById('ciScanBtn');
-  if (btn) { btn.classList.add('loading'); btn.textContent = '⏳ Analisi in corso…'; }
+  if (btn) { btn.classList.add('loading'); btn.textContent = '\u23f3 Analisi in corso\u2026'; }
 
   try {
-    const systemPrompt = `Sei un assistente per la reception di un albergo italiano.
-Analizza l'immagine di un documento d'identità e restituisci SOLO un oggetto JSON valido con questi campi:
-{
-  "cognome": "",
-  "nome": "",
-  "sesso": "M" oppure "F",
-  "dataNascita": "YYYY-MM-DD",
-  "luogoNascita": "",
-  "provNascita": "XX",
-  "statoEsteroNascita": "",
-  "cittadinanza": "IT" (o codice ISO 3 lettere),
-  "tipoDoc": "IDENT" | "PASOR" | "PATEN" | "ALTRO",
-  "numDoc": "",
-  "luogoRilascio": ""
-}
-Regole:
-- dataNascita sempre in formato YYYY-MM-DD
-- provNascita: 2 lettere maiuscole (sigla italiana), vuoto se nato all'estero
-- statoEsteroNascita: nome paese in italiano maiuscolo, solo se nato fuori Italia
-- cittadinanza: codice ISO 3 lettere (ITA→IT, USA→US, DEU→DE, FRA→FR, GBR→GB ecc) oppure 2 lettere
-- tipoDoc: IDENT per carta d'identità, PASOR per passaporto, PATEN per patente
-- numDoc: esattamente come appare sul documento, senza spazi
-- Se un campo non è leggibile, lascialo stringa vuota ""
-- NON aggiungere spiegazioni, solo il JSON puro`;
+    const apiKey = localStorage.getItem('hotelGeminiApiKey') || '';
+    if (!apiKey) throw new Error('API Key Gemini non configurata. Vai in \u2699 Impostazioni.');
 
-    // Usa il proxy Google Apps Script (necessario per CORS da GitHub Pages)
-    const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
-    if (!proxyUrl) throw new Error('URL Proxy OCR non configurato. Vai in ⚙ Impostazioni → Alloggiati Web & OCR');
+    const prompt = 'Sei un assistente per la reception di un albergo italiano. '
+      + 'Analizza questa immagine di un documento di identita e restituisci SOLO un JSON puro senza markdown:\n'
+      + '{"cognome":"","nome":"","sesso":"M o F","dataNascita":"YYYY-MM-DD",'
+      + '"luogoNascita":"","provNascita":"sigla 2 lettere se italiano vuoto se estero",'
+      + '"statoEsteroNascita":"nome MAIUSCOLO solo se estero","cittadinanza":"IT o codice ISO 2 lettere",'
+      + '"tipoDoc":"IDENT o PASOR o PATEN o ALTRO","numDoc":"numero esatto senza spazi","luogoRilascio":""}';
 
-    const response = await fetch(proxyUrl, {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey;
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base64, mimeType: mediaType })
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { inline_data: { mime_type: mediaType, data: base64 } },
+          { text: prompt }
+        ]}],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 500 }
+      })
     });
 
     const data = await response.json();
-    if (data.error) throw new Error(data.error);
-    if (!data.ok || !data.data) throw new Error('Risposta proxy non valida');
+    if (!response.ok) throw new Error('Gemini ' + response.status + ': ' + (data.error && data.error.message || 'errore sconosciuto'));
 
-    const extracted = data.data;
+    const rawText = (((data.candidates || [])[0] || {}).content || {}).parts
+                    ? data.candidates[0].content.parts[0].text : '';
+    if (!rawText) throw new Error('Gemini ha restituito risposta vuota');
+
+    let extracted;
+    try {
+      const clean = rawText.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
+      extracted = JSON.parse(clean);
+    } catch(pe) {
+      const m = rawText.match(/\{[\s\S]*\}/);
+      if (m) { try { extracted = JSON.parse(m[0]); } catch(e2) { throw new Error('JSON non valido: ' + rawText.slice(0,80)); } }
+      else throw new Error('Nessun JSON: ' + rawText.slice(0,80));
+    }
     console.log('OCR extracted:', JSON.stringify(extracted));
 
-    // Aggiorna il guest corrispondente
     const idx = _ciOcrGuestIdx;
     const g   = _ciEditGuests[idx];
     if (!g) throw new Error('Ospite non trovato');
 
-    // Salva src preview prima che renderCiGuests azzeri il DOM
-    const previewSrc = document.getElementById('ciScanPreview')?.src || '';
-
-    // Merge: sovrascrive solo i campi non vuoti estratti
+    const previewSrc = document.getElementById('ciScanPreview') ? document.getElementById('ciScanPreview').src : '';
     const fields = ['cognome','nome','sesso','dataNascita','luogoNascita',
                     'provNascita','statoEsteroNascita','cittadinanza',
                     'tipoDoc','numDoc','luogoRilascio'];
     let filled = 0;
-    fields.forEach(f => {
+    fields.forEach(function(f) {
       const val = (extracted[f] || '').toString().trim();
       if (val !== '') { g[f] = val; filled++; }
     });
 
     overlay.classList.remove('open');
-    renderCiGuests(); // ricrea il DOM — imposta badge e preview DOPO
+    renderCiGuests();
 
-    // Ripristina preview (renderCiGuests la azzera)
     const p2 = document.getElementById('ciScanPreview');
-    if (p2 && previewSrc && previewSrc !== 'about:blank') {
-      p2.src = previewSrc;
-      p2.style.display = 'block';
-    }
+    if (p2 && previewSrc && previewSrc !== 'about:blank') { p2.src = previewSrc; p2.style.display = 'block'; }
 
-    // Badge successo (dopo renderCiGuests che ha ricreato il DOM)
     const badge = document.getElementById('ciScanBadge');
     if (badge) {
       badge.innerHTML = filled > 0
-        ? `<div class="ci-scan-result-badge">✓ ${filled} campi compilati — verifica e correggi se necessario</div>`
-        : `<div class="ci-scan-result-badge" style="background:#fdecea;border-color:#f5c6cb;color:var(--danger);">⚠ Nessun campo estratto — riprova con foto più nitida</div>`;
+        ? '<div class="ci-scan-result-badge">\u2713 ' + filled + ' campi compilati \u2014 verifica e correggi se necessario</div>'
+        : '<div class="ci-scan-result-badge" style="background:#fdecea;border-color:#f5c6cb;color:var(--danger);">\u26a0 Nessun campo estratto \u2014 riprova con foto pi\u00f9 nitida</div>';
     }
 
-    // Ripristina bottone
     const btn2 = document.getElementById('ciScanBtn');
-    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '📷 Scansiona di nuovo'; }
+    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '\ud83d\udcf7 Scansiona di nuovo'; }
 
-    if (filled > 0) {
-      showToast('✓ Documento analizzato · ' + filled + ' campi estratti', 'success');
-    } else {
-      showToast('Gemini non ha estratto dati — verifica la foto', 'error');
-    }
+    showToast(filled > 0
+      ? '\u2713 Documento analizzato \u00b7 ' + filled + ' campi estratti'
+      : 'Nessun dato estratto \u2014 riprova con foto pi\u00f9 nitida',
+      filled > 0 ? 'success' : 'error');
 
   } catch(e) {
     overlay.classList.remove('open');
     console.error('OCR error:', e);
     showToast('Errore OCR: ' + e.message, 'error');
     const btn2 = document.getElementById('ciScanBtn');
-    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '📷 Scansiona documento d\u2019identit\u00e0'; }
+    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '\ud83d\udcf7 Scansiona documento d\u2019identit\u00e0'; }
   }
 }
-
 // ═══════════════════════════════════════════════════════════════════
 // GESTIONE FOGLI ANNUALI NELLE IMPOSTAZIONI
 // ═══════════════════════════════════════════════════════════════════
