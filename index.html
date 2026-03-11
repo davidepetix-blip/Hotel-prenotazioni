@@ -2860,20 +2860,37 @@ function renderSettingsBody() {
   const groups = [...new Set(ROOMS.map(r => r.g))];
   let html = '';
 
-  // ── Sezione Alloggiati Web
-  const _codStr = localStorage.getItem('hotelCodiceStruttura') || '';
+  // ── Sezione Alloggiati Web + OCR proxy
+  const _codStr   = localStorage.getItem('hotelCodiceStruttura') || '';
+  const _proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
   html += `
     <div class="sgroup">
-      <div class="sgroup-title">🛎 Alloggiati Web</div>
+      <div class="sgroup-title">🛎 Alloggiati Web & OCR</div>
       <div class="sroom-card">
-        <p style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.7;">
-          Codice struttura ricettiva (8 cifre) fornito dalla Questura per il file Alloggiati Web.
+        <p style="font-size:11px;color:var(--text2);margin-bottom:12px;line-height:1.7;">
+          Codice struttura ricettiva (8 cifre) fornito dalla Questura.
         </p>
-        <div style="display:flex;align-items:center;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
           <input type="text" class="fi" id="codStrutturaInput" value="${_codStr}"
                  placeholder="es. 00123456" maxlength="9" style="max-width:180px;"
                  onchange="localStorage.setItem('hotelCodiceStruttura',this.value)">
-          <span style="font-size:11px;color:var(--text3);">Visibile nella scheda Check-in</span>
+          <span style="font-size:11px;color:var(--text3);">Codice struttura</span>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:14px;">
+          <p style="font-size:11px;color:var(--text2);margin-bottom:8px;line-height:1.7;">
+            <strong>URL Proxy OCR</strong> — necessario per la scansione automatica dei documenti.<br>
+            Installa il file <code style="font-size:10px;background:var(--surface2);padding:1px 5px;border-radius:3px;">claude_ocr_proxy.gs</code>
+            su Google Apps Script e incolla qui l'URL generato.
+          </p>
+          <input type="text" class="fi" value="${_proxyUrl}"
+                 placeholder="https://script.google.com/macros/s/…/exec"
+                 style="font-size:11px;"
+                 onchange="localStorage.setItem('hotelOcrProxyUrl',this.value.trim())"
+                 autocomplete="off" autocorrect="off" autocapitalize="off">
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+            <button class="btn" style="font-size:11px;" onclick="testOcrProxy()">Testa connessione</button>
+            <span id="proxyTestResult" style="font-size:11px;color:var(--text3);"></span>
+          </div>
         </div>
       </div>
     </div>`;
@@ -3958,10 +3975,32 @@ function pad(s, n)  { const t=(s||'').substring(0,n); return '0'.repeat(Math.max
 let _ciOcrGuestIdx = 0; // indice ospite per cui stiamo scansionando
 
 function ciTriggerScan(guestIdx) {
+  // Controlla che il proxy sia configurato prima di aprire il selettore file
+  const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
+  if (!proxyUrl) {
+    showToast('Configura prima l’URL Proxy OCR nelle Impostazioni (⚙)', 'error');
+    return;
+  }
   _ciOcrGuestIdx = guestIdx;
   const inp = document.getElementById('ciDocInput');
   inp.value = '';
   inp.click();
+}
+
+async function testOcrProxy() {
+  const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
+  const result   = document.getElementById('proxyTestResult');
+  if (!proxyUrl) { result.textContent = '⚠ URL non inserito'; result.style.color='#e67e22'; return; }
+  result.textContent = 'Test in corso…'; result.style.color='var(--text3)';
+  try {
+    const r = await fetch(proxyUrl);
+    const d = await r.json();
+    if (d.status) { result.textContent = '✓ Proxy attivo'; result.style.color='var(--accent)'; }
+    else          { result.textContent = '⚠ Risposta inattesa'; result.style.color='#e67e22'; }
+  } catch(e) {
+    result.textContent = '✗ Non raggiungibile: ' + e.message.slice(0,40);
+    result.style.color = 'var(--danger)';
+  }
 }
 
 async function ciHandleDocImage(input) {
@@ -4021,48 +4060,21 @@ Regole:
 - Se un campo non è leggibile, lascialo stringa vuota ""
 - NON aggiungere spiegazioni, solo il JSON puro`;
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // Usa il proxy Google Apps Script (necessario per CORS da GitHub Pages)
+    const proxyUrl = localStorage.getItem('hotelOcrProxyUrl') || '';
+    if (!proxyUrl) throw new Error('URL Proxy OCR non configurato. Vai in ⚙ Impostazioni → Alloggiati Web & OCR');
+
+    const response = await fetch(proxyUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: mediaType, data: base64 }
-            },
-            {
-              type: 'text',
-              text: 'Estrai i dati da questo documento e restituisci il JSON.'
-            }
-          ]
-        }]
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base64, mimeType: mediaType })
     });
 
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || 'Errore API');
+    if (data.error) throw new Error(data.error);
+    if (!data.ok || !data.data) throw new Error('Risposta proxy non valida');
 
-    // Estrai JSON dalla risposta
-    const rawText = data.content?.find(c => c.type === 'text')?.text || '';
-    let extracted;
-    try {
-      // Pulisci eventuali backtick markdown
-      const clean = rawText.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
-      extracted = JSON.parse(clean);
-    } catch(e) {
-      // Prova a trovare il JSON nel testo
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (match) extracted = JSON.parse(match[0]);
-      else throw new Error('Risposta non parsabile: ' + rawText.slice(0,100));
-    }
+    const extracted = data.data;
 
     // Aggiorna il guest corrispondente
     const idx = _ciOcrGuestIdx;
