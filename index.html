@@ -786,10 +786,11 @@ const PALETTE = [
 // Tipi di letto disponibili per i contatori
 // { id, label, short }
 const BED_TYPES = [
-  { id:'m',   label:'Matrimoniale',    short:'m'   },
-  { id:'s',   label:'Singolo',         short:'s'   },
-  { id:'c',   label:'Culla',           short:'c'   },
-  { id:'aff', label:'Affollato/Extra', short:'aff' },
+  { id:'m',   label:'Matrimoniale',           short:'m'   },
+  { id:'ms',  label:'Matrimoniale uso singolo', short:'ms'  },
+  { id:'s',   label:'Singolo',                short:'s'   },
+  { id:'c',   label:'Culla',                  short:'c'   },
+  { id:'aff', label:'Affollato/Extra',         short:'aff' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -799,33 +800,33 @@ const BED_TYPES = [
 // ═══════════════════════════════════════════════════════════════════
 const ROOM_DEFAULTS = {
   // Scuola (camere standard 2 posti)
-  r1:{maxGuests:2,allowedBeds:['m','s']},    r2:{maxGuests:2,allowedBeds:['m','s']},
-  r3:{maxGuests:2,allowedBeds:['m','s']},    r4:{maxGuests:2,allowedBeds:['m','s']},
-  r5:{maxGuests:2,allowedBeds:['m','s']},    r6:{maxGuests:2,allowedBeds:['m','s']},
-  r7:{maxGuests:2,allowedBeds:['m','s']},    r8:{maxGuests:2,allowedBeds:['m','s']},
-  r9:{maxGuests:2,allowedBeds:['m','s']},    r10:{maxGuests:2,allowedBeds:['m','s']},
-  r100:{maxGuests:2,allowedBeds:['m','s','c']}, r101:{maxGuests:2,allowedBeds:['m','s','c']},
-  r102:{maxGuests:2,allowedBeds:['m','s','c']}, r103:{maxGuests:2,allowedBeds:['m','s','c']},
-  r104:{maxGuests:2,allowedBeds:['m','s','c']},
+  r1:{maxGuests:2,allowedBeds:['m','ms','s']},    r2:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r3:{maxGuests:2,allowedBeds:['m','ms','s']},    r4:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r5:{maxGuests:2,allowedBeds:['m','ms','s']},    r6:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r7:{maxGuests:2,allowedBeds:['m','ms','s']},    r8:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r9:{maxGuests:2,allowedBeds:['m','ms','s']},    r10:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r100:{maxGuests:2,allowedBeds:['m','ms','s','c']}, r101:{maxGuests:2,allowedBeds:['m','ms','s','c']},
+  r102:{maxGuests:2,allowedBeds:['m','ms','s','c']}, r103:{maxGuests:2,allowedBeds:['m','ms','s','c']},
+  r104:{maxGuests:2,allowedBeds:['m','ms','s','c']},
   // Largo Roma
-  r21:{maxGuests:3,allowedBeds:['m','s','c']}, r22:{maxGuests:3,allowedBeds:['m','s','c']},
-  r23:{maxGuests:3,allowedBeds:['m','s','c']}, r24:{maxGuests:3,allowedBeds:['m','s','c']},
-  r25:{maxGuests:3,allowedBeds:['m','s','c']}, r31:{maxGuests:4,allowedBeds:['m','s','c']},
+  r21:{maxGuests:3,allowedBeds:['m','ms','s','c']}, r22:{maxGuests:3,allowedBeds:['m','ms','s','c']},
+  r23:{maxGuests:3,allowedBeds:['m','ms','s','c']}, r24:{maxGuests:3,allowedBeds:['m','ms','s','c']},
+  r25:{maxGuests:3,allowedBeds:['m','ms','s','c']}, r31:{maxGuests:4,allowedBeds:['m','ms','s','c']},
   // Appartamenti
-  marasanta:{maxGuests:6,allowedBeds:['m','s','c','aff']},
-  margher:  {maxGuests:4,allowedBeds:['m','s','c']},
-  marg1:    {maxGuests:4,allowedBeds:['m','s','c']},
-  sole:     {maxGuests:4,allowedBeds:['m','s','c']},
-  giove:    {maxGuests:6,allowedBeds:['m','s','c','aff']},
-  saturno:  {maxGuests:3,allowedBeds:['m','s','c']},
-  nettuno:  {maxGuests:2,allowedBeds:['m','s']},
-  marte:    {maxGuests:4,allowedBeds:['m','s','c']},
-  venere:   {maxGuests:2,allowedBeds:['m','s']},
-  mercurio: {maxGuests:3,allowedBeds:['m','s','c']},
-  giuliaB:  {maxGuests:4,allowedBeds:['m','s','c']},
-  giuliaC:  {maxGuests:4,allowedBeds:['m','s','c']},
-  giuliaD:  {maxGuests:4,allowedBeds:['m','s','c']},
-  giuliaE:  {maxGuests:4,allowedBeds:['m','s','c']},
+  marasanta:{maxGuests:6,allowedBeds:['m','ms','s','c','aff']},
+  margher:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  marg1:    {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  sole:     {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  giove:    {maxGuests:6,allowedBeds:['m','ms','s','c','aff']},
+  saturno:  {maxGuests:3,allowedBeds:['m','ms','s','c']},
+  nettuno:  {maxGuests:2,allowedBeds:['m','ms','s']},
+  marte:    {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  venere:   {maxGuests:2,allowedBeds:['m','ms','s']},
+  mercurio: {maxGuests:3,allowedBeds:['m','ms','s','c']},
+  giuliaB:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  giuliaC:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  giuliaD:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  giuliaE:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
 };
 
 function loadRoomSettings() {
@@ -846,7 +847,7 @@ let accessToken = null;
 let curM = new Date().getMonth();
 let curY = new Date().getFullYear();
 let selColor = '#D9D9D9', editId = null, nid = 1000;
-let bedCounts = { m:0, s:0, c:0, aff:0 };
+let bedCounts = { m:0, ms:0, s:0, c:0, aff:0 };
 let roomSettings = loadRoomSettings();
 let roomStates = {};   // { roomId: { pulizia, configurazione, noteOps, ts, dbRow } }
 let bookings = [];
@@ -894,6 +895,7 @@ function nowISO() { return new Date().toISOString(); }
 function buildBedString(counts) {
   const parts = [];
   if (counts.m  > 0) parts.push(`${counts.m}m`);
+  if (counts.ms > 0) parts.push(`${counts.ms}ms`);
   if (counts.s  > 0) parts.push(`${counts.s}s`);
   if (counts.c  > 0) parts.push(`${counts.c}c`);
   if (counts.aff> 0) parts.push(`${counts.aff}aff`);
@@ -902,23 +904,32 @@ function buildBedString(counts) {
 
 // Parsa stringa disposizione → contatori (per pre-riempire in modifica)
 function parseBedString(str) {
-  const counts = { m:0, s:0, c:0, aff:0 };
+  const counts = { m:0, ms:0, s:0, c:0, aff:0 };
   if (!str || str === 'ND') return counts;
-  // es: "2m + 1s + 1c" o "1m/s" (legacy)
-  const parts = str.split(/[+,\/]/);
+  // Gestisce prima "ms" (matrimoniale uso singolo) prima di splittare su "m"
+  // es: "1ms + 2m + 1s" oppure legacy "1m/s"
+  const norm = str.replace(/\s*\+\s*/g, '+').replace(/\s*,\s*/g, '+').trim();
+  // Legacy "1m/s" o "m/s" → ms
+  if (/^(\d*)m\/s$/i.test(norm)) {
+    const n = parseInt(norm) || 1;
+    counts.ms = n;
+    return counts;
+  }
+  const parts = norm.split('+');
   for (const part of parts) {
     const p = part.trim();
-    const nm = p.match(/^(\d+)m$/);    if (nm) { counts.m  = parseInt(nm[1]); continue; }
-    const ns = p.match(/^(\d+)s$/);    if (ns) { counts.s  = parseInt(ns[1]); continue; }
-    const nc = p.match(/^(\d+)c$/);    if (nc) { counts.c  = parseInt(nc[1]); continue; }
-    const na = p.match(/^(\d+)aff$/);  if (na) { counts.aff= parseInt(na[1]); continue; }
-    // Legacy: "1m" senza numero → 1
+    const nms = p.match(/^(\d+)ms$/i); if (nms) { counts.ms = parseInt(nms[1]); continue; }
+    const nm  = p.match(/^(\d+)m$/);   if (nm)  { counts.m  = parseInt(nm[1]);  continue; }
+    const ns  = p.match(/^(\d+)s$/);   if (ns)  { counts.s  = parseInt(ns[1]);  continue; }
+    const nc  = p.match(/^(\d+)c$/);   if (nc)  { counts.c  = parseInt(nc[1]);  continue; }
+    const na  = p.match(/^(\d+)aff$/); if (na)  { counts.aff= parseInt(na[1]);  continue; }
+    if (p === 'ms')  { counts.ms=1;  continue; }
     if (p === 'm')   { counts.m=1;   continue; }
     if (p === 's')   { counts.s=1;   continue; }
     if (p === 'c')   { counts.c=1;   continue; }
     if (p === 'aff') { counts.aff=1; continue; }
-    // Legacy: "1m/s" → 1m + 1s
-    if (p.match(/^1m\/s$/i)) { counts.m=1; counts.s=1; }
+    // Legacy slash: "1m/s" dentro un gruppo più grande
+    if (p.match(/^(\d+)?m\/s$/i)) { counts.ms = parseInt(p) || 1; }
   }
   return counts;
 }
@@ -2138,16 +2149,15 @@ async function updateJsonRow45(sName, colIdx, cameraName) {
   function calcBedCounts(disp) {
     let m=0, s=0, c=0, ms=0;
     if (!disp) return {matrimoniali:m,singoli:s,culle:c,matrimonialiUS:ms};
-    // Splitta su spazio e + (come fa Apps Script)
     const parts = disp.replace(/\+/g,' ').split(/\s+/);
     for (const p of parts) {
       const pt = p.trim().toLowerCase();
       if (!pt) continue;
       const num = parseInt(pt.match(/\d+/)?.[0] || '1');
-      if (pt.includes('m/s')) ms += num;
-      else if (pt.includes('m')) m += num;
-      else if (pt.includes('s')) s += num;
-      else if (pt.includes('c')) c += num;
+      if (pt.includes('m/s') || pt.endsWith('ms')) ms += num;
+      else if (pt.endsWith('m')) m += num;
+      else if (pt.endsWith('s')) s += num;
+      else if (pt.endsWith('c')) c += num;
     }
     return {matrimoniali:m, singoli:s, culle:c, matrimonialiUS:ms};
   }
@@ -2156,7 +2166,7 @@ async function updateJsonRow45(sName, colIdx, cameraName) {
   function parseCellText(text) {
     if (!text) return {nome:'', disposizione:''};
     // Tokens che sono disposizioni valide (includiamo anche il nuovo formato "Nm", "Ns" ecc.)
-    const dispPattern = /\b(\d+m\/s|\d+m|\d+s|\d+c|\d+aff|nd)\b/gi;
+    const dispPattern = /\b(\d+m\/s|\d+ms|\d+m|\d+s|\d+c|\d+aff|nd)\b/gi;
     const disps = [];
     let remainder = text.replace(dispPattern, (match) => { disps.push(match.toLowerCase()); return ''; });
     // Rimuovi anche i "+" residui
@@ -2585,7 +2595,7 @@ function closeDrawer(){ document.getElementById('drawer').classList.remove('open
 // MODAL
 // ═══════════════════════════════════════════════════════════════════
 function openModal(isEdit=false){
-  if(!isEdit){ editId=null; document.getElementById('fName').value=''; document.getElementById('fNotes').value=''; if(!document.getElementById('fIn').value){ const t=new Date(); document.getElementById('fIn').value=t.toISOString().slice(0,10); const t2=new Date(t);t2.setDate(t2.getDate()+1);document.getElementById('fOut').value=t2.toISOString().slice(0,10); } bedCounts={m:0,s:0,c:0,aff:0}; }
+  if(!isEdit){ editId=null; document.getElementById('fName').value=''; document.getElementById('fNotes').value=''; if(!document.getElementById('fIn').value){ const t=new Date(); document.getElementById('fIn').value=t.toISOString().slice(0,10); const t2=new Date(t);t2.setDate(t2.getDate()+1);document.getElementById('fOut').value=t2.toISOString().slice(0,10); } bedCounts={m:0,ms:0,s:0,c:0,aff:0}; }
   document.getElementById('mtitle').textContent=isEdit?'Modifica Prenotazione':'Nuova Prenotazione';
   rebuildBeds(isEdit ? bedCounts : null); rebuildColors();
   document.getElementById('errmsg').classList.remove('show');
@@ -2605,7 +2615,7 @@ function rebuildBeds(initCounts) {
     bedCounts = { ...initCounts };
   } else {
     // Reset contatori
-    bedCounts = { m:0, s:0, c:0, aff:0 };
+    bedCounts = { m:0, ms:0, s:0, c:0, aff:0 };
   }
 
   BED_TYPES.forEach(({ id, label }) => {
@@ -2652,7 +2662,7 @@ function changeBedCount(id, delta, maxGuests) {
   // Controlla capienza totale
   const total = Object.values(bedCounts).reduce((a,b) => a+b, 0) - (bedCounts[id]||0) + newVal;
   // Matrimoniale conta come 2 posti, singolo come 1, culla come 0 (non conta per capienza adulti)
-  const guestCount = (bedCounts.m + (id==='m'?delta:0))*2 + (bedCounts.s + (id==='s'?delta:0)) + (bedCounts.aff + (id==='aff'?delta:0));
+  const guestCount = (bedCounts.m + (id==='m'?delta:0))*2 + (bedCounts.ms + (id==='ms'?delta:0))*1 + (bedCounts.s + (id==='s'?delta:0)) + (bedCounts.aff + (id==='aff'?delta:0));
   if (delta > 0 && guestCount > maxGuests * 2) return; // limite generoso
 
   bedCounts[id] = newVal;
