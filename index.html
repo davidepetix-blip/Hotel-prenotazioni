@@ -3996,27 +3996,44 @@ async function testGeminiKey() {
   const detail = document.getElementById('proxyTestDetail');
   if (!apiKey) { result.textContent = '\u26a0 Chiave non inserita'; result.style.color='#e67e22'; return; }
   if (!apiKey.startsWith('AIza')) { result.textContent = '\u26a0 Formato non valido (deve iniziare con AIza)'; result.style.color='#e67e22'; return; }
-  result.textContent = 'Test in corso\u2026'; result.style.color='var(--text3)';
+  result.textContent = 'Ricerca modello disponibile\u2026'; result.style.color='var(--text3)';
   if (detail) detail.textContent = '';
-  try {
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=' + apiKey;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: 'rispondi solo con: ok' }] }] })
-    });
-    const d = await r.json();
-    if (r.ok && d.candidates) {
-      result.textContent = '\u2713 Chiave valida \u2014 Gemini operativo';
-      result.style.color = 'var(--accent)';
-    } else {
-      result.textContent = '\u2715 Errore: ' + (d.error && d.error.message || 'risposta inattesa');
-      result.style.color = 'var(--danger)';
-      if (detail) detail.textContent = 'Verifica che la chiave sia corretta e che Gemini API sia abilitata.';
-    }
-  } catch(e) {
-    result.textContent = '\u2715 ' + e.message;
+
+  // Prova modelli in ordine finche uno funziona
+  const MODELS = [
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
+  ];
+  let workingModel = null;
+  let lastError = '';
+  for (const model of MODELS) {
+    try {
+      result.textContent = 'Provo ' + model + '\u2026';
+      const u = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + apiKey;
+      const r = await fetch(u, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'ok' }] }] })
+      });
+      const d = await r.json();
+      if (r.ok && d.candidates) { workingModel = model; break; }
+      lastError = (d.error && d.error.message) || ('HTTP ' + r.status);
+    } catch(ex) { lastError = ex.message; }
+  }
+
+  if (workingModel) {
+    localStorage.setItem('hotelGeminiModel', workingModel);
+    result.textContent = '\u2713 Chiave valida \u2014 ' + workingModel;
+    result.style.color = 'var(--accent)';
+    if (detail) detail.textContent = 'Modello salvato automaticamente.';
+  } else {
+    result.textContent = '\u2715 Nessun modello disponibile con questa chiave';
     result.style.color = 'var(--danger)';
+    if (detail) detail.textContent = 'Ultimo errore: ' + lastError;
   }
 }
 
@@ -4056,7 +4073,8 @@ async function ciHandleDocImage(input) {
       + '"statoEsteroNascita":"nome MAIUSCOLO solo se estero","cittadinanza":"IT o codice ISO 2 lettere",'
       + '"tipoDoc":"IDENT o PASOR o PATEN o ALTRO","numDoc":"numero esatto senza spazi","luogoRilascio":""}';
 
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=' + apiKey;
+    const model = localStorage.getItem('hotelGeminiModel') || 'gemini-2.5-flash';
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + apiKey;
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
