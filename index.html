@@ -910,7 +910,7 @@ function nowISO() { return new Date().toISOString(); }
 function buildBedString(counts) {
   const parts = [];
   if (counts.m  > 0) parts.push(`${counts.m}m`);
-  if (counts.ms > 0) parts.push(`${counts.ms}ms`);
+  if (counts.ms > 0) parts.push(`${counts.ms}m/s`);
   if (counts.s  > 0) parts.push(`${counts.s}s`);
   if (counts.c  > 0) parts.push(`${counts.c}c`);
   if (counts.aff> 0) parts.push(`${counts.aff}aff`);
