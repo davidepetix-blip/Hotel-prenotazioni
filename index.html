@@ -481,9 +481,10 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     <div class="mlabel" id="mlabel">GEN 2026</div>
     <button onclick="changeMonth(1)">›</button>
   </div>
-  <button class="btn btn-icon sync-btn" onclick="forceSync()" title="Forza sincronizzazione completa">
+  <button class="btn btn-icon sync-btn" onclick="forceSync()" title="Leggi da JSON_2026 (1 chiamata API)">
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
+  <span id="jsonSourceBadge" style="font-size:10px;color:#888;display:none;margin-left:2px" title="Fonte dati"></span>
   <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
   <button class="btn btn-icon" onclick="openCheckin()" title="Check-in">🛎</button>
   <button class="btn btn-icon" onclick="openRoomDash()" title="Stato camere">🏠</button>
@@ -1112,18 +1113,34 @@ async function sheetsGet(range, spreadsheetId) {
   const sid = spreadsheetId || getDefaultSheetId();
   if (!sid) throw new Error('Nessun foglio annuale configurato.');
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`;
-  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
-  if (!r.ok) throw new Error(`Sheets API error ${r.status}: ${await r.text()}`);
-  return r.json();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    if (r.status === 429) {
+      const wait = (attempt + 1) * 2000;
+      await new Promise(res => setTimeout(res, wait));
+      continue;
+    }
+    if (!r.ok) throw new Error(`Sheets API error ${r.status}: ${await r.text()}`);
+    return r.json();
+  }
+  throw new Error('RATE_LIMIT: troppo richieste. Riprova tra qualche secondo.');
 }
 
 async function sheetsGetWithFormats(range, spreadsheetId) {
   const sid = spreadsheetId || getDefaultSheetId();
   if (!sid) throw new Error('Nessun foglio annuale configurato.');
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat/backgroundColor,note))))`;
-  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
-  if (!r.ok) throw new Error(`Sheets API error ${r.status}: ${await r.text()}`);
-  return r.json();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    if (r.status === 429) {
+      const wait = (attempt + 1) * 2000;
+      await new Promise(res => setTimeout(res, wait));
+      continue;
+    }
+    if (!r.ok) throw new Error(`Sheets API error ${r.status}: ${await r.text()}`);
+    return r.json();
+  }
+  throw new Error('RATE_LIMIT: troppo richieste. Riprova tra qualche secondo.');
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1549,6 +1566,101 @@ async function readAnnualSheet(entry) {
   return result;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// LETTURA FOGLIO JSON_ANNUALE CENTRALIZZATO
+// Legge il JSON dalla cella A2 del tab "JSON_ANNUALE" — 1 sola chiamata API.
+// Funziona per qualsiasi anno (2025, 2026, 2027...).
+// In caso di errore lancia eccezione → il chiamante fa fallback ai 12 fogli mensili.
+// ═══════════════════════════════════════════════════════════════════
+async function readJSONAnnuale(sheetId) {
+  const TAB   = 'JSON_ANNUALE';
+  const range = encodeURIComponent(`'${TAB}'!A2`);
+  const url   = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueRenderOption=FORMATTED_VALUE`;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    if (r.status === 429) {
+      await new Promise(res => setTimeout(res, (attempt + 1) * 2000));
+      continue;
+    }
+    if (!r.ok) throw new Error(`${TAB} non disponibile (HTTP ${r.status})`);
+
+    const data = await r.json();
+    const raw  = data.values?.[0]?.[0];
+    if (!raw || raw.trim() === '') throw new Error(`${TAB} vuoto — esegui "Rigenera JSON_ANNUALE" dal menu del foglio`);
+
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch(e) { throw new Error(`${TAB} JSON non valido: ${e.message}`); }
+
+    if (!Array.isArray(parsed)) throw new Error(`${TAB}: il contenuto non è un array`);
+    if (parsed.length === 0)    throw new Error(`${TAB}: nessuna prenotazione trovata`);
+
+    return _parseJSONAnnualeBookings(parsed, sheetId, TAB);
+  }
+  throw new Error(`${TAB}: rate limit persistente, riprova`);
+}
+
+/**
+ * Converte le prenotazioni dal formato JSON_ANNUALE
+ * al formato interno dell'app (oggetti con r, s, e, c, ...).
+ * Usato sia da readJSONAnnuale che da eventuali import futuri.
+ */
+function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
+  const result = [];
+  let skipped   = 0;
+
+  for (const b of parsed) {
+    // Campi obbligatori
+    if (!b.dal || !b.al || !b.camera) { skipped++; continue; }
+
+    const [dd, mm, yy] = b.dal.split('/').map(Number);
+    const [de, me, ye] = b.al.split('/').map(Number);
+    if (!dd || !mm || !yy || !de || !me || !ye) { skipped++; continue; }
+
+    // Normalizza nome camera (rimuove ".0" da numeri letti come float)
+    const camNorm = String(b.camera).trim().replace(/\.0$/, '');
+    const room    = ROOMS.find(r =>
+      r.name === camNorm ||
+      r.name.toLowerCase() === camNorm.toLowerCase()
+    );
+    if (!room) {
+      console.warn(`[${tabName}] Camera non riconosciuta: "${b.camera}"`);
+      skipped++;
+      continue;
+    }
+
+    // Colore: garantisce formato #rrggbb
+    const colorHex = String(b.backgroundColor || '#D9D9D9').trim();
+    const color     = colorHex.startsWith('#') ? colorHex : '#' + colorHex;
+
+    // sheetName ricavato dalla data di inizio (per compatibilità scritture)
+    const sName = sheetName(yy, mm - 1);
+    if (!sheetColumnMap[sName]) sheetColumnMap[sName] = {};
+
+    result.push({
+      id:         nid++,
+      r:          room.id,
+      n:          b.nome         || '—',
+      d:          b.disposizione || '',
+      c:          color,
+      s:          new Date(yy, mm - 1, dd, 12),
+      e:          new Date(ye, me - 1, de, 12),
+      note:       b.note         || '',
+      fromSheet:      true,
+      fromJSONAnnuale: true,        // ← flag generico (non legato all'anno)
+      sheetName:  sName,
+      sheetId,
+      cameraName: room.name,
+      dbId: null, dbRow: null, ts: null, fonte: 'manuale',
+    });
+  }
+
+  if (skipped > 0) console.warn(`[${tabName}] ${skipped} prenotazioni saltate (dati mancanti/camera sconosciuta)`);
+  console.log(`[${tabName}] ✓ ${result.length} prenotazioni caricate con 1 chiamata API`);
+  return result;
+}
+
 // ── SYNC BIDIREZIONALE: DATABASE vs righe 45 ──
 // ── Cache locale del DATABASE in localStorage ──
 const DB_CACHE_KEY     = 'hotelDbCache';
@@ -1877,15 +1989,31 @@ async function loadFromSheets() {
       }
     }
 
-    // ── FULL PATH: primo avvio o forceSync o DB non configurato ──
-    showLoading('Lettura fogli annuali…');
-    const annualResults = await Promise.all(
-      annualSheets.filter(e => e.sheetId).map(async (entry, i) => {
-        showLoading(`Lettura ${entry.label}…`);
-        return readAnnualSheet(entry).catch(() => []);
-      })
-    );
-    let allAnnual = annualResults.flat();
+    // ── FULL PATH: legge JSON_ANNUALE centralizzato (1 chiamata) oppure fallback ai fogli mensili ──
+    showLoading('Lettura JSON_ANNUALE…');
+    const sheetEntry = annualSheets.find(e => e.sheetId);
+    let allAnnual = [];
+
+    if (sheetEntry) {
+      try {
+        allAnnual = await readJSONAnnuale(sheetEntry.sheetId);
+        showLoading(`JSON_ANNUALE: ${allAnnual.length} prenotazioni`);
+      } catch(err) {
+        // Fallback: leggi i 12 fogli mensili se JSON_ANNUALE non esiste ancora
+        console.warn('[JSON_ANNUALE] Fallback ai fogli mensili:', err.message);
+        showLoading(`⚠ ${err.message} — lettura fogli mensili…`);
+        const sheetsToRead = annualSheets.filter(e => e.sheetId);
+        const annualResults = [];
+        for (let i = 0; i < sheetsToRead.length; i++) {
+          const entry = sheetsToRead[i];
+          showLoading(`Lettura ${entry.label} (${i+1}/${sheetsToRead.length})…`);
+          try { annualResults.push(await readAnnualSheet(entry)); }
+          catch(e2) { annualResults.push([]); }
+          if (i < sheetsToRead.length - 1) await new Promise(r => setTimeout(r, 300));
+        }
+        allAnnual = annualResults.flat();
+      }
+    }
 
     if (DATABASE_SHEET_ID) {
       showLoading('Sincronizzazione database…');
@@ -1896,7 +2024,17 @@ async function loadFromSheets() {
 
     bookings = mergeMultiMonthBookings(allAnnual);
     hideLoading(); render();
-    showToast(`✓ ${bookings.length} prenotazioni caricate`, 'success');
+    const fromJSON = allAnnual.some(b => b.fromJSONAnnuale);
+    const badge = document.getElementById('jsonSourceBadge');
+    if (badge) {
+      badge.textContent = fromJSON ? 'JSON' : '12f';
+      badge.title = fromJSON
+        ? 'Dati da JSON_ANNUALE (veloce, 1 chiamata API)'
+        : 'Dati dai 12 fogli mensili (fallback — genera JSON_ANNUALE dal menu del foglio)';
+      badge.style.display = 'inline';
+      badge.style.color = fromJSON ? '#2d6a4f' : '#e67e22';
+    }
+    showToast(`✓ ${bookings.length} prenotazioni${fromJSON ? ' · JSON_ANNUALE' : ' · fogli mensili'}`, 'success');
     startBgSync();
 
   } catch(e) {
