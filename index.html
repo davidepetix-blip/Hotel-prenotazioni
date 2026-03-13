@@ -4683,733 +4683,744 @@ dbg('✓ avvio ok');
 // MODULO FATTURAZIONE — CONTI & TARIFFE
 // ═══════════════════════════════════════════════════════════════════
 
-// ── Storage keys ──
-const BILL_SETTINGS_KEY  = 'hotelBillSettings';
-const BILL_CONTI_KEY     = 'hotelConti';
+const BILL_SETTINGS_KEY = 'hotelBillSettings';
+const BILL_CONTI_KEY    = 'hotelConti';
 
-// ── Struttura tariffe default ──
-// tariffaBase: prezzo per letto singolo/notte (base di calcolo)
-// moltiplicatori: matrimoniale = 1.8×, m/s = 1.0×, culla = 0×
-// stagioni: lista di periodi con moltiplicatore (es. alta=1.5)
-// convenzioni: lista clienti/aziende con tariffa netta o sconto%
-// scontiDurata: soglie notti → sconto %
-// appartamenti: canone mensile per unità
-// extra prezzi: colazione, pulizie, ecc.
+// ─────────────────────────────────────────────────────────────────
+// STRUTTURA TARIFFE
+//
+// Logica di calcolo notte per camera albergo:
+//   1. Calcola tariffa dalla DISPOSIZIONE LETTI:
+//        singolo:                  T.s (es. 35€)
+//        matrimoniale uso singolo: T.ms (es. 38€)
+//        matrimoniale (2 pers):    T.m  (es. 45€)
+//        singolo aggiunto:         +T.ag a persona (es. +15€)
+//        combinazione m+s:         T.m + singoli×T.ag
+//   2. Se la camera ha override giornaliero > 0 → usa quello
+//   3. Applica moltiplicatore stagionale (media sui giorni)
+//   4. Applica convenzione cliente (sconto%)
+//   5. Oppure sconto durata (se no convenzione)
+//
+// Appartamenti: tariffa override per camera (giornaliero o mensile)
+// ─────────────────────────────────────────────────────────────────
 
 function billSettingsDefault() {
-  // Costruisce tariffe per camera da ROOMS (giornaliera + mensile)
-  const tariffeCamere = {};
-  const defaults = {
-    r1:60,r2:60,r3:60,r4:60,r5:60,r6:60,r7:60,r8:60,r9:60,r10:60,
-    r100:65,r101:65,r102:65,r103:65,r104:65,
-    r21:70,r22:70,r23:70,r24:70,r25:70,r31:80,
-    marasanta:{ giornaliera:80,  mensile:1200 },
-    margher:  { giornaliera:70,  mensile:1100 },
-    marg1:    { giornaliera:70,  mensile:1000 },
-    sole:     { giornaliera:80,  mensile:1200 },
-    giove:    { giornaliera:100, mensile:1600 },
-    saturno:  { giornaliera:85,  mensile:1400 },
-    nettuno:  { giornaliera:70,  mensile:1100 },
-    marte:    { giornaliera:90,  mensile:1500 },
-    venere:   { giornaliera:70,  mensile:1100 },
-    mercurio: { giornaliera:75,  mensile:1200 },
-    giuliaB:  { giornaliera:60,  mensile:900  },
-    giuliaC:  { giornaliera:60,  mensile:900  },
-    giuliaD:  { giornaliera:60,  mensile:900  },
-    giuliaE:  { giornaliera:60,  mensile:900  },
-  };
-  ROOMS.forEach(r => {
-    const d = defaults[r.id];
-    if (typeof d === 'number') tariffeCamere[r.id] = { giornaliera: d, mensile: d * 25 };
-    else if (d)                tariffeCamere[r.id] = d;
-    else                       tariffeCamere[r.id] = { giornaliera: 0, mensile: 0 };
-  });
   return {
-    hotelName: 'Il mio Hotel',
+    hotelName:    'Il mio Hotel',
     hotelAddress: '',
-    hotelTel: '',
-    tariffaBase: 60,        // fallback globale se camera non ha tariffa
-    tariffeCamere,
+    hotelTel:     '',
+
+    // ── Tariffe base per DISPOSIZIONE ──
+    tariffe: {
+      s:  35,   // camera singola (1 letto singolo)
+      ms: 38,   // matrimoniale uso singolo
+      m:  45,   // matrimoniale (2 persone)
+      ag: 15,   // aggiunta singolo in camera matrimoniale (per persona)
+    },
+
+    // ── Override per singola camera (0 = usa disposizione) ──
+    // { [roomId]: { giornaliera: 0, mensile: 0 } }
+    tariffeCamere: {},
+
+    // ── Stagionalità: periodi con moltiplicatore ──
     stagioni: [
       { nome:'Alta stagione',  dal:'06-15', al:'09-15', molt:1.5 },
       { nome:'Media stagione', dal:'03-15', al:'06-14', molt:1.2 },
       { nome:'Bassa stagione', dal:'09-16', al:'03-14', molt:1.0 },
     ],
+
+    // ── Convenzioni clienti (sconto % sul totale) ──
     convenzioni: [
-      { nome:'mammana',       tipo:'sconto', valore:20 },
-      { nome:'geoambiente',   tipo:'sconto', valore:20 },
-      { nome:'Sicily Divide', tipo:'sconto', valore:15 },
+      { nome:'mammana',       sconto:20 },
+      { nome:'geoambiente',   sconto:20 },
+      { nome:'Sicily Divide', sconto:15 },
     ],
+
+    // ── Sconti durata ──
     scontiDurata: [
       { soglia:30, sconto:20 },
       { soglia:7,  sconto:10 },
     ],
-    prezziExtra: {
-      colazione:    5,
-      pranzo:       12,
-      cena:         15,
-      pulizie:      30,
-      cambioLenzuola: 15,
-      deposito:     0,
-    }
+
+    // ── Extra: { label, prezzo, unita } ──
+    // unita: 'notte' | 'persona' | 'volta' | 'kwh' | 'mc'
+    extra: [
+      { id:'colazione',      label:'🍳 Colazione',          prezzo:0,  unita:'persona' },
+      { id:'pranzo',         label:'🍽 Pranzo',             prezzo:0,  unita:'persona' },
+      { id:'cena',           label:'🌙 Cena',               prezzo:0,  unita:'persona' },
+      { id:'piscina',        label:'🏊 Piscina',            prezzo:0,  unita:'persona' },
+      { id:'pulizie',        label:'🧹 Pulizie extra',      prezzo:0,  unita:'volta'   },
+      { id:'cambioLenzuola', label:'🛏 Cambio lenzuola',   prezzo:0,  unita:'volta'   },
+      { id:'luce',           label:'⚡ Consumo elettrico',  prezzo:0,  unita:'kwh'     },
+      { id:'acqua',          label:'💧 Consumo idrico',     prezzo:0,  unita:'mc'      },
+    ],
   };
 }
 
-// Legge la tariffa specifica di una camera (con fallback al globale)
-function getRoomRate(roomId, tipo) {
-  const cfg = loadBillSettings();
-  const t   = cfg.tariffeCamere?.[roomId];
-  if (t && t[tipo] > 0) return t[tipo];
-  const fb  = cfg.tariffaBase || 60;
-  return tipo === 'mensile' ? fb * 25 : fb;
-}
-
-// ── Carica/salva settings ──
+// ── Carica/salva settings (merge con default) ──
 function loadBillSettings() {
   try {
     const raw = localStorage.getItem(BILL_SETTINGS_KEY);
     if (!raw) return billSettingsDefault();
-    return { ...billSettingsDefault(), ...JSON.parse(raw) };
+    const saved = JSON.parse(raw);
+    const def   = billSettingsDefault();
+    return {
+      ...def, ...saved,
+      tariffe: { ...def.tariffe, ...(saved.tariffe||{}) },
+      tariffeCamere: { ...(saved.tariffeCamere||{}) },
+    };
   } catch(e) { return billSettingsDefault(); }
 }
+function saveBillSettings(s) { localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s)); }
 
-function saveBillSettings(s) {
-  localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s));
-}
-
-// ── Carica/salva conti emessi ──
 function loadConti() {
-  try { return JSON.parse(localStorage.getItem(BILL_CONTI_KEY) || '[]'); }
-  catch(e) { return []; }
+  try { return JSON.parse(localStorage.getItem(BILL_CONTI_KEY)||'[]'); } catch(e) { return []; }
 }
+function saveConti(c) { localStorage.setItem(BILL_CONTI_KEY, JSON.stringify(c)); }
 
-function saveConti(conti) {
-  localStorage.setItem(BILL_CONTI_KEY, JSON.stringify(conti));
-}
-
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 // MOTORE DI CALCOLO
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 
 /**
- * Calcola il conto completo per una prenotazione alberghiera.
- * Restituisce oggetto con righe dettaglio e totale.
+ * Calcola la tariffa notte da disposizione letti.
+ * letti: { m, ms, s, c } (output di parseBedString)
+ * tariffe: cfg.tariffe
+ */
+function tariffaDaDisposizione(letti, tariffe) {
+  const m  = letti.m  || 0;
+  const ms = letti.ms || 0;
+  const s  = letti.s  || 0;
+
+  if (ms > 0 && m === 0 && s === 0) return tariffe.ms * ms;
+  if (m  > 0 && s === 0)            return tariffe.m  * m  + (ms > 0 ? tariffe.ms * ms : 0);
+  if (m  > 0 && s > 0)              return tariffe.m  * m  + s * tariffe.ag;
+  if (s  > 0)                       return tariffe.s  * s;
+  // fallback: usa singolo
+  return tariffe.s;
+}
+
+/**
+ * Descrizione leggibile della tariffa usata
+ */
+function descrizioneTariffa(letti, tariffe, cfg, roomId) {
+  const ov = cfg.tariffeCamere?.[roomId];
+  if (ov?.giornaliera > 0) return `camera ${roomName(roomId)}: ${ov.giornaliera}€/notte (tariffa camera)`;
+
+  const m  = letti.m  || 0;
+  const ms = letti.ms || 0;
+  const s  = letti.s  || 0;
+  const parts = [];
+  if (m  > 0) parts.push(`${m} matrim. ×${tariffe.m}€`);
+  if (ms > 0) parts.push(`${ms} m/s ×${tariffe.ms}€`);
+  if (s  > 0 && m > 0) parts.push(`${s} sing. ×${tariffe.ag}€`);
+  else if (s > 0)      parts.push(`${s} sing. ×${tariffe.s}€`);
+  return parts.join(' + ') || `${tariffe.s}€`;
+}
+
+/**
+ * Moltiplicatore stagionale: media pesata sui giorni del soggiorno.
+ */
+function calcolaMoltiplicatoreStagionale(s, e, stagioni) {
+  if (!stagioni?.length) return 1;
+  const n = Math.max(1, Math.round((e - s) / 86400000));
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const d  = new Date(s.getTime() + i * 86400000);
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    const k  = `${mm}-${dd}`;
+    let mx = 1;
+    for (const st of stagioni) {
+      if (inStagione(k, st.dal, st.al)) mx = Math.max(mx, parseFloat(st.molt)||1);
+    }
+    sum += mx;
+  }
+  return parseFloat((sum/n).toFixed(3));
+}
+function inStagione(key, dal, al) {
+  if (dal <= al) return key >= dal && key <= al;
+  return key >= dal || key <= al;
+}
+
+/**
+ * Calcolo conto alberghiero completo.
  */
 function calcolaConto(booking, extraRows = []) {
   const cfg         = loadBillSettings();
   const notti       = nights(booking.s, booking.e);
+  const letti       = parseBedString(booking.d);
   const nomeCliente = booking.n.toLowerCase();
 
-  // 1. Tariffa giornaliera della camera specifica
-  const tariffaGiornaliera = getRoomRate(booking.r, 'giornaliera');
+  // 1. Tariffa/notte: override camera > disposizione letti
+  const ov = cfg.tariffeCamere?.[booking.r];
+  const tariffaNotte = (ov?.giornaliera > 0)
+    ? ov.giornaliera
+    : tariffaDaDisposizione(letti, cfg.tariffe);
 
-  // 2. Stagionalità: media moltiplicatore sui giorni
-  const moltStagionale = calcolaMoltiplicatoreStagionale(booking.s, booking.e, cfg.stagioni);
-  const prezzoNotte    = parseFloat((tariffaGiornaliera * moltStagionale).toFixed(2));
-  const subtotaleBase  = parseFloat((prezzoNotte * notti).toFixed(2));
+  // 2. Stagionalità
+  const molt       = calcolaMoltiplicatoreStagionale(booking.s, booking.e, cfg.stagioni);
+  const prezzoN    = parseFloat((tariffaNotte * molt).toFixed(2));
+  const subtBase   = parseFloat((prezzoN * notti).toFixed(2));
 
-  // 3. Convenzione cliente
+  // 3. Convenzione
   let convenzione = null;
-  for (const cv of (cfg.convenzioni || [])) {
+  for (const cv of (cfg.convenzioni||[])) {
     if (nomeCliente.includes(cv.nome.toLowerCase())) { convenzione = cv; break; }
   }
 
   // 4. Sconto durata (solo se no convenzione)
   let scontoDurata = 0;
   if (!convenzione) {
-    const scontiOrd = [...(cfg.scontiDurata || [])].sort((a,b) => b.soglia - a.soglia);
-    for (const sd of scontiOrd) { if (notti >= sd.soglia) { scontoDurata = sd.sconto; break; } }
+    const ord = [...(cfg.scontiDurata||[])].sort((a,b)=>b.soglia-a.soglia);
+    for (const sd of ord) { if (notti>=sd.soglia) { scontoDurata=sd.sconto; break; } }
   }
 
-  // ── Costruisci righe ──
+  // ── Righe ──
   const righe = [];
-  const stagLabel = moltStagionale !== 1 ? ` ×${moltStagionale.toFixed(2)}` : '';
+  const stagLabel = molt !== 1 ? ` ×${molt.toFixed(2)}` : '';
+  const desc = descrizioneTariffa(letti, cfg.tariffe, cfg, booking.r);
+
   righe.push({
-    label: `Pernottamento cam. ${roomName(booking.r)}${stagLabel}`,
-    qty: notti, unitPrice: prezzoNotte, total: subtotaleBase,
+    label: `Pernottamento — ${desc}${stagLabel}`,
+    qty: notti, unitPrice: prezzoN, total: subtBase,
     tipo: 'base',
-    badge: moltStagionale !== 1 ? `×${moltStagionale.toFixed(2)} stagionale` : null
+    badge: molt !== 1 ? `stagione ×${molt.toFixed(2)}` : null
   });
 
-  let subtotale = subtotaleBase;
+  let subtotale = subtBase;
 
   if (convenzione) {
-    const sconto = parseFloat((subtotale * convenzione.valore / 100).toFixed(2));
-    righe.push({
-      label: `Conv. ${convenzione.nome} (-${convenzione.valore}%)`,
-      qty: null, unitPrice: null, total: -sconto, tipo:'sconto', badge:'conv'
-    });
-    subtotale -= sconto;
+    const sc = parseFloat((subtotale * convenzione.sconto / 100).toFixed(2));
+    righe.push({ label:`Conv. "${convenzione.nome}" -${convenzione.sconto}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'conv' });
+    subtotale -= sc;
   } else if (scontoDurata > 0) {
-    const sconto = parseFloat((subtotale * scontoDurata / 100).toFixed(2));
-    righe.push({
-      label: `Sconto lunga durata ${notti} notti (-${scontoDurata}%)`,
-      qty: null, unitPrice: null, total: -sconto, tipo:'sconto', badge:'lunga'
-    });
-    subtotale -= sconto;
+    const sc = parseFloat((subtotale * scontoDurata / 100).toFixed(2));
+    righe.push({ label:`Sconto lunga durata (${notti} notti) -${scontoDurata}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'lunga' });
+    subtotale -= sc;
   }
 
   for (const ex of extraRows) {
     const tot = parseFloat((ex.qty * ex.unitPrice).toFixed(2));
-    righe.push({ label: ex.label, qty: ex.qty, unitPrice: ex.unitPrice, total: tot, tipo:'extra' });
+    righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:tot, tipo:'extra' });
     subtotale += tot;
   }
 
-  return { righe, totale: parseFloat(subtotale.toFixed(2)), notti, moltStagionale, convenzione, scontoDurata, tariffaGiornaliera, cfg };
+  return { righe, totale:parseFloat(subtotale.toFixed(2)), notti, molt, convenzione, scontoDurata, tariffaNotte, letti, cfg };
 }
 
 /**
- * Calcola la media pesata del moltiplicatore stagionale
- * sui giorni compresi tra s e e.
+ * Calcolo conto appartamento.
+ * Usa override mensile o giornaliero per camera.
  */
-function calcolaMoltiplicatoreStagionale(s, e, stagioni) {
-  if (!stagioni || stagioni.length === 0) return 1;
-  const notti = Math.max(1, Math.round((e - s) / 86400000));
-  let sommaMolt = 0;
+function calcolaContoAppart(b, room, extras) {
+  const cfg    = loadBillSettings();
+  const notti  = nights(b.s, b.e);
+  const ov     = cfg.tariffeCamere?.[room.id] || {};
+  const usaM   = getAppartMode(b.id, notti);
+  const canone = usaM ? (ov.mensile||0) : (ov.giornaliera||0);
+  const qty    = usaM ? parseFloat((notti/30).toFixed(2)) : notti;
+  const unit   = usaM ? 'mese' : 'notte';
+  const total  = parseFloat((canone * qty).toFixed(2));
 
-  for (let i = 0; i < notti; i++) {
-    const d = new Date(s.getTime() + i * 86400000);
-    const mm = String(d.getMonth() + 1).padStart(2,'0');
-    const dd = String(d.getDate()).padStart(2,'0');
-    const key = `${mm}-${dd}`;
-    let molt = 1;
-    // Trova la stagione con moltiplicatore più alto che copre questo giorno
-    let maxMolt = 1;
-    for (const st of stagioni) {
-      if (inStagione(key, st.dal, st.al)) {
-        maxMolt = Math.max(maxMolt, parseFloat(st.molt) || 1);
-      }
-    }
-    sommaMolt += maxMolt;
+  const righe = [{
+    label:`${room.name} — ${qty} ${unit} × ${canone}€`,
+    qty, unitPrice:canone, total, tipo:'base', badge:'appart'
+  }];
+  let totale = total;
+
+  for (const ex of extras) {
+    const t = parseFloat((ex.qty * ex.unitPrice).toFixed(2));
+    righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:t, tipo:'extra' });
+    totale += t;
   }
-  return parseFloat((sommaMolt / notti).toFixed(3));
+  return { righe, totale:parseFloat(totale.toFixed(2)) };
 }
 
-function inStagione(key, dal, al) {
-  // Confronto "MM-DD" gestendo stagioni a cavallo d'anno
-  if (dal <= al) return key >= dal && key <= al;
-  return key >= dal || key <= al; // Es. inverno: 11-01 → 03-14
+function getAppartMode(bid, notti) {
+  const s = localStorage.getItem(`appartMode_${bid}`);
+  if (s==='giornaliera') return false;
+  if (s==='mensile')     return true;
+  return notti >= 20;
+}
+function toggleAppartMode(bid) {
+  const b = bookings.find(x=>x.id===bid);
+  if (!b) return;
+  const cur = getAppartMode(bid, nights(b.s,b.e));
+  localStorage.setItem(`appartMode_${bid}`, cur?'giornaliera':'mensile');
+  showBookingDetail(bid);
 }
 
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 // RENDER — TAB CONTO NEL DRAWER
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 
 function renderDrawerBill(b) {
-  const room = ROOMS.find(r => r.id === b.r);
-  const isAppart = room && room.g === 'Appartamenti';
+  const room     = ROOMS.find(r=>r.id===b.r);
+  const isAppart = room?.g === 'Appartamenti';
+  const extras   = getExtraForBooking(b.id);
+  const conto    = isAppart ? calcolaContoAppart(b, room, extras) : calcolaConto(b, extras);
 
-  if (isAppart) {
-    return renderDrawerBillAppart(b, room);
-  }
-
-  const conto = calcolaConto(b, getExtraForBooking(b.id));
-
-  const rigoHtml = (r) => {
-    const totClass = r.total < 0 ? 'style="color:var(--danger)"' : '';
-    const badgeHtml = r.badge
-      ? `<span class="rate-badge ${r.badge}" style="margin-left:6px">${r.badge==='conv'?'conv':r.badge==='lunga'?'lunga':r.badge}</span>`
-      : '';
+  const rigaHtml = r => {
+    const neg = r.total < 0;
+    const tot = `<span style="font-weight:600;${neg?'color:var(--danger)':''}">${neg?'':'+'}${r.total.toFixed(2)}€</span>`;
     return `<div class="bill-row ${r.tipo==='sconto'?'discount':''}">
-      <span class="bill-row-label">${r.label}${badgeHtml}</span>
-      <span class="bill-row-qty">${r.qty!=null?r.qty+'n':''}</span>
-      <span class="bill-row-price">${r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':''}</span>
-      <span class="bill-row-total" ${totClass}>${r.total>=0?'+':''}${r.total.toFixed(2)}€</span>
+      <span class="bill-row-label">${r.label}${r.badge?` <span class="rate-badge ${r.badge==='conv'?'conv':r.badge==='appart'?'appart':r.badge.startsWith('stagione')?'stagionale':'lunga'}">${r.badge}</span>`:''}</span>
+      <span style="color:var(--text3);font-size:11px;white-space:nowrap">${r.qty!=null?r.qty+(r.tipo==='base'?'×':'×'):''}</span>
+      <span style="color:var(--text2);font-size:11px;white-space:nowrap">${r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':''}</span>
+      ${tot}
     </div>`;
   };
 
+  // Per appartamenti: mostra toggle mensile/giornaliero
+  let toggleHtml = '';
+  if (isAppart) {
+    const notti  = nights(b.s, b.e);
+    const usaM   = getAppartMode(b.id, notti);
+    const cfg    = loadBillSettings();
+    const ov     = cfg.tariffeCamere?.[b.r]||{};
+    toggleHtml = `<div style="font-size:11px;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span>Modo: <b>${usaM?'Mensile':'Giornaliero'}</b></span>
+      <button onclick="toggleAppartMode(${b.id})" style="border:1px solid var(--border);background:var(--surface2);padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer">
+        ↕ Usa ${usaM?'giornaliero ('+( ov.giornaliera||0)+'€/notte)':'mensile ('+(ov.mensile||0)+'€/mese)'}
+      </button>
+      ${(!ov.giornaliera&&!ov.mensile)?'<span style="color:var(--danger);font-size:10px">⚠ Tariffa non impostata</span>':''}
+    </div>`;
+  }
+
+  // Extra adder
+  const cfg = loadBillSettings();
+  const extraOptions = (cfg.extra||[]).map(e=>
+    `<option value="${e.id}" data-price="${e.prezzo}" data-unita="${e.unita}">${e.label} ${e.prezzo>0?'('+e.prezzo+'€)':''}</option>`
+  ).join('');
+
+  const extraAdder = isAppart
+    ? `<div class="extra-adder">
+        <input type="text"   id="extraLabel_${b.id}" placeholder="Descrizione" style="flex:2">
+        <input type="number" id="extraQty_${b.id}"   value="1" min="0.01" step="0.01" style="width:60px" placeholder="Qty">
+        <input type="number" id="extraPrice_${b.id}" placeholder="€" step="0.01" style="width:70px">
+        <button class="btn" onclick="addExtraLibero(${b.id})">+</button>
+      </div>`
+    : `<div class="extra-adder">
+        <select id="extraType_${b.id}" onchange="prefillExtraPrice(${b.id})">${extraOptions}</select>
+        <input type="number" id="extraQty_${b.id}"   value="1" min="0.01" step="0.01" style="width:55px" placeholder="Qty">
+        <input type="number" id="extraPrice_${b.id}" placeholder="€" step="0.01" style="width:70px">
+        <button class="btn" onclick="addExtraVoce(${b.id})">+</button>
+      </div>`;
+
+  // Consumo elettrico/idrico (solo se extra configurato con unita kwh/mc)
+  const consumiHtml = !isAppart ? '' : `
+    <div class="conti-section-title" style="margin-top:10px">Consumi (lettura contatori)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;align-items:end;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--text3);display:block">⚡ Inizio kWh</label><input type="number" id="kwh_start_${b.id}" step="0.1" placeholder="0" style="width:100%;padding:5px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+      <div><label style="font-size:10px;color:var(--text3);display:block">⚡ Fine kWh</label><input type="number" id="kwh_end_${b.id}" step="0.1" placeholder="0" style="width:100%;padding:5px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+      <div><label style="font-size:10px;color:var(--text3);display:block">💧 Inizio m³</label><input type="number" id="mc_start_${b.id}" step="0.001" placeholder="0" style="width:100%;padding:5px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+      <div><label style="font-size:10px;color:var(--text3);display:block">💧 Fine m³</label><input type="number" id="mc_end_${b.id}" step="0.001" placeholder="0" style="width:100%;padding:5px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+    </div>
+    <button class="btn" style="width:100%;justify-content:center;font-size:11px" onclick="aggiungiConsumi(${b.id})">⚡💧 Aggiungi consumi al conto</button>`;
+
   return `
-    <div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
-        <span style="font-size:11px;color:var(--text3)">PREVENTIVO CONTO</span>
-        <span class="bill-total">${conto.totale.toFixed(2)} €</span>
-      </div>
-      ${conto.righe.map(rigoHtml).join('')}
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+      <span style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase">Conto preventivo</span>
+      <span style="font-size:20px;font-weight:700;color:var(--accent);font-family:'Playfair Display',serif">${conto.totale.toFixed(2)}€</span>
     </div>
-    <div style="margin-bottom:12px">
-      <div class="conti-section-title">Aggiungi extra</div>
-      <div class="extra-adder">
-        <select id="extraType_${b.id}">
-          <option value="colazione">🍳 Colazione</option>
-          <option value="pranzo">🍽 Pranzo</option>
-          <option value="cena">🌙 Cena</option>
-          <option value="pulizie">🧹 Pulizie extra</option>
-          <option value="cambioLenzuola">🛏 Cambio lenzuola</option>
-          <option value="deposito">🔒 Deposito cauzionale</option>
-        </select>
-        <input type="number" id="extraQty_${b.id}" value="1" min="1" style="width:55px" placeholder="qty">
-        <input type="number" id="extraPrice_${b.id}" value="" min="0" step="0.5" placeholder="€">
-        <button class="btn" onclick="addExtraToBooking(${b.id})">+ Add</button>
-      </div>
-      ${renderExtraRows(b.id)}
-    </div>
-    <div style="display:flex;gap:8px">
+    ${toggleHtml}
+    ${conto.righe.map(rigaHtml).join('')}
+    ${renderExtraRows(b.id)}
+    <div class="conti-section-title" style="margin-top:14px">Aggiungi voce</div>
+    ${extraAdder}
+    ${consumiHtml}
+    <div style="display:flex;gap:8px;margin-top:14px">
       <button class="btn primary" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;">📄 Emetti conto</button>
-      <button class="btn" onclick="apriPdf(${b.id})" style="flex:1;justify-content:center;">👁 Anteprima PDF</button>
+      <button class="btn" onclick="apriPdf(${b.id})" style="flex:1;justify-content:center;">👁 PDF</button>
     </div>`;
 }
 
-function renderDrawerBillAppart(b, room) {
-  const notti      = nights(b.s, b.e);
-  const mesi       = parseFloat((notti / 30).toFixed(2));
-  const canoneM    = getRoomRate(room.id, 'mensile');
-  const canoneG    = getRoomRate(room.id, 'giornaliera');
-  // Usa mensile se soggiorno >= 20 notti, altrimenti giornaliero
-  const usaMensile = notti >= 20;
-  const importo    = usaMensile
-    ? parseFloat((canoneM * mesi).toFixed(2))
-    : parseFloat((canoneG * notti).toFixed(2));
-  const modeLabel  = usaMensile
-    ? `${mesi} mesi × ${canoneM}€/mese`
-    : `${notti} notti × ${canoneG}€/notte`;
+// ─────────────────────────────────────────────────────────────────
+// EXTRA
+// ─────────────────────────────────────────────────────────────────
 
-  return `
-    <div style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
-        <span style="font-size:11px;color:var(--text3)">APPARTAMENTO — ${usaMensile?'CANONE MENSILE':'TARIFFA GIORNALIERA'}</span>
-        <span class="rate-badge appart">affitto</span>
-      </div>
-      <div class="bill-row">
-        <span class="bill-row-label">${room.name}</span>
-        <span class="bill-row-qty" style="width:auto;flex:1;text-align:right;color:var(--text2)">${modeLabel}</span>
-        <span class="bill-row-total">${importo.toFixed(2)}€</span>
-      </div>
-      <div style="font-size:10px;color:var(--text3);margin-top:4px;text-align:right">
-        Alt: ${usaMensile ? notti+' notti × '+canoneG+'€ = '+( canoneG*notti).toFixed(2)+'€ (giorn.)' : mesi+' mesi × '+canoneM+'€ = '+(canoneM*mesi).toFixed(2)+'€ (mens.)'}
-        <button onclick="toggleAppartMode(${b.id})" style="border:none;background:none;color:var(--accent);font-size:10px;cursor:pointer;margin-left:6px;text-decoration:underline">usa ${usaMensile?'giornaliera':'mensile'}</button>
-      </div>
-      ${renderExtraRows(b.id)}
-    </div>
-    <div style="margin-bottom:12px">
-      <div class="conti-section-title">Aggiungi extra</div>
-      <div class="extra-adder">
-        <input type="text" id="extraLabel_${b.id}" placeholder="Descrizione (es. luce)" style="flex:2">
-        <input type="number" id="extraPrice_${b.id}" placeholder="€" step="0.01" style="flex:1">
-        <button class="btn" onclick="addExtraAppart(${b.id})">+ Add</button>
-      </div>
-    </div>
-    <div style="display:flex;gap:8px">
-      <button class="btn primary" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;">📄 Emetti conto</button>
-      <button class="btn" onclick="apriPdf(${b.id})" style="flex:1;justify-content:center;">👁 Anteprima PDF</button>
-    </div>`;
-}
-
-// ── Extra per prenotazione (storage locale) ──
 function getExtraForBooking(bid) {
-  try { return JSON.parse(localStorage.getItem(`billExtra_${bid}`) || '[]'); }
-  catch(e) { return []; }
+  try { return JSON.parse(localStorage.getItem(`billExtra_${bid}`)||'[]'); } catch(e) { return []; }
 }
-function setExtraForBooking(bid, extras) {
-  localStorage.setItem(`billExtra_${bid}`, JSON.stringify(extras));
-}
+function setExtraForBooking(bid, extras) { localStorage.setItem(`billExtra_${bid}`, JSON.stringify(extras)); }
 
 function renderExtraRows(bid) {
   const extras = getExtraForBooking(bid);
   if (!extras.length) return '';
-  return `<div style="margin-top:8px">${extras.map((ex, i) => `
-    <div class="bill-row extra">
+  return `<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">${extras.map((ex,i)=>`
+    <div class="bill-row" style="font-size:12px">
       <span class="bill-row-label">${ex.label}</span>
-      <span class="bill-row-qty">${ex.qty}</span>
-      <span class="bill-row-price">${ex.unitPrice.toFixed(2)}€</span>
-      <span class="bill-row-total">+${(ex.qty*ex.unitPrice).toFixed(2)}€</span>
-      <button onclick="removeExtra(${bid},${i})" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0 4px">✕</button>
+      <span style="color:var(--text3);font-size:11px">${ex.qty}${ex.unita?'×'+ex.unita:''}</span>
+      <span style="color:var(--text2);font-size:11px">${ex.unitPrice.toFixed(2)}€</span>
+      <span style="font-weight:600">+${(ex.qty*ex.unitPrice).toFixed(2)}€</span>
+      <button onclick="removeExtra(${bid},${i})" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0 4px;font-size:14px">✕</button>
     </div>`).join('')}</div>`;
 }
 
-function addExtraToBooking(bid) {
-  const cfg  = loadBillSettings();
-  const tipo = document.getElementById(`extraType_${bid}`)?.value;
-  const qty  = parseFloat(document.getElementById(`extraQty_${bid}`)?.value || 1);
-  const prezzoInput = document.getElementById(`extraPrice_${bid}`)?.value;
-  const prezzo = prezzoInput ? parseFloat(prezzoInput) : (cfg.prezziExtra[tipo] || 0);
-  const labels = { colazione:'🍳 Colazione', pranzo:'🍽 Pranzo', cena:'🌙 Cena',
-    pulizie:'🧹 Pulizie extra', cambioLenzuola:'🛏 Cambio lenzuola', deposito:'🔒 Deposito cauzionale' };
-  const extras = getExtraForBooking(bid);
-  extras.push({ label: labels[tipo]||tipo, qty, unitPrice: prezzo });
-  setExtraForBooking(bid, extras);
-  // Ricarica il drawer
-  const b = bookings.find(x => x.id === bid);
-  if (b) showBookingDetail(bid);
+function prefillExtraPrice(bid) {
+  const sel = document.getElementById(`extraType_${bid}`);
+  const opt = sel?.selectedOptions?.[0];
+  if (opt) {
+    const p = parseFloat(opt.dataset.price||0);
+    const inp = document.getElementById(`extraPrice_${bid}`);
+    if (inp && p > 0) inp.value = p;
+  }
 }
 
-function addExtraAppart(bid) {
+function addExtraVoce(bid) {
+  const cfg   = loadBillSettings();
+  const sel   = document.getElementById(`extraType_${bid}`);
+  const opt   = sel?.selectedOptions?.[0];
+  const id    = sel?.value;
+  const def   = (cfg.extra||[]).find(e=>e.id===id);
+  const qty   = parseFloat(document.getElementById(`extraQty_${bid}`)?.value||1);
+  const price = parseFloat(document.getElementById(`extraPrice_${bid}`)?.value||(def?.prezzo||0));
+  const label = def?.label || id;
+  const unita = def?.unita || '';
+  const extras = getExtraForBooking(bid);
+  extras.push({ label, qty, unitPrice:price, unita });
+  setExtraForBooking(bid, extras);
+  showBookingDetail(bid);
+}
+
+function addExtraLibero(bid) {
   const label = document.getElementById(`extraLabel_${bid}`)?.value?.trim();
-  const prezzo = parseFloat(document.getElementById(`extraPrice_${bid}`)?.value || 0);
+  const qty   = parseFloat(document.getElementById(`extraQty_${bid}`)?.value||1);
+  const price = parseFloat(document.getElementById(`extraPrice_${bid}`)?.value||0);
   if (!label) return;
   const extras = getExtraForBooking(bid);
-  extras.push({ label, qty:1, unitPrice:prezzo });
+  extras.push({ label, qty, unitPrice:price, unita:'' });
   setExtraForBooking(bid, extras);
-  const b = bookings.find(x => x.id === bid);
-  if (b) showBookingDetail(bid);
+  showBookingDetail(bid);
+}
+
+function aggiungiConsumi(bid) {
+  const cfg    = loadBillSettings();
+  const extras = getExtraForBooking(bid);
+  const kwhS   = parseFloat(document.getElementById(`kwh_start_${bid}`)?.value||0);
+  const kwhE   = parseFloat(document.getElementById(`kwh_end_${bid}`)?.value||0);
+  const mcS    = parseFloat(document.getElementById(`mc_start_${bid}`)?.value||0);
+  const mcE    = parseFloat(document.getElementById(`mc_end_${bid}`)?.value||0);
+
+  const defLuce  = (cfg.extra||[]).find(e=>e.id==='luce');
+  const defAcqua = (cfg.extra||[]).find(e=>e.id==='acqua');
+
+  if (kwhE > kwhS) {
+    const diff  = parseFloat((kwhE-kwhS).toFixed(2));
+    const price = defLuce?.prezzo||0;
+    extras.push({ label:'⚡ Consumo elettrico', qty:diff, unitPrice:price, unita:'kWh' });
+  }
+  if (mcE > mcS) {
+    const diff  = parseFloat((mcE-mcS).toFixed(3));
+    const price = defAcqua?.prezzo||0;
+    extras.push({ label:'💧 Consumo idrico', qty:diff, unitPrice:price, unita:'m³' });
+  }
+  setExtraForBooking(bid, extras);
+  showBookingDetail(bid);
 }
 
 function removeExtra(bid, idx) {
   const extras = getExtraForBooking(bid);
   extras.splice(idx, 1);
   setExtraForBooking(bid, extras);
-  const b = bookings.find(x => x.id === bid);
+  const b = bookings.find(x=>x.id===bid);
   if (b) showBookingDetail(bid);
 }
 
 // ── Tab switcher nel drawer ──
 function drTab(el, showId) {
-  el.closest('.drbody, #drbody').querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
+  el.closest('#drbody').querySelectorAll('.dr-bill-tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  ['drTabInfo','drTabBill'].forEach(id => {
-    const d = document.getElementById(id);
-    if (d) d.style.display = id === showId ? '' : 'none';
+  ['drTabInfo','drTabBill'].forEach(id=>{
+    const d=document.getElementById(id);
+    if(d) d.style.display = id===showId?'':'none';
   });
 }
 
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 // EMETTI CONTO + PDF
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 
 function emettiConto(bid) {
-  const b = bookings.find(x => x.id === bid);
-  if (!b) return;
-  const room = ROOMS.find(r => r.id === b.r);
-  const isAppart = room && room.g === 'Appartamenti';
-  const extras = getExtraForBooking(bid);
-  const conto = isAppart ? calcolaContoAppart(b, room, extras) : calcolaConto(b, extras);
-  const conti = loadConti();
-  const existing = conti.findIndex(c => c.bookingId === bid);
-  const doc = {
-    id: existing >= 0 ? conti[existing].id : `C${Date.now()}`,
-    bookingId: bid,
-    nome: b.n,
-    camera: room?.name || roomName(b.r),
-    checkin: b.s.toISOString(),
-    checkout: b.e.toISOString(),
-    righe: conto.righe,
-    totale: conto.totale,
-    extras,
-    status: 'emesso',
-    emessoIl: new Date().toISOString(),
-    isAppart
+  const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const room = ROOMS.find(r=>r.id===b.r);
+  const isA  = room?.g==='Appartamenti';
+  const ext  = getExtraForBooking(bid);
+  const conto= isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
+  const conti= loadConti();
+  const idx  = conti.findIndex(c=>c.bookingId===bid);
+  const doc  = {
+    id: idx>=0 ? conti[idx].id : `C${Date.now()}`,
+    bookingId:bid, nome:b.n, camera:room?.name||roomName(b.r),
+    checkin:b.s.toISOString(), checkout:b.e.toISOString(),
+    righe:conto.righe, totale:conto.totale, extras:ext,
+    status:'emesso', emessoIl:new Date().toISOString(), isAppart:isA
   };
-  if (existing >= 0) conti[existing] = doc;
-  else conti.unshift(doc);
+  if(idx>=0) conti[idx]=doc; else conti.unshift(doc);
   saveConti(conti);
   apriPdf(bid);
-  showToast('✓ Conto emesso', 'success');
-}
-
-function calcolaContoAppart(b, room, extras) {
-  const notti      = nights(b.s, b.e);
-  const mesi       = parseFloat((notti / 30).toFixed(2));
-  const usaMensile = getAppartMode(b.id, notti);
-  const canone     = usaMensile ? getRoomRate(room.id, 'mensile') : getRoomRate(room.id, 'giornaliera');
-  const qty        = usaMensile ? mesi : notti;
-  const unitLabel  = usaMensile ? 'mese' : 'notte';
-  const total      = parseFloat((canone * qty).toFixed(2));
-  const righe      = [{ label:`${room.name} (${qty} ${unitLabel} × ${canone}€)`, qty, unitPrice:canone, total, tipo:'base', badge:'appart' }];
-  let totale       = total;
-  for (const ex of extras) {
-    const tot = parseFloat((ex.qty * ex.unitPrice).toFixed(2));
-    righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:tot, tipo:'extra' });
-    totale += tot;
-  }
-  return { righe, totale: parseFloat(totale.toFixed(2)) };
-}
-
-// Modalità mensile/giornaliera per appartamento (override manuale)
-function getAppartMode(bid, notti) {
-  const key = `appartMode_${bid}`;
-  const stored = localStorage.getItem(key);
-  if (stored === 'giornaliera') return false;
-  if (stored === 'mensile')     return true;
-  return notti >= 20; // default automatico
-}
-function toggleAppartMode(bid) {
-  const b    = bookings.find(x => x.id === bid);
-  const room = ROOMS.find(r => r.id === b?.r);
-  const notti = nights(b.s, b.e);
-  const current = getAppartMode(bid, notti);
-  localStorage.setItem(`appartMode_${bid}`, current ? 'giornaliera' : 'mensile');
-  if (b) showBookingDetail(bid);
+  showToast('✓ Conto emesso','success');
 }
 
 function apriPdf(bid) {
-  const b = bookings.find(x => x.id === bid);
-  if (!b) return;
-  const room   = ROOMS.find(r => r.id === b.r);
-  const isAppart = room && room.g === 'Appartamenti';
-  const extras = getExtraForBooking(bid);
-  const conto  = isAppart ? calcolaContoAppart(b, room, extras) : calcolaConto(b, extras);
-  const cfg    = loadBillSettings();
-
-  document.getElementById('pdfTitle').textContent = `Conto — ${b.n}`;
-  document.getElementById('printDoc').innerHTML = buildPdfDoc(b, room, conto, cfg, isAppart);
+  const b=bookings.find(x=>x.id===bid); if(!b) return;
+  const room=ROOMS.find(r=>r.id===b.r);
+  const isA=room?.g==='Appartamenti';
+  const ext=getExtraForBooking(bid);
+  const conto=isA?calcolaContoAppart(b,room,ext):calcolaConto(b,ext);
+  const cfg=loadBillSettings();
+  document.getElementById('pdfTitle').textContent=`Conto — ${b.n}`;
+  document.getElementById('printDoc').innerHTML=buildPdfDoc(b,room,conto,cfg,isA);
   document.getElementById('pdfOverlay').classList.add('open');
 }
 
 function buildPdfDoc(b, room, conto, cfg, isAppart) {
   const oggi = new Date().toLocaleDateString('it-IT');
-  const tipoDoc = isAppart ? 'Rendiconto Affitto' : 'Conto Soggiorno';
-  const righeHtml = conto.righe.filter(r => r.total !== 0).map(r => `
+  const tipo = isAppart ? 'Rendiconto Affitto' : 'Conto Soggiorno';
+  const righeHtml = conto.righe.filter(r=>r.total!==0).map(r=>`
     <tr>
-      <td>${r.label}${r.badge ? ` <span style="font-size:10px;background:#e8f4fd;color:#1a6fa8;padding:1px 6px;border-radius:8px">${r.badge}</span>` : ''}</td>
-      <td style="text-align:center">${r.qty != null ? r.qty : '—'}</td>
-      <td style="text-align:right">${r.unitPrice != null ? r.unitPrice.toFixed(2)+'€' : '—'}</td>
+      <td>${r.label}</td>
+      <td style="text-align:center">${r.qty!=null?r.qty:'—'}</td>
+      <td style="text-align:right">${r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':'—'}</td>
       <td style="text-align:right;color:${r.total<0?'#c0392b':'inherit'}">${r.total>=0?'+':''}${r.total.toFixed(2)}€</td>
     </tr>`).join('');
-
   return `
     <div class="doc-header">
       <div class="doc-hotel-name">${cfg.hotelName}</div>
-      ${cfg.hotelAddress ? `<div class="doc-hotel-sub">${cfg.hotelAddress}</div>` : ''}
-      ${cfg.hotelTel ? `<div class="doc-hotel-sub">Tel: ${cfg.hotelTel}</div>` : ''}
-      <div class="doc-type">${tipoDoc}</div>
+      ${cfg.hotelAddress?`<div class="doc-hotel-sub">${cfg.hotelAddress}</div>`:''}
+      ${cfg.hotelTel?`<div class="doc-hotel-sub">Tel: ${cfg.hotelTel}</div>`:''}
+      <div class="doc-type">${tipo}</div>
     </div>
     <div class="doc-section">
       <div class="doc-section-title">Dati cliente</div>
       <div class="doc-info-grid">
         <div class="doc-info-item"><label>Nome</label><span>${b.n}</span></div>
-        <div class="doc-info-item"><label>Camera / Unità</label><span>${room?.name || roomName(b.r)}</span></div>
+        <div class="doc-info-item"><label>Camera / Unità</label><span>${room?.name||roomName(b.r)}</span></div>
         <div class="doc-info-item"><label>Check-in</label><span>${fmt(b.s)}</span></div>
         <div class="doc-info-item"><label>Check-out</label><span>${fmt(b.e)}</span></div>
-        <div class="doc-info-item"><label>${isAppart?'Periodo':'Notti'}</label><span>${isAppart ? (nights(b.s,b.e)/30).toFixed(1)+' mesi' : nights(b.s,b.e)+' notti'}</span></div>
+        <div class="doc-info-item"><label>${isAppart?'Periodo':'Notti'}</label><span>${isAppart?(nights(b.s,b.e)/30).toFixed(1)+' mesi':nights(b.s,b.e)+' notti'}</span></div>
         ${!isAppart?`<div class="doc-info-item"><label>Disposizione</label><span>${b.d||'—'}</span></div>`:''}
       </div>
     </div>
     <div class="doc-section">
       <div class="doc-section-title">Dettaglio</div>
       <table class="doc-table">
-        <thead><tr><th>Descrizione</th><th style="text-align:center">Qtà</th><th style="text-align:right">Prezzo unit.</th><th style="text-align:right">Importo</th></tr></thead>
+        <thead><tr><th>Descrizione</th><th style="text-align:center">Qtà</th><th style="text-align:right">Prezzo</th><th style="text-align:right">Importo</th></tr></thead>
         <tbody>${righeHtml}</tbody>
-        <tfoot>
-          <tr class="doc-total-row">
-            <td colspan="3"><strong>TOTALE</strong></td>
-            <td><strong>${conto.totale.toFixed(2)} €</strong></td>
-          </tr>
-        </tfoot>
+        <tfoot><tr class="doc-total-row"><td colspan="3"><strong>TOTALE</strong></td><td><strong>${conto.totale.toFixed(2)} €</strong></td></tr></tfoot>
       </table>
     </div>
-    <div class="doc-footer">
-      Documento emesso il ${oggi} · ${cfg.hotelName}<br>
-      ${cfg.hotelAddress || ''} ${cfg.hotelTel ? '· Tel: '+cfg.hotelTel : ''}
-    </div>`;
+    <div class="doc-footer">${cfg.hotelName} · Documento del ${oggi}${cfg.hotelTel?' · Tel: '+cfg.hotelTel:''}</div>`;
 }
 
-function closePdfOverlay() {
-  document.getElementById('pdfOverlay').classList.remove('open');
-}
+function closePdfOverlay() { document.getElementById('pdfOverlay').classList.remove('open'); }
 
 function shareDocWhatsApp() {
-  const cfg   = loadBillSettings();
-  const html  = document.getElementById('printDoc').innerText;
-  const lines = html.split('\n').filter(l => l.trim()).slice(0,25).join('\n');
-  const url   = `https://wa.me/?text=${encodeURIComponent(lines)}`;
-  window.open(url, '_blank');
+  const t = document.getElementById('printDoc').innerText.split('\n').filter(l=>l.trim()).slice(0,25).join('\n');
+  window.open(`https://wa.me/?text=${encodeURIComponent(t)}`,'_blank');
 }
-
 function shareDocEmail() {
-  const subj = encodeURIComponent('Conto soggiorno — ' + (document.getElementById('pdfTitle').textContent));
-  const body = encodeURIComponent(document.getElementById('printDoc').innerText);
-  window.open(`mailto:?subject=${subj}&body=${body}`, '_blank');
+  const s=encodeURIComponent('Conto — '+document.getElementById('pdfTitle').textContent);
+  const b=encodeURIComponent(document.getElementById('printDoc').innerText);
+  window.open(`mailto:?subject=${s}&body=${b}`,'_blank');
 }
 
-// ═══════════════════════════════════════════════════════════
-// PAGINA CONTI (tab principale)
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
+// PAGINA CONTI
+// ─────────────────────────────────────────────────────────────────
 
 let _contiTab = 'lista';
 
-function openConti() {
-  document.getElementById('contiScreen').classList.add('open');
-  renderContiTab(_contiTab);
-}
-
-function closeConti() {
-  document.getElementById('contiScreen').classList.remove('open');
-}
+function openConti()  { document.getElementById('contiScreen').classList.add('open'); renderContiTab(_contiTab); }
+function closeConti() { document.getElementById('contiScreen').classList.remove('open'); }
 
 function switchContiTab(tab) {
   _contiTab = tab;
-  document.querySelectorAll('.conti-tab').forEach((t,i) => {
-    const tabs = ['lista','appart','tariffe'];
-    t.classList.toggle('active', tabs[i] === tab);
+  document.querySelectorAll('.conti-tab').forEach((t,i)=>{
+    t.classList.toggle('active', ['lista','appart','tariffe'][i]===tab);
   });
   renderContiTab(tab);
 }
-
 function renderContiTab(tab) {
   const body = document.getElementById('contiBody');
-  if (tab === 'lista')   body.innerHTML = renderContiLista();
-  if (tab === 'appart')  body.innerHTML = renderContiAppart();
-  if (tab === 'tariffe') body.innerHTML = renderListino();
+  if (tab==='lista')   body.innerHTML = renderContiLista();
+  if (tab==='appart')  body.innerHTML = renderContiAppart();
+  if (tab==='tariffe') body.innerHTML = renderListino();
 }
 
-// ── Lista conti emessi ──
 function renderContiLista() {
   const conti = loadConti();
-  if (!conti.length) return `<div class="empty" style="padding:40px 0"><div class="emptyicon">📋</div><div style="font-size:12px;color:var(--text3)">Nessun conto emesso.<br>Apri una prenotazione e vai al tab Conto.</div></div>`;
-
-  const byStatus = { emesso:[], pagato:[], bozza:[] };
-  conti.forEach(c => (byStatus[c.status] || byStatus.bozza).push(c));
-
-  const sectionHtml = (titolo, lista) => {
+  if (!conti.length) return `<div class="empty" style="padding:40px 0"><div class="emptyicon">📋</div><div style="font-size:12px;color:var(--text3)">Nessun conto emesso.<br>Apri una prenotazione → tab 💶 Conto.</div></div>`;
+  const byS = { emesso:[], pagato:[], bozza:[] };
+  conti.forEach(c=>(byS[c.status]||byS.bozza).push(c));
+  const sec = (titolo, lista) => {
     if (!lista.length) return '';
-    return `<div class="conti-section">
-      <div class="conti-section-title">${titolo} (${lista.length})</div>
-      ${lista.map(c => {
-        const ci = new Date(c.checkin), co = new Date(c.checkout);
+    return `<div class="conti-section"><div class="conti-section-title">${titolo} (${lista.length})</div>
+      ${lista.map(c=>{
+        const ci=new Date(c.checkin), co=new Date(c.checkout);
+        const dot=bookings.find(b=>b.id===c.bookingId)?.c||'#ccc';
         return `<div class="bill-list-item" onclick="riapriFoglio(${c.bookingId})">
-          <div class="bill-list-dot" style="background:${bookings.find(b=>b.id===c.bookingId)?.c||'#ccc'}"></div>
+          <div class="bill-list-dot" style="background:${dot}"></div>
           <div class="bill-list-info">
             <div class="bill-list-name">${c.nome}</div>
-            <div class="bill-list-sub">Cam. ${c.camera} · ${fmt(ci)} → ${fmt(co)} · Emesso ${new Date(c.emessoIl).toLocaleDateString('it-IT')}</div>
+            <div class="bill-list-sub">Cam. ${c.camera} · ${fmt(ci)} → ${fmt(co)}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
             <div class="bill-list-total">${c.totale.toFixed(2)}€</div>
             <div class="bill-list-status ${c.status}">${c.status}</div>
           </div>
         </div>`;
-      }).join('')}
-    </div>`;
+      }).join('')}</div>`;
   };
-
-  return sectionHtml('✅ Pagati', byStatus.pagato) +
-         sectionHtml('📤 Emessi', byStatus.emesso) +
-         sectionHtml('📝 Bozze', byStatus.bozza);
+  return sec('✅ Pagati',byS.pagato)+sec('📤 Emessi',byS.emesso)+sec('📝 Bozze',byS.bozza);
 }
 
 function riapriFoglio(bid) {
   closeConti();
-  const b = bookings.find(x => x.id === bid);
-  if (b) { showBookingDetail(bid); drTab(document.querySelector('.dr-bill-tab:nth-child(2)'), 'drTabBill'); }
+  if (bookings.find(x=>x.id===bid)) showBookingDetail(bid);
 }
 
-// ── Appartamenti — canoni mese corrente ──
 function renderContiAppart() {
+  const oggi   = new Date();
+  const apIds  = ROOMS.filter(r=>r.g==='Appartamenti').map(r=>r.id);
+  const attivi = bookings.filter(b=>apIds.includes(b.r) && b.s<=oggi && b.e>=oggi);
+  if (!attivi.length) return `<div class="empty" style="padding:40px 0"><div class="emptyicon">🏠</div><div style="font-size:12px;color:var(--text3)">Nessun appartamento occupato oggi.</div></div>`;
   const cfg = loadBillSettings();
-  const oggi = new Date();
-  const appartIds = ROOMS.filter(r => r.g === 'Appartamenti').map(r => r.id);
-  const attivi = bookings.filter(b => {
-    if (!appartIds.includes(b.r)) return false;
-    return b.s <= oggi && b.e >= oggi;
-  });
-
-  if (!attivi.length) return `<div class="empty" style="padding:40px 0"><div class="emptyicon">🏠</div><div style="font-size:12px;color:var(--text3)">Nessun appartamento occupato questo mese.</div></div>`;
-
-  return `<div class="conti-section">
-    <div class="conti-section-title">Appartamenti occupati — ${oggi.toLocaleDateString('it-IT',{month:'long',year:'numeric'})}</div>
-    ${attivi.map(b => {
-      const room = ROOMS.find(r => r.id === b.r);
-      const ap = cfg.appartamenti.find(a => a.nome.toLowerCase() === room?.name.toLowerCase());
-      const canone = ap?.canone || 0;
+  return `<div class="conti-section"><div class="conti-section-title">Appartamenti occupati — ${oggi.toLocaleDateString('it-IT',{month:'long',year:'numeric'})}</div>
+    ${attivi.map(b=>{
+      const room=ROOMS.find(r=>r.id===b.r);
+      const ov=cfg.tariffeCamere?.[b.r]||{};
+      const notti=nights(b.s,b.e);
+      const usaM=getAppartMode(b.id,notti);
+      const canone=usaM?(ov.mensile||0):(ov.giornaliera||0);
+      const qty=usaM?parseFloat((notti/30).toFixed(2)):notti;
+      const tot=parseFloat((canone*qty).toFixed(2));
       return `<div class="bill-card">
         <div class="bill-card-hdr">
           <div><div class="bill-card-name">${b.n}</div><div class="bill-card-room">${room?.name}</div></div>
-          <div>
-            <div class="bill-total">${canone}€/mese</div>
-            <button class="btn" style="font-size:11px;margin-top:4px" onclick="closeConti();showBookingDetail(${b.id});setTimeout(()=>drTab(document.querySelectorAll('.dr-bill-tab')[1],'drTabBill'),100)">→ Conto</button>
+          <div><div class="bill-total">${tot.toFixed(2)}€</div>
+            <button class="btn" style="font-size:11px;margin-top:4px" onclick="closeConti();showBookingDetail(${b.id})">→ Conto</button>
           </div>
         </div>
         <div class="bill-row"><span class="bill-row-label">Periodo</span><span class="bill-row-total">${fmt(b.s)} → ${fmt(b.e)}</span></div>
-        <div class="bill-row"><span class="bill-row-label">Durata</span><span class="bill-row-total">${(nights(b.s,b.e)/30).toFixed(1)} mesi</span></div>
+        <div class="bill-row"><span class="bill-row-label">Tariffa</span><span class="bill-row-total">${canone}€/${usaM?'mese':'notte'} × ${qty}</span></div>
       </div>`;
-    }).join('')}
-  </div>`;
+    }).join('')}</div>`;
 }
 
-// ── Listino tariffe (visualizzazione) ──
 function renderListino() {
-  const cfg    = loadBillSettings();
+  const cfg = loadBillSettings();
+  const t   = cfg.tariffe||{};
   const groups = {};
-  ROOMS.forEach(r => {
-    if (!groups[r.g]) groups[r.g] = [];
-    groups[r.g].push(r);
-  });
+  ROOMS.forEach(r=>{ if(!groups[r.g]) groups[r.g]=[]; groups[r.g].push(r); });
 
-  const groupsHtml = Object.entries(groups).map(([g, rooms]) => `
+  const camereHtml = Object.entries(groups).map(([g,rooms])=>`
     <div class="conti-section">
       <div class="conti-section-title">${g}</div>
-      <div style="display:grid;grid-template-columns:1fr 70px 70px;gap:4px;font-size:11px;font-weight:600;color:var(--text3);padding:0 0 4px;border-bottom:1px solid var(--border);margin-bottom:4px">
+      <div style="display:grid;grid-template-columns:1fr 70px 80px;gap:3px 8px;font-size:10px;font-weight:600;color:var(--text3);padding-bottom:4px">
         <span>Camera</span><span style="text-align:right">Notte</span><span style="text-align:right">Mensile</span>
       </div>
-      ${rooms.map(r => {
-        const t = cfg.tariffeCamere?.[r.id] || {giornaliera:0, mensile:0};
-        const gColor = t.giornaliera>0 ? '' : 'color:var(--text3)';
-        const mColor = t.mensile>0    ? '' : 'color:var(--text3)';
-        return `<div style="display:grid;grid-template-columns:1fr 70px 70px;gap:4px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
+      ${rooms.map(r=>{
+        const ov=cfg.tariffeCamere?.[r.id]||{};
+        const gv=ov.giornaliera>0?ov.giornaliera+'€':'—';
+        const mv=ov.mensile>0?ov.mensile+'€':'—';
+        return `<div style="display:grid;grid-template-columns:1fr 70px 80px;gap:3px 8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
           <span>${r.name}</span>
-          <span style="text-align:right;font-weight:600;${gColor}">${t.giornaliera>0?t.giornaliera+'€':'—'}</span>
-          <span style="text-align:right;font-weight:600;${mColor}">${t.mensile>0?t.mensile+'€':'—'}</span>
+          <span style="text-align:right;font-weight:600;color:${ov.giornaliera>0?'var(--text)':'var(--text3)'}">${gv}</span>
+          <span style="text-align:right;font-weight:600;color:${ov.mensile>0?'var(--text)':'var(--text3)'}">${mv}</span>
         </div>`;
       }).join('')}
     </div>`).join('');
 
   return `
-    ${groupsHtml}
+    <div class="conti-section">
+      <div class="conti-section-title">Tariffe base per disposizione letti</div>
+      <div class="bill-row"><span class="bill-row-label">Camera singola (1 letto singolo)</span><span class="bill-row-total">${t.s||0}€/notte</span></div>
+      <div class="bill-row"><span class="bill-row-label">Matrimoniale uso singolo</span><span class="bill-row-total">${t.ms||0}€/notte</span></div>
+      <div class="bill-row"><span class="bill-row-label">Matrimoniale (2 persone)</span><span class="bill-row-total">${t.m||0}€/notte</span></div>
+      <div class="bill-row"><span class="bill-row-label">Letto singolo aggiunto (+p.p.)</span><span class="bill-row-total">+${t.ag||0}€/notte</span></div>
+    </div>
+    ${camereHtml}
     <div class="conti-section">
       <div class="conti-section-title">Stagionalità</div>
       ${cfg.stagioni.map(s=>`<div class="bill-row"><span class="bill-row-label">${s.nome} (${s.dal} → ${s.al})</span><span class="rate-badge stagionale">×${s.molt}</span></div>`).join('')}
     </div>
     <div class="conti-section">
       <div class="conti-section-title">Convenzioni</div>
-      ${cfg.convenzioni.map(c=>`<div class="bill-row"><span class="bill-row-label">${c.nome}</span><span class="rate-badge conv">-${c.valore}%</span></div>`).join('')}
+      ${cfg.convenzioni.map(c=>`<div class="bill-row"><span class="bill-row-label">${c.nome}</span><span class="rate-badge conv">-${c.sconto}%</span></div>`).join('')}
     </div>
     <div class="conti-section">
-      <div class="conti-section-title">Sconti durata</div>
-      ${cfg.scontiDurata.map(s=>`<div class="bill-row"><span class="bill-row-label">${s.soglia}+ notti</span><span class="rate-badge lunga">-${s.sconto}%</span></div>`).join('')}
+      <div class="conti-section-title">Extra configurati</div>
+      ${(cfg.extra||[]).map(e=>`<div class="bill-row"><span class="bill-row-label">${e.label}</span><span class="bill-row-total">${e.prezzo>0?e.prezzo+'€/'+e.unita:'da definire'}</span></div>`).join('')}
     </div>
     <button class="btn primary" onclick="openContiSettings()" style="width:100%;justify-content:center;margin-top:8px">⚙ Modifica tariffe</button>`;
 }
 
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 // SETTINGS TARIFFE
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 
 function openContiSettings() {
-  const cfg = loadBillSettings();
-  document.getElementById('contiSettingsBody').innerHTML = buildContiSettingsForm(cfg);
+  document.getElementById('contiSettingsBody').innerHTML = buildContiSettingsForm(loadBillSettings());
   document.getElementById('contiSettingsOverlay').style.display = 'flex';
 }
-
-function closeContiSettings() {
-  document.getElementById('contiSettingsOverlay').style.display = 'none';
-}
+function closeContiSettings() { document.getElementById('contiSettingsOverlay').style.display='none'; }
 
 function buildContiSettingsForm(cfg) {
-  const stagRow = (s, i) => `
+  const t = cfg.tariffe||{};
+
+  const stagRow = (s,i) => `
     <div class="rate-season-row" id="stagRow_${i}">
-      <input type="text" value="${s.nome}" placeholder="Nome stagione" id="stagNome_${i}">
-      <input type="text" value="${s.dal}–${s.al}" placeholder="MM-DD–MM-DD" id="stagPeriod_${i}">
-      <input type="number" value="${s.molt}" step="0.1" min="0.5" max="3" placeholder="×molt" id="stagMolt_${i}">
-      <button class="btn-icon-sm" onclick="removeStagRow(${i})">✕</button>
-    </div>`;
-  const convRow = (c, i) => `
-    <div class="rate-conv-row" id="convRow_${i}">
-      <input type="text" value="${c.nome}" placeholder="Nome cliente/azienda" id="convNome_${i}">
-      <input type="text" value="${c.valore}%" placeholder="20%" id="convVal_${i}">
-      <button class="btn-icon-sm" onclick="removeConvRow(${i})">✕</button>
-    </div>`;
-  const durRow = (d, i) => `
-    <div class="rate-season-row" id="durRow_${i}" style="grid-template-columns:1fr 1fr 36px">
-      <input type="number" value="${d.soglia}" placeholder="Soglia notti" id="durSoglia_${i}">
-      <input type="number" value="${d.sconto}" placeholder="%" id="durSconto_${i}">
-      <button class="btn-icon-sm" onclick="removeDurRow(${i})">✕</button>
+      <input type="text"   id="stagNome_${i}"   value="${s.nome}" placeholder="Nome">
+      <input type="text"   id="stagPeriod_${i}" value="${s.dal}–${s.al}" placeholder="MM-DD–MM-DD">
+      <input type="number" id="stagMolt_${i}"   value="${s.molt}" step="0.1" min="0.5" max="3">
+      <button class="btn-icon-sm" onclick="this.closest('.rate-season-row').remove()">✕</button>
     </div>`;
 
-  // Costruisce la griglia tariffe per gruppo di camere
-  const groups = {};
-  ROOMS.forEach(r => { if (!groups[r.g]) groups[r.g] = []; groups[r.g].push(r); });
-  const cameraRows = Object.entries(groups).map(([g, rooms]) => `
+  const convRow = (c,i) => `
+    <div class="rate-conv-row" id="convRow_${i}">
+      <input type="text"   id="convNome_${i}" value="${c.nome}" placeholder="Nome cliente">
+      <input type="number" id="convVal_${i}"  value="${c.sconto}" step="1" min="0" max="100" placeholder="%">
+      <button class="btn-icon-sm" onclick="this.closest('.rate-conv-row').remove()">✕</button>
+    </div>`;
+
+  const durRow = (d,i) => `
+    <div class="rate-season-row" id="durRow_${i}" style="grid-template-columns:1fr 1fr 36px">
+      <input type="number" id="durSoglia_${i}" value="${d.soglia}" placeholder="Notti">
+      <input type="number" id="durSconto_${i}" value="${d.sconto}" placeholder="%">
+      <button class="btn-icon-sm" onclick="this.closest('.rate-season-row').remove()">✕</button>
+    </div>`;
+
+  const extraRow = (e,i) => `
+    <div style="display:grid;grid-template-columns:1fr 24px 80px 90px 30px;gap:6px;align-items:center;margin-bottom:6px" id="extraRow_${i}">
+      <input type="text"   id="eLabel_${i}"  value="${e.label}"  placeholder="Nome voce">
+      <span style="font-size:11px;color:var(--text3);text-align:center">€</span>
+      <input type="number" id="ePrice_${i}"  value="${e.prezzo}" step="0.5" min="0" placeholder="0">
+      <select id="eUnita_${i}" style="padding:5px;border:1px solid var(--border);border-radius:4px;font-size:11px">
+        ${['persona','notte','volta','kwh','mc'].map(u=>`<option value="${u}" ${e.unita===u?'selected':''}>${u}</option>`).join('')}
+      </select>
+      <button class="btn-icon-sm" onclick="this.closest('[id^=extraRow]').remove()">✕</button>
+    </div>`;
+
+  // Griglia override tariffe per camera
+  const groups={};
+  ROOMS.forEach(r=>{ if(!groups[r.g]) groups[r.g]=[]; groups[r.g].push(r); });
+  const camGrpHtml = Object.entries(groups).map(([g,rooms])=>`
     <div class="conti-section">
-      <div class="conti-section-title">${g}</div>
-      <div style="display:grid;grid-template-columns:1fr 90px 90px;gap:6px 10px;align-items:center;margin-bottom:4px">
+      <div class="conti-section-title">${g} — override tariffa camera</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Lascia 0 per usare le tariffe da disposizione letti (solo albergo)</div>
+      <div style="display:grid;grid-template-columns:1fr 90px 90px;gap:6px 10px;align-items:center">
         <span style="font-size:10px;font-weight:600;color:var(--text3)">Camera</span>
         <span style="font-size:10px;font-weight:600;color:var(--text3);text-align:center">€/notte</span>
         <span style="font-size:10px;font-weight:600;color:var(--text3);text-align:center">€/mese</span>
-        ${rooms.map(r => {
-          const t = cfg.tariffeCamere?.[r.id] || {giornaliera:0, mensile:0};
-          return `<label style="font-size:12px;font-weight:500">${r.name}</label>
-            <input type="number" id="tg_${r.id}" value="${t.giornaliera||''}" placeholder="0" min="0" step="1"
-              style="padding:5px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:center;width:100%">
-            <input type="number" id="tm_${r.id}" value="${t.mensile||''}"     placeholder="0" min="0" step="10"
-              style="padding:5px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:center;width:100%">`;
+        ${rooms.map(r=>{
+          const ov=cfg.tariffeCamere?.[r.id]||{};
+          return `<label style="font-size:12px">${r.name}</label>
+            <input type="number" id="tg_${r.id}" value="${ov.giornaliera||''}" placeholder="0" min="0" step="1"
+              style="padding:5px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:center;width:100%">
+            <input type="number" id="tm_${r.id}" value="${ov.mensile||''}"     placeholder="0" min="0" step="10"
+              style="padding:5px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:center;width:100%">`;
         }).join('')}
       </div>
     </div>`).join('');
@@ -5418,73 +5429,91 @@ function buildContiSettingsForm(cfg) {
     <div class="conti-section">
       <div class="conti-section-title">Struttura</div>
       <div class="rate-grid">
-        <div class="rate-field" style="grid-column:1/-1"><label>Nome struttura</label><input id="cfgHotelName" value="${cfg.hotelName}"></div>
+        <div class="rate-field" style="grid-column:1/-1"><label>Nome</label><input id="cfgHotelName" value="${cfg.hotelName}"></div>
         <div class="rate-field" style="grid-column:1/-1"><label>Indirizzo</label><input id="cfgHotelAddr" value="${cfg.hotelAddress||''}"></div>
         <div class="rate-field"><label>Telefono</label><input id="cfgHotelTel" value="${cfg.hotelTel||''}"></div>
-        <div class="rate-field"><label>Tariffa fallback (€/notte)</label><input type="number" id="cfgBase" value="${cfg.tariffaBase}" step="1"></div>
       </div>
     </div>
-    ${cameraRows}
+    <div class="conti-section">
+      <div class="conti-section-title">Tariffe base per disposizione letti</div>
+      <div class="rate-grid">
+        <div class="rate-field"><label>Singola (1 letto singolo) €/notte</label><input type="number" id="tarS"  value="${t.s||35}"  step="0.5"></div>
+        <div class="rate-field"><label>Matrimoniale uso singolo €/notte</label><input type="number" id="tarMS" value="${t.ms||38}" step="0.5"></div>
+        <div class="rate-field"><label>Matrimoniale (2 pers.) €/notte</label><input type="number"   id="tarM"  value="${t.m||45}"  step="0.5"></div>
+        <div class="rate-field"><label>Letto singolo aggiunto +€/pers.</label><input type="number"  id="tarAG" value="${t.ag||15}" step="0.5"></div>
+      </div>
+    </div>
     <div class="conti-section">
       <div class="conti-section-title">Stagionalità</div>
-      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Formato: MM-DD–MM-DD · es. 06-15–09-15 per 15 giu → 15 set</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Formato: MM-DD–MM-DD</div>
       <div id="stagRows">${cfg.stagioni.map(stagRow).join('')}</div>
-      <button class="btn-icon-add" onclick="addStagRow()" style="margin-top:4px">+</button>
+      <button class="btn-icon-add" onclick="addStagRow()" style="margin-top:6px">+</button>
     </div>
     <div class="conti-section">
       <div class="conti-section-title">Convenzioni (sconto %)</div>
-      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Nome cliente o azienda come appare nelle prenotazioni</div>
       <div id="convRows">${cfg.convenzioni.map(convRow).join('')}</div>
-      <button class="btn-icon-add" onclick="addConvRow()" style="margin-top:4px">+</button>
+      <button class="btn-icon-add" onclick="addConvRow()" style="margin-top:6px">+</button>
     </div>
     <div class="conti-section">
-      <div class="conti-section-title">Sconti per durata</div>
+      <div class="conti-section-title">Sconti durata</div>
       <div id="durRows">${cfg.scontiDurata.map(durRow).join('')}</div>
-      <button class="btn-icon-add" onclick="addDurRow()" style="margin-top:4px">+</button>
+      <button class="btn-icon-add" onclick="addDurRow()" style="margin-top:6px">+</button>
     </div>
     <div class="conti-section">
-      <div class="conti-section-title">Prezzi extra predefiniti</div>
-      <div class="rate-grid">
-        ${['colazione','pranzo','cena','pulizie','cambioLenzuola'].map(k=>`
-        <div class="rate-field"><label>${k}</label><input type="number" id="extra_${k}" value="${cfg.prezziExtra[k]||0}" step="0.5"></div>`).join('')}
+      <div class="conti-section-title">Voci extra</div>
+      <div style="display:grid;grid-template-columns:1fr 24px 80px 90px 30px;gap:4px;font-size:10px;font-weight:600;color:var(--text3);margin-bottom:6px">
+        <span>Voce</span><span></span><span>Prezzo</span><span>Unità</span><span></span>
       </div>
-    </div>`;
+      <div id="extraRows">${(cfg.extra||[]).map(extraRow).join('')}</div>
+      <button class="btn-icon-add" onclick="addExtraRow()" style="margin-top:6px">+</button>
+    </div>
+    ${camGrpHtml}`;
 }
 
-// ── Aggiungi/rimuovi righe settings ──
-let _stagCount, _convCount, _durCount;
+// ── Aggiungi righe dinamiche ──
 function addStagRow() {
-  const rows = document.getElementById('stagRows');
-  const i = rows.children.length;
-  rows.insertAdjacentHTML('beforeend', `<div class="rate-season-row" id="stagRow_${i}">
-    <input type="text" placeholder="Nome stagione" id="stagNome_${i}">
-    <input type="text" placeholder="MM-DD–MM-DD" id="stagPeriod_${i}">
-    <input type="number" value="1.0" step="0.1" id="stagMolt_${i}">
+  const rows=document.getElementById('stagRows');
+  const i=rows.children.length;
+  rows.insertAdjacentHTML('beforeend',`<div class="rate-season-row" id="stagRow_${i}">
+    <input type="text"   id="stagNome_${i}"   placeholder="Nome">
+    <input type="text"   id="stagPeriod_${i}" placeholder="MM-DD–MM-DD">
+    <input type="number" id="stagMolt_${i}"   value="1.0" step="0.1">
     <button class="btn-icon-sm" onclick="this.closest('.rate-season-row').remove()">✕</button>
   </div>`);
 }
-function removeStagRow(i) { document.getElementById(`stagRow_${i}`)?.remove(); }
-
 function addConvRow() {
-  const rows = document.getElementById('convRows');
-  const i = rows.children.length;
-  rows.insertAdjacentHTML('beforeend', `<div class="rate-conv-row" id="convRow_${i}">
-    <input type="text" placeholder="Nome cliente" id="convNome_${i}">
-    <input type="text" placeholder="20% o 30€" id="convVal_${i}">
+  const rows=document.getElementById('convRows');
+  const i=rows.children.length;
+  rows.insertAdjacentHTML('beforeend',`<div class="rate-conv-row" id="convRow_${i}">
+    <input type="text"   id="convNome_${i}" placeholder="Nome cliente">
+    <input type="number" id="convVal_${i}"  placeholder="%" step="1" min="0" max="100">
     <button class="btn-icon-sm" onclick="this.closest('.rate-conv-row').remove()">✕</button>
   </div>`);
 }
-function removeConvRow(i) { document.getElementById(`convRow_${i}`)?.remove(); }
-
 function addDurRow() {
-  const rows = document.getElementById('durRows');
-  const i = rows.children.length;
-  rows.insertAdjacentHTML('beforeend', `<div class="rate-season-row" id="durRow_${i}" style="grid-template-columns:1fr 1fr 36px">
-    <input type="number" placeholder="Soglia notti" id="durSoglia_${i}">
-    <input type="text" placeholder="Sconto %" id="durSconto_${i}">
+  const rows=document.getElementById('durRows');
+  const i=rows.children.length;
+  rows.insertAdjacentHTML('beforeend',`<div class="rate-season-row" id="durRow_${i}" style="grid-template-columns:1fr 1fr 36px">
+    <input type="number" id="durSoglia_${i}" placeholder="Notti">
+    <input type="number" id="durSconto_${i}" placeholder="%">
     <button class="btn-icon-sm" onclick="this.closest('.rate-season-row').remove()">✕</button>
   </div>`);
 }
+function addExtraRow() {
+  const rows=document.getElementById('extraRows');
+  const i=rows.children.length;
+  rows.insertAdjacentHTML('beforeend',`<div style="display:grid;grid-template-columns:1fr 24px 80px 90px 30px;gap:6px;align-items:center;margin-bottom:6px" id="extraRow_${i}">
+    <input type="text"   id="eLabel_${i}"  placeholder="Es. Parcheggio">
+    <span style="font-size:11px;color:var(--text3);text-align:center">€</span>
+    <input type="number" id="ePrice_${i}"  placeholder="0" step="0.5" min="0">
+    <select id="eUnita_${i}" style="padding:5px;border:1px solid var(--border);border-radius:4px;font-size:11px">
+      <option>persona</option><option>notte</option><option>volta</option><option>kwh</option><option>mc</option>
+    </select>
+    <button class="btn-icon-sm" onclick="this.closest('[id^=extraRow]').remove()">✕</button>
+  </div>`);
+}
+function removeStagRow(i){ document.getElementById(`stagRow_${i}`)?.remove(); }
+function removeConvRow(i){ document.getElementById(`convRow_${i}`)?.remove(); }
 function removeDurRow(i) { document.getElementById(`durRow_${i}`)?.remove(); }
 
 function saveContiSettings() {
@@ -5492,58 +5521,72 @@ function saveContiSettings() {
   cfg.hotelName    = document.getElementById('cfgHotelName')?.value || cfg.hotelName;
   cfg.hotelAddress = document.getElementById('cfgHotelAddr')?.value || '';
   cfg.hotelTel     = document.getElementById('cfgHotelTel')?.value  || '';
-  cfg.tariffaBase  = parseFloat(document.getElementById('cfgBase')?.value || cfg.tariffaBase);
 
-  // Tariffe per camera
+  // Tariffe disposizione
+  cfg.tariffe = {
+    s:  parseFloat(document.getElementById('tarS')?.value  || 35),
+    ms: parseFloat(document.getElementById('tarMS')?.value || 38),
+    m:  parseFloat(document.getElementById('tarM')?.value  || 45),
+    ag: parseFloat(document.getElementById('tarAG')?.value || 15),
+  };
+
+  // Override per camera
   if (!cfg.tariffeCamere) cfg.tariffeCamere = {};
   ROOMS.forEach(r => {
     const g = parseFloat(document.getElementById(`tg_${r.id}`)?.value || 0);
     const m = parseFloat(document.getElementById(`tm_${r.id}`)?.value || 0);
-    cfg.tariffeCamere[r.id] = { giornaliera: g, mensile: m };
+    if (g > 0 || m > 0) cfg.tariffeCamere[r.id] = { giornaliera:g, mensile:m };
+    else delete cfg.tariffeCamere[r.id];
   });
 
   // Stagioni
   cfg.stagioni = [];
   document.querySelectorAll('[id^=stagRow_]').forEach(row => {
-    const i   = row.id.split('_')[1];
-    const nom = document.getElementById(`stagNome_${i}`)?.value?.trim();
-    const per = document.getElementById(`stagPeriod_${i}`)?.value?.trim();
-    const mol = parseFloat(document.getElementById(`stagMolt_${i}`)?.value || 1);
+    const i=row.id.split('_')[1];
+    const nom=document.getElementById(`stagNome_${i}`)?.value?.trim();
+    const per=document.getElementById(`stagPeriod_${i}`)?.value?.trim();
+    const mol=parseFloat(document.getElementById(`stagMolt_${i}`)?.value||1);
     if (nom && per && per.includes('–')) {
-      const [dal, al] = per.split('–');
+      const [dal,al]=per.split('–');
       cfg.stagioni.push({ nome:nom, dal:dal.trim(), al:al.trim(), molt:mol });
     }
   });
 
-  // Convenzioni (sempre sconto %)
+  // Convenzioni
   cfg.convenzioni = [];
   document.querySelectorAll('[id^=convRow_]').forEach(row => {
-    const i   = row.id.split('_')[1];
-    const nom = document.getElementById(`convNome_${i}`)?.value?.trim();
-    const val = parseFloat(document.getElementById(`convVal_${i}`)?.value || 0);
-    if (nom && val > 0) cfg.convenzioni.push({ nome:nom, tipo:'sconto', valore:val });
+    const i=row.id.split('_')[1];
+    const nom=document.getElementById(`convNome_${i}`)?.value?.trim();
+    const val=parseFloat(document.getElementById(`convVal_${i}`)?.value||0);
+    if (nom && val > 0) cfg.convenzioni.push({ nome:nom, sconto:val });
   });
 
   // Sconti durata
   cfg.scontiDurata = [];
   document.querySelectorAll('[id^=durRow_]').forEach(row => {
-    const i   = row.id.split('_')[1];
-    const sog = parseInt(document.getElementById(`durSoglia_${i}`)?.value || 0);
-    const sco = parseFloat(document.getElementById(`durSconto_${i}`)?.value || 0);
-    if (sog > 0 && sco > 0) cfg.scontiDurata.push({ soglia:sog, sconto:sco });
+    const i=row.id.split('_')[1];
+    const sog=parseInt(document.getElementById(`durSoglia_${i}`)?.value||0);
+    const sco=parseFloat(document.getElementById(`durSconto_${i}`)?.value||0);
+    if (sog>0 && sco>0) cfg.scontiDurata.push({ soglia:sog, sconto:sco });
   });
-  cfg.scontiDurata.sort((a,b) => b.soglia - a.soglia);
+  cfg.scontiDurata.sort((a,b)=>b.soglia-a.soglia);
 
-  // Extra predefiniti
-  ['colazione','pranzo','cena','pulizie','cambioLenzuola'].forEach(k => {
-    cfg.prezziExtra[k] = parseFloat(document.getElementById(`extra_${k}`)?.value || 0);
+  // Extra voci
+  cfg.extra = [];
+  document.querySelectorAll('[id^=extraRow_]').forEach(row => {
+    const i=row.id.split('_')[1];
+    const label=document.getElementById(`eLabel_${i}`)?.value?.trim();
+    const prezzo=parseFloat(document.getElementById(`ePrice_${i}`)?.value||0);
+    const unita=document.getElementById(`eUnita_${i}`)?.value||'volta';
+    if (label) cfg.extra.push({ id:`extra_${i}`, label, prezzo, unita });
   });
 
   saveBillSettings(cfg);
   closeContiSettings();
   renderContiTab(_contiTab);
-  showToast('✓ Tariffe salvate', 'success');
+  showToast('✓ Tariffe salvate','success');
 }
+
 </script>
 </body>
 </html>
