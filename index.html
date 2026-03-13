@@ -1348,6 +1348,124 @@ function logout() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// GESTIONE TOKEN SCADUTO — Re-login silenzioso automatico
+// Il token implicit flow dura 1 ora. Quando scade le API restituiscono
+// HTTP 401. Intercettiamo il 401 e tentiamo un silent login.
+// ═══════════════════════════════════════════════════════════════════
+
+let _reAuthInProgress = false;
+
+/**
+ * Wrapper centralizzato per tutte le chiamate fetch alle Google API.
+ * Se la risposta è 401 → tenta re-auth silenzioso, poi riprova.
+ * Se il re-auth fallisce → mostra banner e lancia eccezione.
+ */
+async function apiFetch(url, options = {}) {
+  if (!options.headers) options.headers = {};
+  options.headers['Authorization'] = 'Bearer ' + accessToken;
+
+  let r = await fetch(url, options);
+  if (r.status !== 401) return r;
+
+  // Token scaduto → tenta silent re-login
+  const newToken = await trySilentReAuth();
+  if (!newToken) {
+    showSessionExpiredBanner();
+    throw new Error('Sessione scaduta. Fai clic su "Riconnetti" per continuare.');
+  }
+
+  // Riprova la chiamata con il nuovo token
+  options.headers['Authorization'] = 'Bearer ' + newToken;
+  return fetch(url, options);
+}
+
+/**
+ * Tenta un re-login silenzioso tramite iframe hidden.
+ * Funziona solo se l'utente ha già una sessione Google attiva.
+ * Restituisce il nuovo token, o null se fallisce.
+ */
+function trySilentReAuth() {
+  if (_reAuthInProgress) {
+    // Già in corso: aspetta che finisca
+    return new Promise(res => {
+      const poll = setInterval(() => {
+        if (!_reAuthInProgress) { clearInterval(poll); res(accessToken); }
+      }, 200);
+      setTimeout(() => { clearInterval(poll); res(null); }, 10000);
+    });
+  }
+
+  _reAuthInProgress = true;
+  return new Promise(resolve => {
+    const state = randomState();
+    const params = new URLSearchParams({
+      client_id:     CLIENT_ID,
+      redirect_uri:  getRedirectUri(),
+      response_type: 'token',
+      scope:         SCOPES,
+      state,
+      prompt:        'none',   // silenzioso: non mostra UI
+      include_granted_scopes: 'true',
+    });
+
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'display:none;width:1px;height:1px;position:fixed;top:-9999px';
+    iframe.src = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+    document.body.appendChild(iframe);
+
+    const timeout = setTimeout(() => {
+      cleanup(null);
+    }, 8000);
+
+    function cleanup(token) {
+      clearTimeout(timeout);
+      try { document.body.removeChild(iframe); } catch(e) {}
+      _reAuthInProgress = false;
+      if (token) {
+        accessToken = token;
+        hideSessionExpiredBanner();
+      }
+      resolve(token);
+    }
+
+    iframe.onload = () => {
+      try {
+        const hash = iframe.contentWindow.location.hash;
+        if (hash) {
+          const p = new URLSearchParams(hash.slice(1));
+          const token = p.get('access_token');
+          if (token) { cleanup(token); return; }
+        }
+      } catch(e) {
+        // Cross-origin: il redirect è sulla nostra pagina, leggiamo dal src
+      }
+      // Se l'iframe non ha ancora fatto redirect, aspettiamo ancora
+    };
+
+    // Fallback: ascolta messaggi dal redirect (se usiamo postMessage)
+    // Per ora il timeout da 8s è il fallback principale
+  });
+}
+
+function showSessionExpiredBanner() {
+  let b = document.getElementById('sessionExpiredBanner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'sessionExpiredBanner';
+    b.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:9999;background:#1a1a2e;color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;box-shadow:0 -2px 12px rgba(0,0,0,.4)';
+    b.innerHTML = '<span>⏰ <b>Sessione scaduta</b> — Il token Google è scaduto dopo 1 ora.</span>' +
+      '<button onclick="startLogin()" style="background:#4285f4;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;white-space:nowrap">🔑 Riconnetti</button>';
+    document.body.appendChild(b);
+  }
+  b.style.display = 'flex';
+}
+
+function hideSessionExpiredBanner() {
+  const b = document.getElementById('sessionExpiredBanner');
+  if (b) b.style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // LETTURA DAL FOGLIO GOOGLE
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1361,7 +1479,7 @@ async function sheetsGet(range, spreadsheetId) {
   if (!sid) throw new Error('Nessun foglio annuale configurato.');
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    const r = await apiFetch(url);
     if (r.status === 429) {
       const wait = (attempt + 1) * 2000;
       await new Promise(res => setTimeout(res, wait));
@@ -1378,7 +1496,7 @@ async function sheetsGetWithFormats(range, spreadsheetId) {
   if (!sid) throw new Error('Nessun foglio annuale configurato.');
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat/backgroundColor,note))))`;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    const r = await apiFetch(url);
     if (r.status === 429) {
       const wait = (attempt + 1) * 2000;
       await new Promise(res => setTimeout(res, wait));
@@ -1399,7 +1517,7 @@ async function dbGet(range) {
   const id = DATABASE_SHEET_ID;
   if (!id) throw new Error('DATABASE_SHEET_ID non configurato. Vai in Impostazioni.');
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`;
-  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+  const r = await apiFetch(url);
   if (!r.ok) throw new Error(`DB GET error ${r.status}: ${await r.text()}`);
   return r.json();
 }
@@ -1407,9 +1525,9 @@ async function dbGet(range) {
 async function dbBatchUpdate(requests) {
   const id = DATABASE_SHEET_ID;
   if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+  const r = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests })
   });
   if (!r.ok) throw new Error(`DB batchUpdate error ${r.status}: ${await r.text()}`);
@@ -1426,9 +1544,9 @@ async function dbBatchAppendRows(rowsArray) {
   if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
   if (!rowsArray.length) return null;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(DB_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-  const r = await fetch(url, {
+  const r = await apiFetch(url, {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ values: rowsArray })
   });
   if (!r.ok) throw new Error(`DB batch append error ${r.status}: ${await r.text()}`);
@@ -1441,9 +1559,9 @@ async function dbUpdateRow(rowNum, values) {
   if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
   const range = `${DB_SHEET_NAME}!A${rowNum}:L${rowNum}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
-  const r = await fetch(url, {
+  const r = await apiFetch(url, {
     method: 'PUT',
-    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ values: [values] })
   });
   if (!r.ok) throw new Error(`DB update error ${r.status}: ${await r.text()}`);
@@ -2973,10 +3091,12 @@ async function delBook(id){
 }
 
 function cellClick(rid,day){
-  const d1=new Date(curY,curM,day), d2=new Date(curY,curM,day+1);
-  document.getElementById('fRoom').value=rid;
-  document.getElementById('fIn').value=d1.toISOString().slice(0,10);
-  document.getElementById('fOut').value=d2.toISOString().slice(0,10);
+  // Costruiamo la stringa YYYY-MM-DD in locale per evitare lo shift UTC
+  // (toISOString() con fuso +1/+2 restituirebbe il giorno precedente)
+  const pad = n => String(n).padStart(2,'0');
+  document.getElementById('fRoom').value = rid;
+  document.getElementById('fIn').value  = curY+'-'+pad(curM+1)+'-'+pad(day);
+  document.getElementById('fOut').value = curY+'-'+pad(curM+1)+'-'+pad(day+1);
   openModal();
 }
 
