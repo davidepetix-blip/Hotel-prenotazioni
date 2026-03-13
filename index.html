@@ -1815,14 +1815,13 @@ async function readAnnualSheet(entry) {
 
 // ═══════════════════════════════════════════════════════════════════
 // LETTURA FOGLIO JSON_ANNUALE CENTRALIZZATO
-// Legge il JSON dalla cella A2 del tab "JSON_ANNUALE" — 1 sola chiamata API.
-// Funziona per qualsiasi anno (2025, 2026, 2027...).
-// In caso di errore lancia eccezione → il chiamante fa fallback ai 12 fogli mensili.
+// Il JSON è spezzato su 12 righe (A2:A13), una per mese, per aggirare
+// il limite Google Sheets di 50.000 caratteri per cella.
 // ═══════════════════════════════════════════════════════════════════
 async function readJSONAnnuale(sheetId) {
   const TAB   = 'JSON_ANNUALE';
-  const range = encodeURIComponent(`'${TAB}'!A2`);
-  const url   = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueRenderOption=FORMATTED_VALUE`;
+  const range = encodeURIComponent("'" + TAB + "'!A2:A13");
+  const url   = "https://sheets.googleapis.com/v4/spreadsheets/" + sheetId + "/values/" + range + "?valueRenderOption=FORMATTED_VALUE";
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
@@ -1830,22 +1829,35 @@ async function readJSONAnnuale(sheetId) {
       await new Promise(res => setTimeout(res, (attempt + 1) * 2000));
       continue;
     }
-    if (!r.ok) throw new Error(`${TAB} non disponibile (HTTP ${r.status})`);
+    if (!r.ok) throw new Error(TAB + ' non disponibile (HTTP ' + r.status + ')');
 
     const data = await r.json();
-    const raw  = data.values?.[0]?.[0];
-    if (!raw || raw.trim() === '') throw new Error(`${TAB} vuoto — esegui "Rigenera JSON_ANNUALE" dal menu del foglio`);
+    const rows = data.values;
+    if (!rows || rows.length === 0) throw new Error(TAB + ' vuoto — esegui "Rigenera JSON_ANNUALE" dal menu del foglio');
 
-    let parsed;
-    try { parsed = JSON.parse(raw); }
-    catch(e) { throw new Error(`${TAB} JSON non valido: ${e.message}`); }
+    // Concatena le prenotazioni di tutti i mesi (12 righe, una per mese)
+    const allPren = [];
+    let parseErrors = 0;
+    for (const row of rows) {
+      const raw = row?.[0];
+      if (!raw || raw.trim() === '' || raw.startsWith('—')) continue;
+      try {
+        const chunk = JSON.parse(raw);
+        if (Array.isArray(chunk)) chunk.forEach(p => allPren.push(p));
+      } catch(e) {
+        parseErrors++;
+        console.warn('[JSON_ANNUALE] Riga non parsificabile:', raw.substring(0, 80));
+      }
+    }
 
-    if (!Array.isArray(parsed)) throw new Error(`${TAB}: il contenuto non è un array`);
-    if (parsed.length === 0)    throw new Error(`${TAB}: nessuna prenotazione trovata`);
+    if (allPren.length === 0) {
+      if (parseErrors > 0) throw new Error(TAB + ': JSON non valido in ' + parseErrors + ' righe — rigenera dal menu del foglio');
+      throw new Error(TAB + ': nessuna prenotazione — rigenera dal menu del foglio');
+    }
 
-    return _parseJSONAnnualeBookings(parsed, sheetId, TAB);
+    return _parseJSONAnnualeBookings(allPren, sheetId, TAB);
   }
-  throw new Error(`${TAB}: rate limit persistente, riprova`);
+  throw new Error(TAB + ': rate limit persistente, riprova');
 }
 
 /**
