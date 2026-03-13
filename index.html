@@ -445,6 +445,204 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   font-size:11px; color:var(--accent); font-weight:600; margin-bottom:10px;
 }
 
+
+/* ══════════════════════════════════════════════
+   MODULO FATTURAZIONE / CONTI
+   ══════════════════════════════════════════════ */
+
+/* ── Pagina Conti ── */
+#contiScreen {
+  display:none; position:fixed; inset:0; background:var(--bg);
+  z-index:300; flex-direction:column; overflow:hidden;
+}
+#contiScreen.open { display:flex; }
+.conti-hdr {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 16px; background:var(--surface);
+  border-bottom:1px solid var(--border); flex-shrink:0;
+}
+.conti-hdr-title { font-family:'Playfair Display',serif; font-size:18px; font-weight:600; flex:1; }
+.conti-tabs {
+  display:flex; gap:0; border-bottom:1px solid var(--border);
+  background:var(--surface); flex-shrink:0; overflow-x:auto;
+}
+.conti-tab {
+  padding:10px 18px; font-size:12px; font-weight:500; color:var(--text2);
+  border-bottom:2px solid transparent; cursor:pointer; white-space:nowrap;
+  transition:color .15s, border-color .15s;
+}
+.conti-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.conti-body { flex:1; overflow-y:auto; padding:16px; }
+
+/* ── Sezioni nella pagina Conti ── */
+.conti-section { margin-bottom:24px; }
+.conti-section-title {
+  font-size:11px; font-weight:600; color:var(--text3);
+  text-transform:uppercase; letter-spacing:.08em;
+  margin-bottom:10px; padding-bottom:6px;
+  border-bottom:1px solid var(--border);
+}
+
+/* ── Card conto ── */
+.bill-card {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); padding:14px 16px;
+  margin-bottom:10px; box-shadow:var(--shadow-sm);
+}
+.bill-card-hdr {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:10px;
+}
+.bill-card-name { font-weight:600; font-size:14px; }
+.bill-card-room { font-size:11px; color:var(--text2); margin-top:2px; }
+.bill-total {
+  font-size:20px; font-weight:600; color:var(--accent);
+  font-family:'Playfair Display',serif;
+}
+.bill-row {
+  display:flex; justify-content:space-between; align-items:baseline;
+  padding:5px 0; font-size:12px; border-bottom:1px solid var(--border);
+}
+.bill-row:last-child { border-bottom:none; }
+.bill-row-label { color:var(--text2); flex:1; }
+.bill-row-qty { color:var(--text3); width:60px; text-align:center; font-size:11px; }
+.bill-row-price { color:var(--text2); width:60px; text-align:right; font-size:11px; }
+.bill-row-total { font-weight:500; width:70px; text-align:right; }
+.bill-row.subtotal { font-weight:600; background:var(--surface2); margin:4px -4px; padding:5px 4px; border-radius:3px; }
+.bill-row.discount { color:var(--danger); }
+.bill-row.total-row { font-size:14px; font-weight:700; padding-top:8px; margin-top:4px; }
+
+/* ── Extra aggiuntivi ── */
+.extra-adder {
+  display:flex; gap:8px; align-items:center;
+  background:var(--surface2); border-radius:var(--radius);
+  padding:10px 12px; margin-top:10px; flex-wrap:wrap;
+}
+.extra-adder select, .extra-adder input {
+  padding:6px 8px; border:1px solid var(--border);
+  border-radius:4px; font-size:12px; background:var(--surface);
+  color:var(--text); flex:1; min-width:80px;
+}
+.extra-adder .btn { flex-shrink:0; font-size:11px; padding:6px 10px; }
+
+/* ── Tariffa badge ── */
+.rate-badge {
+  display:inline-block; padding:2px 7px; border-radius:10px;
+  font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
+}
+.rate-badge.stagionale { background:#e8f4fd; color:#1a6fa8; }
+.rate-badge.conv { background:#f0f8e8; color:#3a7a1a; }
+.rate-badge.lunga { background:#fef8e7; color:#9a6a0a; }
+.rate-badge.appart { background:#f5e8fd; color:#7a1a9a; }
+
+/* ── Drawer tab Conto ── */
+.dr-bill-tabs {
+  display:flex; border-bottom:1px solid var(--border);
+  margin:-14px -16px 14px; padding:0 16px;
+  background:var(--surface2);
+}
+.dr-bill-tab {
+  padding:9px 14px; font-size:11px; font-weight:500;
+  color:var(--text2); border-bottom:2px solid transparent;
+  cursor:pointer; transition:.15s;
+}
+.dr-bill-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+/* ── Impostazioni tariffe ── */
+.rate-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px;
+}
+.rate-field label { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:.06em; display:block; margin-bottom:4px; font-weight:600; }
+.rate-field input, .rate-field select {
+  width:100%; padding:7px 10px; border:1px solid var(--border);
+  border-radius:4px; font-size:13px; background:var(--surface); color:var(--text);
+}
+.rate-season-row {
+  display:grid; grid-template-columns:1fr 1fr 80px 36px; gap:8px;
+  align-items:center; margin-bottom:8px;
+}
+.rate-conv-row {
+  display:grid; grid-template-columns:1fr 100px 36px; gap:8px;
+  align-items:center; margin-bottom:8px;
+}
+.rate-season-row input, .rate-conv-row input {
+  padding:6px 8px; border:1px solid var(--border);
+  border-radius:4px; font-size:12px; background:var(--surface); color:var(--text); width:100%;
+}
+.btn-icon-sm {
+  width:30px; height:30px; border:none; background:var(--danger-light);
+  color:var(--danger); border-radius:4px; cursor:pointer; font-size:14px;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.btn-icon-sm:hover { background:var(--danger); color:#fff; }
+.btn-icon-add {
+  width:30px; height:30px; border:none; background:var(--accent-light);
+  color:var(--accent); border-radius:4px; cursor:pointer; font-size:18px;
+  display:flex; align-items:center; justify-content:center;
+}
+
+/* ── Riepilogo conti (lista) ── */
+.bill-list-item {
+  display:flex; align-items:center; gap:12px;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); padding:12px 14px;
+  margin-bottom:8px; cursor:pointer; transition:box-shadow .15s;
+}
+.bill-list-item:hover { box-shadow:var(--shadow-md); }
+.bill-list-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.bill-list-info { flex:1; min-width:0; }
+.bill-list-name { font-weight:600; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bill-list-sub { font-size:11px; color:var(--text2); margin-top:2px; }
+.bill-list-total { font-weight:700; font-size:15px; color:var(--accent); white-space:nowrap; }
+.bill-list-status {
+  font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
+  padding:2px 7px; border-radius:8px;
+}
+.bill-list-status.bozza { background:#f5f5f5; color:#888; }
+.bill-list-status.emesso { background:#e8f4fd; color:#1a6fa8; }
+.bill-list-status.pagato { background:var(--accent-light); color:var(--accent); }
+
+/* ── PDF Preview ── */
+#pdfOverlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,.7);
+  z-index:600; align-items:center; justify-content:center; flex-direction:column;
+}
+#pdfOverlay.open { display:flex; }
+.pdf-modal {
+  background:#fff; border-radius:12px; width:min(560px,95vw);
+  max-height:90dvh; display:flex; flex-direction:column; overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+.pdf-modal-hdr {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 18px; border-bottom:1px solid #e0e0e0; flex-shrink:0;
+}
+.pdf-modal-hdr strong { font-size:15px; }
+.pdf-actions { display:flex; gap:8px; padding:12px 18px; border-top:1px solid #e0e0e0; flex-shrink:0; }
+.pdf-body { flex:1; overflow-y:auto; padding:0; }
+
+/* ── Documento stampabile ── */
+#printDoc {
+  font-family:'IBM Plex Sans',sans-serif;
+  max-width:540px; margin:0 auto; padding:32px 28px;
+  color:#1a1916; font-size:13px; line-height:1.6;
+}
+.doc-header { text-align:center; margin-bottom:28px; border-bottom:2px solid #2d6a4f; padding-bottom:16px; }
+.doc-hotel-name { font-family:'Playfair Display',serif; font-size:24px; font-weight:600; color:#2d6a4f; }
+.doc-hotel-sub { font-size:11px; color:#888; margin-top:4px; }
+.doc-type { display:inline-block; background:#2d6a4f; color:#fff; padding:3px 12px; border-radius:12px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; margin-top:8px; }
+.doc-section { margin-bottom:18px; }
+.doc-section-title { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:#888; border-bottom:1px solid #e0e0e0; padding-bottom:4px; margin-bottom:10px; }
+.doc-info-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; }
+.doc-info-item label { font-size:10px; color:#888; display:block; }
+.doc-info-item span { font-size:13px; font-weight:500; }
+.doc-table { width:100%; border-collapse:collapse; margin-top:8px; }
+.doc-table th { background:#f5f5f5; padding:7px 10px; text-align:left; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:#555; }
+.doc-table td { padding:7px 10px; border-bottom:1px solid #f0f0f0; font-size:12px; }
+.doc-table td:last-child, .doc-table th:last-child { text-align:right; font-weight:600; }
+.doc-total-row td { font-size:14px; font-weight:700; color:#2d6a4f; border-top:2px solid #2d6a4f; padding-top:10px; }
+.doc-footer { margin-top:28px; border-top:1px solid #e0e0e0; padding-top:14px; font-size:11px; color:#888; text-align:center; line-height:1.8; }
+
 </style>
 </head>
 <body>
@@ -488,6 +686,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
   <button class="btn btn-icon" onclick="openCheckin()" title="Check-in">🛎</button>
   <button class="btn btn-icon" onclick="openRoomDash()" title="Stato camere">🏠</button>
+  <button class="btn btn-icon" onclick="openConti()" title="Conti e fatturazione">💶</button>
   <button class="btn btn-icon" onclick="openSettings()" title="Impostazioni camere">⚙</button>
   <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
   <button class="btn primary" id="btnAdd" style="display:none" onclick="openModal()">+ Nuova</button>
@@ -535,6 +734,54 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ FAB ══ -->
 <button class="fab" onclick="openModal()">+</button>
+
+<!-- ══ CONTI SCREEN ══ -->
+<div id="contiScreen">
+  <div class="conti-hdr">
+    <button class="btn btn-icon" onclick="closeConti()">←</button>
+    <div class="conti-hdr-title">💶 Conti & Fatturazione</div>
+    <button class="btn" onclick="openContiSettings()" style="font-size:11px;">⚙ Tariffe</button>
+  </div>
+  <div class="conti-tabs">
+    <div class="conti-tab active" onclick="switchContiTab('lista')">📋 Conti</div>
+    <div class="conti-tab" onclick="switchContiTab('appart')">🏠 Appartamenti</div>
+    <div class="conti-tab" onclick="switchContiTab('tariffe')">📊 Listino</div>
+  </div>
+  <div class="conti-body" id="contiBody"></div>
+</div>
+
+<!-- ══ PDF / DOCUMENTO OVERLAY ══ -->
+<div id="pdfOverlay">
+  <div class="pdf-modal">
+    <div class="pdf-modal-hdr">
+      <strong id="pdfTitle">Documento</strong>
+      <button class="btn btn-icon" onclick="closePdfOverlay()">✕</button>
+    </div>
+    <div class="pdf-body">
+      <div id="printDoc"></div>
+    </div>
+    <div class="pdf-actions">
+      <button class="btn" onclick="window.print()" style="flex:1;justify-content:center;">🖨 Stampa / PDF</button>
+      <button class="btn" onclick="shareDocWhatsApp()" style="flex:1;justify-content:center;background:#25D366;color:#fff;border-color:#25D366;">📱 WhatsApp</button>
+      <button class="btn" onclick="shareDocEmail()" style="flex:1;justify-content:center;">📧 Email</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ CONTI SETTINGS OVERLAY ══ -->
+<div id="contiSettingsOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;align-items:flex-end;justify-content:center;">
+  <div style="background:var(--surface);border-radius:16px 16px 0 0;width:min(600px,100%);max-height:90dvh;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <strong style="font-size:16px;">⚙ Impostazioni Tariffe</strong>
+      <button class="btn btn-icon" onclick="closeContiSettings()">✕</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:20px;" id="contiSettingsBody"></div>
+    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;flex-shrink:0;">
+      <button class="btn primary" onclick="saveContiSettings()" style="flex:1;justify-content:center;">💾 Salva tariffe</button>
+      <button class="btn" onclick="closeContiSettings()">Annulla</button>
+    </div>
+  </div>
+</div>
 
 <!-- ══ MODAL ══ -->
 <div class="moverlay" id="mov" onclick="movClick(event)">
@@ -2641,6 +2888,11 @@ function selBook(id,e){
   document.getElementById('drsub').textContent=`CAMERA ${roomName(b.r)} · ${roomGroup(b.r)}`;
   document.getElementById('drbody').innerHTML=`
     ${adjHtml}
+    <div class="dr-bill-tabs">
+      <div class="dr-bill-tab active" onclick="drTab(this,'drTabInfo')">📋 Dettagli</div>
+      <div class="dr-bill-tab" onclick="drTab(this,'drTabBill')">💶 Conto</div>
+    </div>
+    <div id="drTabInfo">
     <div class="dcard">
       <div class="dcname"><span class="cpill" style="background:${b.c}"></span>${b.n}</div>
       <div class="drow"><span class="dkey">Camera</span><span class="dval">${roomName(b.r)}</span></div>
@@ -2669,6 +2921,10 @@ function selBook(id,e){
           Camera "${roomName(b.r)}" · Colore <span style="font-size:9px;padding:1px 5px;border-radius:2px;background:${b.c};color:${light(b.c)?'#222':'#eee'}">${b.c}</span>`;
         }
       })()}
+    </div>
+    </div>
+    <div id="drTabBill" style="display:none;">
+      ${renderDrawerBill(b)}
     </div>`;
   openDrawer();
 }
@@ -4422,6 +4678,830 @@ dbg('▶ buildRoomSelect'); buildRoomSelect();
 dbg('▶ checkW'); checkW();
 dbg('▶ render'); render();
 dbg('✓ avvio ok');
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULO FATTURAZIONE — CONTI & TARIFFE
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Storage keys ──
+const BILL_SETTINGS_KEY  = 'hotelBillSettings';
+const BILL_CONTI_KEY     = 'hotelConti';
+
+// ── Struttura tariffe default ──
+// tariffaBase: prezzo per letto singolo/notte (base di calcolo)
+// moltiplicatori: matrimoniale = 1.8×, m/s = 1.0×, culla = 0×
+// stagioni: lista di periodi con moltiplicatore (es. alta=1.5)
+// convenzioni: lista clienti/aziende con tariffa netta o sconto%
+// scontiDurata: soglie notti → sconto %
+// appartamenti: canone mensile per unità
+// extra prezzi: colazione, pulizie, ecc.
+
+function billSettingsDefault() {
+  return {
+    hotelName: 'Il mio Hotel',
+    hotelAddress: '',
+    hotelTel: '',
+    tariffaBase: 35,          // € per posto letto/notte
+    moltiplicatori: { m: 1.8, ms: 1.0, s: 1.0, c: 0 },
+    minimoCamera: 1,           // minimo letti fatturabili per camera
+    stagioni: [
+      { nome:'Alta stagione',    dal:'06-15', al:'09-15', molt:1.5 },
+      { nome:'Media stagione',   dal:'03-15', al:'06-14', molt:1.2 },
+      { nome:'Bassa stagione',   dal:'09-16', al:'03-14', molt:1.0 },
+    ],
+    convenzioni: [
+      { nome:'mammana',      tipo:'sconto', valore:20 },
+      { nome:'geoambiente',  tipo:'sconto', valore:20 },
+      { nome:'Sicily Divide',tipo:'netta',  valore:30 },
+    ],
+    scontiDurata: [
+      { soglia:30, sconto:20 },
+      { soglia:7,  sconto:10 },
+    ],
+    appartamenti: [
+      { nome:'marasanta',       canone:600,  extra:[] },
+      { nome:'margherita p.t.', canone:550,  extra:[] },
+      { nome:'marg.ta 1 p.',    canone:500,  extra:[] },
+      { nome:'sole',            canone:700,  extra:[] },
+      { nome:'giove 4/6',       canone:900,  extra:[] },
+      { nome:'saturno 3',       canone:750,  extra:[] },
+      { nome:'nettuno 2',       canone:650,  extra:[] },
+      { nome:'marte 3/4',       canone:800,  extra:[] },
+      { nome:'venere 2',        canone:650,  extra:[] },
+      { nome:'mercurio 3',      canone:700,  extra:[] },
+      { nome:'Giulia B',        canone:500,  extra:[] },
+      { nome:'Giulia C',        canone:500,  extra:[] },
+      { nome:'Giulia D',        canone:500,  extra:[] },
+      { nome:'Giulia E',        canone:500,  extra:[] },
+    ],
+    prezziExtra: {
+      colazione:    5,
+      pranzo:       12,
+      cena:         15,
+      pulizie:      30,
+      cambioLenzuola: 15,
+      deposito:     0,   // libero
+    }
+  };
+}
+
+// ── Carica/salva settings ──
+function loadBillSettings() {
+  try {
+    const raw = localStorage.getItem(BILL_SETTINGS_KEY);
+    if (!raw) return billSettingsDefault();
+    return { ...billSettingsDefault(), ...JSON.parse(raw) };
+  } catch(e) { return billSettingsDefault(); }
+}
+
+function saveBillSettings(s) {
+  localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s));
+}
+
+// ── Carica/salva conti emessi ──
+function loadConti() {
+  try { return JSON.parse(localStorage.getItem(BILL_CONTI_KEY) || '[]'); }
+  catch(e) { return []; }
+}
+
+function saveConti(conti) {
+  localStorage.setItem(BILL_CONTI_KEY, JSON.stringify(conti));
+}
+
+// ═══════════════════════════════════════════════════════════
+// MOTORE DI CALCOLO
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Calcola il conto completo per una prenotazione alberghiera.
+ * Restituisce oggetto con righe dettaglio e totale.
+ */
+function calcolaConto(booking, extraRows = []) {
+  const cfg  = loadBillSettings();
+  const notti = nights(booking.s, booking.e);
+  const letti = parseBedString(booking.d);
+  const nomeCliente = booking.n.toLowerCase();
+
+  // 1. Posti letto da fatturare
+  const postiLetto = Math.max(
+    (letti.m  * cfg.moltiplicatori.m) +
+    (letti.ms * cfg.moltiplicatori.ms) +
+    (letti.s  * cfg.moltiplicatori.s),
+    cfg.minimoCamera
+  );
+
+  // 2. Tariffa base × posti letto
+  const tariffaGiornaliera = cfg.tariffaBase * postiLetto;
+
+  // 3. Stagionalità: calcola media moltiplicatore sui giorni
+  const moltStagionale = calcolaMoltiplicatoreStagionale(booking.s, booking.e, cfg.stagioni);
+
+  // 4. Verifica convenzione
+  let convenzione = null;
+  for (const cv of (cfg.convenzioni || [])) {
+    if (nomeCliente.includes(cv.nome.toLowerCase())) {
+      convenzione = cv; break;
+    }
+  }
+
+  // 5. Sconto durata
+  let scontoDurata = 0;
+  const scontiOrdinati = [...(cfg.scontiDurata || [])].sort((a,b) => b.soglia - a.soglia);
+  for (const sd of scontiOrdinati) {
+    if (notti >= sd.soglia) { scontoDurata = sd.sconto; break; }
+  }
+
+  // ── Costruisci righe ──
+  const righe = [];
+
+  // Riga notti base
+  const baseNotte = parseFloat((tariffaGiornaliera * moltStagionale).toFixed(2));
+  const subtotaleBase = parseFloat((baseNotte * notti).toFixed(2));
+  righe.push({
+    label: `Pernottamento (${postiLetto.toFixed(1)} posti × ${cfg.tariffaBase}€/notte)`,
+    qty: notti,
+    unitPrice: baseNotte,
+    total: subtotaleBase,
+    tipo: 'base',
+    badge: moltStagionale !== 1 ? `×${moltStagionale.toFixed(2)} stagionale` : null
+  });
+
+  let subtotale = subtotaleBase;
+
+  // Sconto convenzione
+  if (convenzione) {
+    if (convenzione.tipo === 'sconto') {
+      const sconto = parseFloat((subtotale * convenzione.valore / 100).toFixed(2));
+      righe.push({
+        label: `Tariffa convenzionata — ${convenzione.nome} (-${convenzione.valore}%)`,
+        qty: null, unitPrice: null, total: -sconto, tipo:'sconto',
+        badge: 'conv'
+      });
+      subtotale -= sconto;
+    } else if (convenzione.tipo === 'netta') {
+      const tariffaNetta = convenzione.valore * postiLetto * notti;
+      righe.push({
+        label: `Tariffa netta — ${convenzione.nome}`,
+        qty: notti, unitPrice: convenzione.valore * postiLetto, total: tariffaNetta,
+        tipo:'conv', badge:'conv'
+      });
+      // Sostituisce la base
+      righe[0].total = 0;
+      righe[0].label += ' (sostituita da tariffa netta)';
+      subtotale = tariffaNetta;
+    }
+  } else if (scontoDurata > 0) {
+    // Sconto durata solo se non c'è convenzione
+    const sconto = parseFloat((subtotale * scontoDurata / 100).toFixed(2));
+    righe.push({
+      label: `Sconto soggiorno lungo (${notti} notti, -${scontoDurata}%)`,
+      qty: null, unitPrice: null, total: -sconto, tipo:'sconto', badge:'lunga'
+    });
+    subtotale -= sconto;
+  }
+
+  // Extra aggiuntivi (colazioni, pulizie, ecc.)
+  for (const ex of extraRows) {
+    const tot = parseFloat((ex.qty * ex.unitPrice).toFixed(2));
+    righe.push({ label: ex.label, qty: ex.qty, unitPrice: ex.unitPrice, total: tot, tipo:'extra' });
+    subtotale += tot;
+  }
+
+  const totale = parseFloat(subtotale.toFixed(2));
+
+  return {
+    righe,
+    totale,
+    notti,
+    postiLetto,
+    moltStagionale,
+    convenzione,
+    scontoDurata,
+    cfg
+  };
+}
+
+/**
+ * Calcola la media pesata del moltiplicatore stagionale
+ * sui giorni compresi tra s e e.
+ */
+function calcolaMoltiplicatoreStagionale(s, e, stagioni) {
+  if (!stagioni || stagioni.length === 0) return 1;
+  const notti = Math.max(1, Math.round((e - s) / 86400000));
+  let sommaMolt = 0;
+
+  for (let i = 0; i < notti; i++) {
+    const d = new Date(s.getTime() + i * 86400000);
+    const mm = String(d.getMonth() + 1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    const key = `${mm}-${dd}`;
+    let molt = 1;
+    // Trova la stagione con moltiplicatore più alto che copre questo giorno
+    let maxMolt = 1;
+    for (const st of stagioni) {
+      if (inStagione(key, st.dal, st.al)) {
+        maxMolt = Math.max(maxMolt, parseFloat(st.molt) || 1);
+      }
+    }
+    sommaMolt += maxMolt;
+  }
+  return parseFloat((sommaMolt / notti).toFixed(3));
+}
+
+function inStagione(key, dal, al) {
+  // Confronto "MM-DD" gestendo stagioni a cavallo d'anno
+  if (dal <= al) return key >= dal && key <= al;
+  return key >= dal || key <= al; // Es. inverno: 11-01 → 03-14
+}
+
+// ═══════════════════════════════════════════════════════════
+// RENDER — TAB CONTO NEL DRAWER
+// ═══════════════════════════════════════════════════════════
+
+function renderDrawerBill(b) {
+  const room = ROOMS.find(r => r.id === b.r);
+  const isAppart = room && room.g === 'Appartamenti';
+
+  if (isAppart) {
+    return renderDrawerBillAppart(b, room);
+  }
+
+  const conto = calcolaConto(b, getExtraForBooking(b.id));
+
+  const rigoHtml = (r) => {
+    const totClass = r.total < 0 ? 'style="color:var(--danger)"' : '';
+    const badgeHtml = r.badge
+      ? `<span class="rate-badge ${r.badge}" style="margin-left:6px">${r.badge==='conv'?'conv':r.badge==='lunga'?'lunga':r.badge}</span>`
+      : '';
+    return `<div class="bill-row ${r.tipo==='sconto'?'discount':''}">
+      <span class="bill-row-label">${r.label}${badgeHtml}</span>
+      <span class="bill-row-qty">${r.qty!=null?r.qty+'n':''}</span>
+      <span class="bill-row-price">${r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':''}</span>
+      <span class="bill-row-total" ${totClass}>${r.total>=0?'+':''}${r.total.toFixed(2)}€</span>
+    </div>`;
+  };
+
+  return `
+    <div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <span style="font-size:11px;color:var(--text3)">PREVENTIVO CONTO</span>
+        <span class="bill-total">${conto.totale.toFixed(2)} €</span>
+      </div>
+      ${conto.righe.map(rigoHtml).join('')}
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="conti-section-title">Aggiungi extra</div>
+      <div class="extra-adder">
+        <select id="extraType_${b.id}">
+          <option value="colazione">🍳 Colazione</option>
+          <option value="pranzo">🍽 Pranzo</option>
+          <option value="cena">🌙 Cena</option>
+          <option value="pulizie">🧹 Pulizie extra</option>
+          <option value="cambioLenzuola">🛏 Cambio lenzuola</option>
+          <option value="deposito">🔒 Deposito cauzionale</option>
+        </select>
+        <input type="number" id="extraQty_${b.id}" value="1" min="1" style="width:55px" placeholder="qty">
+        <input type="number" id="extraPrice_${b.id}" value="" min="0" step="0.5" placeholder="€">
+        <button class="btn" onclick="addExtraToBooking(${b.id})">+ Add</button>
+      </div>
+      ${renderExtraRows(b.id)}
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;">📄 Emetti conto</button>
+      <button class="btn" onclick="apriPdf(${b.id})" style="flex:1;justify-content:center;">👁 Anteprima PDF</button>
+    </div>`;
+}
+
+function renderDrawerBillAppart(b, room) {
+  const cfg = loadBillSettings();
+  const appart = cfg.appartamenti.find(a => a.nome.toLowerCase() === room.name.toLowerCase());
+  const canone = appart ? appart.canone : 0;
+  const mesi = parseFloat((nights(b.s, b.e) / 30).toFixed(1));
+
+  return `
+    <div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+        <span style="font-size:11px;color:var(--text3)">APPARTAMENTO — CANONE</span>
+        <span class="rate-badge appart">affitto</span>
+      </div>
+      <div class="bill-row">
+        <span class="bill-row-label">Canone mensile ${room.name}</span>
+        <span class="bill-row-qty">${mesi}m</span>
+        <span class="bill-row-price">${canone}€/mese</span>
+        <span class="bill-row-total">${(canone*mesi).toFixed(2)}€</span>
+      </div>
+      ${renderExtraRows(b.id)}
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="conti-section-title">Aggiungi extra</div>
+      <div class="extra-adder">
+        <input type="text" id="extraLabel_${b.id}" placeholder="Descrizione (es. luce)" style="flex:2">
+        <input type="number" id="extraPrice_${b.id}" placeholder="€" step="0.01" style="flex:1">
+        <button class="btn" onclick="addExtraAppart(${b.id})">+ Add</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;">📄 Emetti conto</button>
+      <button class="btn" onclick="apriPdf(${b.id})" style="flex:1;justify-content:center;">👁 Anteprima PDF</button>
+    </div>`;
+}
+
+// ── Extra per prenotazione (storage locale) ──
+function getExtraForBooking(bid) {
+  try { return JSON.parse(localStorage.getItem(`billExtra_${bid}`) || '[]'); }
+  catch(e) { return []; }
+}
+function setExtraForBooking(bid, extras) {
+  localStorage.setItem(`billExtra_${bid}`, JSON.stringify(extras));
+}
+
+function renderExtraRows(bid) {
+  const extras = getExtraForBooking(bid);
+  if (!extras.length) return '';
+  return `<div style="margin-top:8px">${extras.map((ex, i) => `
+    <div class="bill-row extra">
+      <span class="bill-row-label">${ex.label}</span>
+      <span class="bill-row-qty">${ex.qty}</span>
+      <span class="bill-row-price">${ex.unitPrice.toFixed(2)}€</span>
+      <span class="bill-row-total">+${(ex.qty*ex.unitPrice).toFixed(2)}€</span>
+      <button onclick="removeExtra(${bid},${i})" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0 4px">✕</button>
+    </div>`).join('')}</div>`;
+}
+
+function addExtraToBooking(bid) {
+  const cfg  = loadBillSettings();
+  const tipo = document.getElementById(`extraType_${bid}`)?.value;
+  const qty  = parseFloat(document.getElementById(`extraQty_${bid}`)?.value || 1);
+  const prezzoInput = document.getElementById(`extraPrice_${bid}`)?.value;
+  const prezzo = prezzoInput ? parseFloat(prezzoInput) : (cfg.prezziExtra[tipo] || 0);
+  const labels = { colazione:'🍳 Colazione', pranzo:'🍽 Pranzo', cena:'🌙 Cena',
+    pulizie:'🧹 Pulizie extra', cambioLenzuola:'🛏 Cambio lenzuola', deposito:'🔒 Deposito cauzionale' };
+  const extras = getExtraForBooking(bid);
+  extras.push({ label: labels[tipo]||tipo, qty, unitPrice: prezzo });
+  setExtraForBooking(bid, extras);
+  // Ricarica il drawer
+  const b = bookings.find(x => x.id === bid);
+  if (b) showBookingDetail(bid);
+}
+
+function addExtraAppart(bid) {
+  const label = document.getElementById(`extraLabel_${bid}`)?.value?.trim();
+  const prezzo = parseFloat(document.getElementById(`extraPrice_${bid}`)?.value || 0);
+  if (!label) return;
+  const extras = getExtraForBooking(bid);
+  extras.push({ label, qty:1, unitPrice:prezzo });
+  setExtraForBooking(bid, extras);
+  const b = bookings.find(x => x.id === bid);
+  if (b) showBookingDetail(bid);
+}
+
+function removeExtra(bid, idx) {
+  const extras = getExtraForBooking(bid);
+  extras.splice(idx, 1);
+  setExtraForBooking(bid, extras);
+  const b = bookings.find(x => x.id === bid);
+  if (b) showBookingDetail(bid);
+}
+
+// ── Tab switcher nel drawer ──
+function drTab(el, showId) {
+  el.closest('.drbody, #drbody').querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  ['drTabInfo','drTabBill'].forEach(id => {
+    const d = document.getElementById(id);
+    if (d) d.style.display = id === showId ? '' : 'none';
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// EMETTI CONTO + PDF
+// ═══════════════════════════════════════════════════════════
+
+function emettiConto(bid) {
+  const b = bookings.find(x => x.id === bid);
+  if (!b) return;
+  const room = ROOMS.find(r => r.id === b.r);
+  const isAppart = room && room.g === 'Appartamenti';
+  const extras = getExtraForBooking(bid);
+  const conto = isAppart ? calcolaContoAppart(b, room, extras) : calcolaConto(b, extras);
+  const conti = loadConti();
+  const existing = conti.findIndex(c => c.bookingId === bid);
+  const doc = {
+    id: existing >= 0 ? conti[existing].id : `C${Date.now()}`,
+    bookingId: bid,
+    nome: b.n,
+    camera: room?.name || roomName(b.r),
+    checkin: b.s.toISOString(),
+    checkout: b.e.toISOString(),
+    righe: conto.righe,
+    totale: conto.totale,
+    extras,
+    status: 'emesso',
+    emessoIl: new Date().toISOString(),
+    isAppart
+  };
+  if (existing >= 0) conti[existing] = doc;
+  else conti.unshift(doc);
+  saveConti(conti);
+  apriPdf(bid);
+  showToast('✓ Conto emesso', 'success');
+}
+
+function calcolaContoAppart(b, room, extras) {
+  const cfg    = loadBillSettings();
+  const appart = cfg.appartamenti.find(a => a.nome.toLowerCase() === room.name.toLowerCase());
+  const canone = appart ? appart.canone : 0;
+  const mesi   = parseFloat((nights(b.s, b.e) / 30).toFixed(2));
+  const righe  = [{ label:`Canone mensile ${room.name}`, qty:mesi, unitPrice:canone, total:parseFloat((canone*mesi).toFixed(2)), tipo:'base', badge:'appart' }];
+  let totale   = canone * mesi;
+  for (const ex of extras) {
+    const tot = ex.qty * ex.unitPrice;
+    righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:tot, tipo:'extra' });
+    totale += tot;
+  }
+  return { righe, totale: parseFloat(totale.toFixed(2)) };
+}
+
+function apriPdf(bid) {
+  const b = bookings.find(x => x.id === bid);
+  if (!b) return;
+  const room   = ROOMS.find(r => r.id === b.r);
+  const isAppart = room && room.g === 'Appartamenti';
+  const extras = getExtraForBooking(bid);
+  const conto  = isAppart ? calcolaContoAppart(b, room, extras) : calcolaConto(b, extras);
+  const cfg    = loadBillSettings();
+
+  document.getElementById('pdfTitle').textContent = `Conto — ${b.n}`;
+  document.getElementById('printDoc').innerHTML = buildPdfDoc(b, room, conto, cfg, isAppart);
+  document.getElementById('pdfOverlay').classList.add('open');
+}
+
+function buildPdfDoc(b, room, conto, cfg, isAppart) {
+  const oggi = new Date().toLocaleDateString('it-IT');
+  const tipoDoc = isAppart ? 'Rendiconto Affitto' : 'Conto Soggiorno';
+  const righeHtml = conto.righe.filter(r => r.total !== 0).map(r => `
+    <tr>
+      <td>${r.label}${r.badge ? ` <span style="font-size:10px;background:#e8f4fd;color:#1a6fa8;padding:1px 6px;border-radius:8px">${r.badge}</span>` : ''}</td>
+      <td style="text-align:center">${r.qty != null ? r.qty : '—'}</td>
+      <td style="text-align:right">${r.unitPrice != null ? r.unitPrice.toFixed(2)+'€' : '—'}</td>
+      <td style="text-align:right;color:${r.total<0?'#c0392b':'inherit'}">${r.total>=0?'+':''}${r.total.toFixed(2)}€</td>
+    </tr>`).join('');
+
+  return `
+    <div class="doc-header">
+      <div class="doc-hotel-name">${cfg.hotelName}</div>
+      ${cfg.hotelAddress ? `<div class="doc-hotel-sub">${cfg.hotelAddress}</div>` : ''}
+      ${cfg.hotelTel ? `<div class="doc-hotel-sub">Tel: ${cfg.hotelTel}</div>` : ''}
+      <div class="doc-type">${tipoDoc}</div>
+    </div>
+    <div class="doc-section">
+      <div class="doc-section-title">Dati cliente</div>
+      <div class="doc-info-grid">
+        <div class="doc-info-item"><label>Nome</label><span>${b.n}</span></div>
+        <div class="doc-info-item"><label>Camera / Unità</label><span>${room?.name || roomName(b.r)}</span></div>
+        <div class="doc-info-item"><label>Check-in</label><span>${fmt(b.s)}</span></div>
+        <div class="doc-info-item"><label>Check-out</label><span>${fmt(b.e)}</span></div>
+        <div class="doc-info-item"><label>${isAppart?'Periodo':'Notti'}</label><span>${isAppart ? (nights(b.s,b.e)/30).toFixed(1)+' mesi' : nights(b.s,b.e)+' notti'}</span></div>
+        ${!isAppart?`<div class="doc-info-item"><label>Disposizione</label><span>${b.d||'—'}</span></div>`:''}
+      </div>
+    </div>
+    <div class="doc-section">
+      <div class="doc-section-title">Dettaglio</div>
+      <table class="doc-table">
+        <thead><tr><th>Descrizione</th><th style="text-align:center">Qtà</th><th style="text-align:right">Prezzo unit.</th><th style="text-align:right">Importo</th></tr></thead>
+        <tbody>${righeHtml}</tbody>
+        <tfoot>
+          <tr class="doc-total-row">
+            <td colspan="3"><strong>TOTALE</strong></td>
+            <td><strong>${conto.totale.toFixed(2)} €</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="doc-footer">
+      Documento emesso il ${oggi} · ${cfg.hotelName}<br>
+      ${cfg.hotelAddress || ''} ${cfg.hotelTel ? '· Tel: '+cfg.hotelTel : ''}
+    </div>`;
+}
+
+function closePdfOverlay() {
+  document.getElementById('pdfOverlay').classList.remove('open');
+}
+
+function shareDocWhatsApp() {
+  const cfg   = loadBillSettings();
+  const html  = document.getElementById('printDoc').innerText;
+  const lines = html.split('\n').filter(l => l.trim()).slice(0,25).join('\n');
+  const url   = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+  window.open(url, '_blank');
+}
+
+function shareDocEmail() {
+  const subj = encodeURIComponent('Conto soggiorno — ' + (document.getElementById('pdfTitle').textContent));
+  const body = encodeURIComponent(document.getElementById('printDoc').innerText);
+  window.open(`mailto:?subject=${subj}&body=${body}`, '_blank');
+}
+
+// ═══════════════════════════════════════════════════════════
+// PAGINA CONTI (tab principale)
+// ═══════════════════════════════════════════════════════════
+
+let _contiTab = 'lista';
+
+function openConti() {
+  document.getElementById('contiScreen').classList.add('open');
+  renderContiTab(_contiTab);
+}
+
+function closeConti() {
+  document.getElementById('contiScreen').classList.remove('open');
+}
+
+function switchContiTab(tab) {
+  _contiTab = tab;
+  document.querySelectorAll('.conti-tab').forEach((t,i) => {
+    const tabs = ['lista','appart','tariffe'];
+    t.classList.toggle('active', tabs[i] === tab);
+  });
+  renderContiTab(tab);
+}
+
+function renderContiTab(tab) {
+  const body = document.getElementById('contiBody');
+  if (tab === 'lista')   body.innerHTML = renderContiLista();
+  if (tab === 'appart')  body.innerHTML = renderContiAppart();
+  if (tab === 'tariffe') body.innerHTML = renderListino();
+}
+
+// ── Lista conti emessi ──
+function renderContiLista() {
+  const conti = loadConti();
+  if (!conti.length) return `<div class="empty" style="padding:40px 0"><div class="emptyicon">📋</div><div style="font-size:12px;color:var(--text3)">Nessun conto emesso.<br>Apri una prenotazione e vai al tab Conto.</div></div>`;
+
+  const byStatus = { emesso:[], pagato:[], bozza:[] };
+  conti.forEach(c => (byStatus[c.status] || byStatus.bozza).push(c));
+
+  const sectionHtml = (titolo, lista) => {
+    if (!lista.length) return '';
+    return `<div class="conti-section">
+      <div class="conti-section-title">${titolo} (${lista.length})</div>
+      ${lista.map(c => {
+        const ci = new Date(c.checkin), co = new Date(c.checkout);
+        return `<div class="bill-list-item" onclick="riapriFoglio(${c.bookingId})">
+          <div class="bill-list-dot" style="background:${bookings.find(b=>b.id===c.bookingId)?.c||'#ccc'}"></div>
+          <div class="bill-list-info">
+            <div class="bill-list-name">${c.nome}</div>
+            <div class="bill-list-sub">Cam. ${c.camera} · ${fmt(ci)} → ${fmt(co)} · Emesso ${new Date(c.emessoIl).toLocaleDateString('it-IT')}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <div class="bill-list-total">${c.totale.toFixed(2)}€</div>
+            <div class="bill-list-status ${c.status}">${c.status}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  };
+
+  return sectionHtml('✅ Pagati', byStatus.pagato) +
+         sectionHtml('📤 Emessi', byStatus.emesso) +
+         sectionHtml('📝 Bozze', byStatus.bozza);
+}
+
+function riapriFoglio(bid) {
+  closeConti();
+  const b = bookings.find(x => x.id === bid);
+  if (b) { showBookingDetail(bid); drTab(document.querySelector('.dr-bill-tab:nth-child(2)'), 'drTabBill'); }
+}
+
+// ── Appartamenti — canoni mese corrente ──
+function renderContiAppart() {
+  const cfg = loadBillSettings();
+  const oggi = new Date();
+  const appartIds = ROOMS.filter(r => r.g === 'Appartamenti').map(r => r.id);
+  const attivi = bookings.filter(b => {
+    if (!appartIds.includes(b.r)) return false;
+    return b.s <= oggi && b.e >= oggi;
+  });
+
+  if (!attivi.length) return `<div class="empty" style="padding:40px 0"><div class="emptyicon">🏠</div><div style="font-size:12px;color:var(--text3)">Nessun appartamento occupato questo mese.</div></div>`;
+
+  return `<div class="conti-section">
+    <div class="conti-section-title">Appartamenti occupati — ${oggi.toLocaleDateString('it-IT',{month:'long',year:'numeric'})}</div>
+    ${attivi.map(b => {
+      const room = ROOMS.find(r => r.id === b.r);
+      const ap = cfg.appartamenti.find(a => a.nome.toLowerCase() === room?.name.toLowerCase());
+      const canone = ap?.canone || 0;
+      return `<div class="bill-card">
+        <div class="bill-card-hdr">
+          <div><div class="bill-card-name">${b.n}</div><div class="bill-card-room">${room?.name}</div></div>
+          <div>
+            <div class="bill-total">${canone}€/mese</div>
+            <button class="btn" style="font-size:11px;margin-top:4px" onclick="closeConti();showBookingDetail(${b.id});setTimeout(()=>drTab(document.querySelectorAll('.dr-bill-tab')[1],'drTabBill'),100)">→ Conto</button>
+          </div>
+        </div>
+        <div class="bill-row"><span class="bill-row-label">Periodo</span><span class="bill-row-total">${fmt(b.s)} → ${fmt(b.e)}</span></div>
+        <div class="bill-row"><span class="bill-row-label">Durata</span><span class="bill-row-total">${(nights(b.s,b.e)/30).toFixed(1)} mesi</span></div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// ── Listino tariffe (visualizzazione) ──
+function renderListino() {
+  const cfg = loadBillSettings();
+  return `
+    <div class="conti-section">
+      <div class="conti-section-title">Tariffa base</div>
+      <div class="bill-row"><span class="bill-row-label">Posto letto singolo / notte</span><span class="bill-row-total">${cfg.tariffaBase}€</span></div>
+      <div class="bill-row"><span class="bill-row-label">Matrimoniale (×${cfg.moltiplicatori.m})</span><span class="bill-row-total">${(cfg.tariffaBase*cfg.moltiplicatori.m).toFixed(0)}€</span></div>
+      <div class="bill-row"><span class="bill-row-label">Matrimoniale uso singolo (×${cfg.moltiplicatori.ms})</span><span class="bill-row-total">${(cfg.tariffaBase*cfg.moltiplicatori.ms).toFixed(0)}€</span></div>
+    </div>
+    <div class="conti-section">
+      <div class="conti-section-title">Stagionalità</div>
+      ${cfg.stagioni.map(s=>`<div class="bill-row"><span class="bill-row-label">${s.nome} (${s.dal} → ${s.al})</span><span class="rate-badge stagionale">×${s.molt}</span></div>`).join('')}
+    </div>
+    <div class="conti-section">
+      <div class="conti-section-title">Convenzioni</div>
+      ${cfg.convenzioni.map(c=>`<div class="bill-row"><span class="bill-row-label">${c.nome}</span><span class="rate-badge conv">${c.tipo==='sconto'?'-'+c.valore+'%':'€'+c.valore+'/notte'}</span></div>`).join('')}
+    </div>
+    <div class="conti-section">
+      <div class="conti-section-title">Sconti durata</div>
+      ${cfg.scontiDurata.map(s=>`<div class="bill-row"><span class="bill-row-label">${s.soglia}+ notti</span><span class="rate-badge lunga">-${s.sconto}%</span></div>`).join('')}
+    </div>
+    <button class="btn primary" onclick="openContiSettings()" style="width:100%;justify-content:center;margin-top:8px">⚙ Modifica tariffe</button>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+// SETTINGS TARIFFE
+// ═══════════════════════════════════════════════════════════
+
+function openContiSettings() {
+  const cfg = loadBillSettings();
+  document.getElementById('contiSettingsBody').innerHTML = buildContiSettingsForm(cfg);
+  document.getElementById('contiSettingsOverlay').style.display = 'flex';
+}
+
+function closeContiSettings() {
+  document.getElementById('contiSettingsOverlay').style.display = 'none';
+}
+
+function buildContiSettingsForm(cfg) {
+  const stagRow = (s, i) => `
+    <div class="rate-season-row" id="stagRow_${i}">
+      <input type="text" value="${s.nome}" placeholder="Nome stagione" id="stagNome_${i}">
+      <input type="text" value="${s.dal}–${s.al}" placeholder="MM-DD–MM-DD" id="stagPeriod_${i}">
+      <input type="number" value="${s.molt}" step="0.1" min="0.5" max="3" placeholder="×molt" id="stagMolt_${i}">
+      <button class="btn-icon-sm" onclick="removeStagRow(${i})">✕</button>
+    </div>`;
+
+  const convRow = (c, i) => `
+    <div class="rate-conv-row" id="convRow_${i}">
+      <input type="text" value="${c.nome}" placeholder="Nome cliente/azienda" id="convNome_${i}">
+      <input type="text" value="${c.tipo==='sconto'?c.valore+'%':c.valore+'€'}" placeholder="20% o 30€" id="convVal_${i}">
+      <button class="btn-icon-sm" onclick="removeConvRow(${i})">✕</button>
+    </div>`;
+
+  const durRow = (d, i) => `
+    <div class="rate-season-row" id="durRow_${i}" style="grid-template-columns:1fr 1fr 36px">
+      <input type="number" value="${d.soglia}" placeholder="Soglia notti" id="durSoglia_${i}">
+      <input type="text" value="${d.sconto}%" placeholder="Sconto %" id="durSconto_${i}">
+      <button class="btn-icon-sm" onclick="removeDurRow(${i})">✕</button>
+    </div>`;
+
+  return `
+    <div class="conti-section">
+      <div class="conti-section-title">Hotel</div>
+      <div class="rate-grid">
+        <div class="rate-field" style="grid-column:1/-1"><label>Nome struttura</label><input id="cfgHotelName" value="${cfg.hotelName}"></div>
+        <div class="rate-field" style="grid-column:1/-1"><label>Indirizzo</label><input id="cfgHotelAddr" value="${cfg.hotelAddress||''}"></div>
+        <div class="rate-field"><label>Telefono</label><input id="cfgHotelTel" value="${cfg.hotelTel||''}"></div>
+        <div class="rate-field"><label>Tariffa base (€/letto/notte)</label><input type="number" id="cfgBase" value="${cfg.tariffaBase}" step="0.5"></div>
+      </div>
+      <div class="rate-grid">
+        <div class="rate-field"><label>Moltipl. Matrimoniale</label><input type="number" id="cfgMoltM" value="${cfg.moltiplicatori.m}" step="0.1"></div>
+        <div class="rate-field"><label>Moltipl. M/S</label><input type="number" id="cfgMoltMS" value="${cfg.moltiplicatori.ms}" step="0.1"></div>
+        <div class="rate-field"><label>Moltipl. Singolo</label><input type="number" id="cfgMoltS" value="${cfg.moltiplicatori.s}" step="0.1"></div>
+        <div class="rate-field"><label>Minimo letti/camera</label><input type="number" id="cfgMinimo" value="${cfg.minimoCamera}" step="0.5"></div>
+      </div>
+    </div>
+    <div class="conti-section">
+      <div class="conti-section-title">Stagioni</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Formato periodo: MM-DD–MM-DD (es. 06-15–09-15)</div>
+      <div id="stagRows">${cfg.stagioni.map(stagRow).join('')}</div>
+      <button class="btn-icon-add" onclick="addStagRow()" style="margin-top:4px">+</button>
+    </div>
+    <div class="conti-section">
+      <div class="conti-section-title">Convenzioni clienti</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Valore: "20%" per sconto percentuale, "30€" per tariffa netta per letto</div>
+      <div id="convRows">${cfg.convenzioni.map(convRow).join('')}</div>
+      <button class="btn-icon-add" onclick="addConvRow()" style="margin-top:4px">+</button>
+    </div>
+    <div class="conti-section">
+      <div class="conti-section-title">Sconti per durata</div>
+      <div id="durRows">${cfg.scontiDurata.map(durRow).join('')}</div>
+      <button class="btn-icon-add" onclick="addDurRow()" style="margin-top:4px">+</button>
+    </div>
+    <div class="conti-section">
+      <div class="conti-section-title">Prezzi extra predefiniti</div>
+      <div class="rate-grid">
+        ${['colazione','pranzo','cena','pulizie','cambioLenzuola'].map(k=>`
+        <div class="rate-field"><label>${k}</label><input type="number" id="extra_${k}" value="${cfg.prezziExtra[k]||0}" step="0.5"></div>`).join('')}
+      </div>
+    </div>`;
+}
+
+// ── Aggiungi/rimuovi righe settings ──
+let _stagCount, _convCount, _durCount;
+function addStagRow() {
+  const rows = document.getElementById('stagRows');
+  const i = rows.children.length;
+  rows.insertAdjacentHTML('beforeend', `<div class="rate-season-row" id="stagRow_${i}">
+    <input type="text" placeholder="Nome stagione" id="stagNome_${i}">
+    <input type="text" placeholder="MM-DD–MM-DD" id="stagPeriod_${i}">
+    <input type="number" value="1.0" step="0.1" id="stagMolt_${i}">
+    <button class="btn-icon-sm" onclick="this.closest('.rate-season-row').remove()">✕</button>
+  </div>`);
+}
+function removeStagRow(i) { document.getElementById(`stagRow_${i}`)?.remove(); }
+
+function addConvRow() {
+  const rows = document.getElementById('convRows');
+  const i = rows.children.length;
+  rows.insertAdjacentHTML('beforeend', `<div class="rate-conv-row" id="convRow_${i}">
+    <input type="text" placeholder="Nome cliente" id="convNome_${i}">
+    <input type="text" placeholder="20% o 30€" id="convVal_${i}">
+    <button class="btn-icon-sm" onclick="this.closest('.rate-conv-row').remove()">✕</button>
+  </div>`);
+}
+function removeConvRow(i) { document.getElementById(`convRow_${i}`)?.remove(); }
+
+function addDurRow() {
+  const rows = document.getElementById('durRows');
+  const i = rows.children.length;
+  rows.insertAdjacentHTML('beforeend', `<div class="rate-season-row" id="durRow_${i}" style="grid-template-columns:1fr 1fr 36px">
+    <input type="number" placeholder="Soglia notti" id="durSoglia_${i}">
+    <input type="text" placeholder="Sconto %" id="durSconto_${i}">
+    <button class="btn-icon-sm" onclick="this.closest('.rate-season-row').remove()">✕</button>
+  </div>`);
+}
+function removeDurRow(i) { document.getElementById(`durRow_${i}`)?.remove(); }
+
+function saveContiSettings() {
+  const cfg = loadBillSettings();
+  cfg.hotelName    = document.getElementById('cfgHotelName')?.value || cfg.hotelName;
+  cfg.hotelAddress = document.getElementById('cfgHotelAddr')?.value || '';
+  cfg.hotelTel     = document.getElementById('cfgHotelTel')?.value  || '';
+  cfg.tariffaBase  = parseFloat(document.getElementById('cfgBase')?.value   || cfg.tariffaBase);
+  cfg.moltiplicatori.m  = parseFloat(document.getElementById('cfgMoltM')?.value  || 1.8);
+  cfg.moltiplicatori.ms = parseFloat(document.getElementById('cfgMoltMS')?.value || 1.0);
+  cfg.moltiplicatori.s  = parseFloat(document.getElementById('cfgMoltS')?.value  || 1.0);
+  cfg.minimoCamera      = parseFloat(document.getElementById('cfgMinimo')?.value || 1);
+
+  // Stagioni
+  cfg.stagioni = [];
+  document.querySelectorAll('[id^=stagRow_]').forEach(row => {
+    const i   = row.id.split('_')[1];
+    const nom = document.getElementById(`stagNome_${i}`)?.value?.trim();
+    const per = document.getElementById(`stagPeriod_${i}`)?.value?.trim();
+    const mol = parseFloat(document.getElementById(`stagMolt_${i}`)?.value || 1);
+    if (nom && per && per.includes('–')) {
+      const [dal, al] = per.split('–');
+      cfg.stagioni.push({ nome:nom, dal:dal.trim(), al:al.trim(), molt:mol });
+    }
+  });
+
+  // Convenzioni
+  cfg.convenzioni = [];
+  document.querySelectorAll('[id^=convRow_]').forEach(row => {
+    const i   = row.id.split('_')[1];
+    const nom = document.getElementById(`convNome_${i}`)?.value?.trim();
+    const val = document.getElementById(`convVal_${i}`)?.value?.trim();
+    if (nom && val) {
+      if (val.endsWith('%')) cfg.convenzioni.push({ nome:nom, tipo:'sconto', valore:parseFloat(val) });
+      else if (val.endsWith('€')) cfg.convenzioni.push({ nome:nom, tipo:'netta', valore:parseFloat(val) });
+    }
+  });
+
+  // Sconti durata
+  cfg.scontiDurata = [];
+  document.querySelectorAll('[id^=durRow_]').forEach(row => {
+    const i   = row.id.split('_')[1];
+    const sog = parseInt(document.getElementById(`durSoglia_${i}`)?.value || 0);
+    const sco = parseFloat(document.getElementById(`durSconto_${i}`)?.value || 0);
+    if (sog > 0) cfg.scontiDurata.push({ soglia:sog, sconto:sco });
+  });
+  cfg.scontiDurata.sort((a,b) => b.soglia - a.soglia);
+
+  // Extra
+  ['colazione','pranzo','cena','pulizie','cambioLenzuola'].forEach(k => {
+    cfg.prezziExtra[k] = parseFloat(document.getElementById(`extra_${k}`)?.value || 0);
+  });
+
+  saveBillSettings(cfg);
+  closeContiSettings();
+  renderContiTab(_contiTab);
+  showToast('✓ Tariffe salvate', 'success');
+}
 </script>
 </body>
 </html>
