@@ -4697,42 +4697,52 @@ const BILL_CONTI_KEY     = 'hotelConti';
 // extra prezzi: colazione, pulizie, ecc.
 
 function billSettingsDefault() {
+  // Costruisce tariffe per camera da ROOMS (giornaliera + mensile)
+  const tariffeCamere = {};
+  const defaults = {
+    r1:60,r2:60,r3:60,r4:60,r5:60,r6:60,r7:60,r8:60,r9:60,r10:60,
+    r100:65,r101:65,r102:65,r103:65,r104:65,
+    r21:70,r22:70,r23:70,r24:70,r25:70,r31:80,
+    marasanta:{ giornaliera:80,  mensile:1200 },
+    margher:  { giornaliera:70,  mensile:1100 },
+    marg1:    { giornaliera:70,  mensile:1000 },
+    sole:     { giornaliera:80,  mensile:1200 },
+    giove:    { giornaliera:100, mensile:1600 },
+    saturno:  { giornaliera:85,  mensile:1400 },
+    nettuno:  { giornaliera:70,  mensile:1100 },
+    marte:    { giornaliera:90,  mensile:1500 },
+    venere:   { giornaliera:70,  mensile:1100 },
+    mercurio: { giornaliera:75,  mensile:1200 },
+    giuliaB:  { giornaliera:60,  mensile:900  },
+    giuliaC:  { giornaliera:60,  mensile:900  },
+    giuliaD:  { giornaliera:60,  mensile:900  },
+    giuliaE:  { giornaliera:60,  mensile:900  },
+  };
+  ROOMS.forEach(r => {
+    const d = defaults[r.id];
+    if (typeof d === 'number') tariffeCamere[r.id] = { giornaliera: d, mensile: d * 25 };
+    else if (d)                tariffeCamere[r.id] = d;
+    else                       tariffeCamere[r.id] = { giornaliera: 0, mensile: 0 };
+  });
   return {
     hotelName: 'Il mio Hotel',
     hotelAddress: '',
     hotelTel: '',
-    tariffaBase: 35,          // € per posto letto/notte
-    moltiplicatori: { m: 1.8, ms: 1.0, s: 1.0, c: 0 },
-    minimoCamera: 1,           // minimo letti fatturabili per camera
+    tariffaBase: 60,        // fallback globale se camera non ha tariffa
+    tariffeCamere,
     stagioni: [
-      { nome:'Alta stagione',    dal:'06-15', al:'09-15', molt:1.5 },
-      { nome:'Media stagione',   dal:'03-15', al:'06-14', molt:1.2 },
-      { nome:'Bassa stagione',   dal:'09-16', al:'03-14', molt:1.0 },
+      { nome:'Alta stagione',  dal:'06-15', al:'09-15', molt:1.5 },
+      { nome:'Media stagione', dal:'03-15', al:'06-14', molt:1.2 },
+      { nome:'Bassa stagione', dal:'09-16', al:'03-14', molt:1.0 },
     ],
     convenzioni: [
-      { nome:'mammana',      tipo:'sconto', valore:20 },
-      { nome:'geoambiente',  tipo:'sconto', valore:20 },
-      { nome:'Sicily Divide',tipo:'netta',  valore:30 },
+      { nome:'mammana',       tipo:'sconto', valore:20 },
+      { nome:'geoambiente',   tipo:'sconto', valore:20 },
+      { nome:'Sicily Divide', tipo:'sconto', valore:15 },
     ],
     scontiDurata: [
       { soglia:30, sconto:20 },
       { soglia:7,  sconto:10 },
-    ],
-    appartamenti: [
-      { nome:'marasanta',       canone:600,  extra:[] },
-      { nome:'margherita p.t.', canone:550,  extra:[] },
-      { nome:'marg.ta 1 p.',    canone:500,  extra:[] },
-      { nome:'sole',            canone:700,  extra:[] },
-      { nome:'giove 4/6',       canone:900,  extra:[] },
-      { nome:'saturno 3',       canone:750,  extra:[] },
-      { nome:'nettuno 2',       canone:650,  extra:[] },
-      { nome:'marte 3/4',       canone:800,  extra:[] },
-      { nome:'venere 2',        canone:650,  extra:[] },
-      { nome:'mercurio 3',      canone:700,  extra:[] },
-      { nome:'Giulia B',        canone:500,  extra:[] },
-      { nome:'Giulia C',        canone:500,  extra:[] },
-      { nome:'Giulia D',        canone:500,  extra:[] },
-      { nome:'Giulia E',        canone:500,  extra:[] },
     ],
     prezziExtra: {
       colazione:    5,
@@ -4740,9 +4750,18 @@ function billSettingsDefault() {
       cena:         15,
       pulizie:      30,
       cambioLenzuola: 15,
-      deposito:     0,   // libero
+      deposito:     0,
     }
   };
+}
+
+// Legge la tariffa specifica di una camera (con fallback al globale)
+function getRoomRate(roomId, tipo) {
+  const cfg = loadBillSettings();
+  const t   = cfg.tariffeCamere?.[roomId];
+  if (t && t[tipo] > 0) return t[tipo];
+  const fb  = cfg.tariffaBase || 60;
+  return tipo === 'mensile' ? fb * 25 : fb;
 }
 
 // ── Carica/salva settings ──
@@ -4777,108 +4796,66 @@ function saveConti(conti) {
  * Restituisce oggetto con righe dettaglio e totale.
  */
 function calcolaConto(booking, extraRows = []) {
-  const cfg  = loadBillSettings();
-  const notti = nights(booking.s, booking.e);
-  const letti = parseBedString(booking.d);
+  const cfg         = loadBillSettings();
+  const notti       = nights(booking.s, booking.e);
   const nomeCliente = booking.n.toLowerCase();
 
-  // 1. Posti letto da fatturare
-  const postiLetto = Math.max(
-    (letti.m  * cfg.moltiplicatori.m) +
-    (letti.ms * cfg.moltiplicatori.ms) +
-    (letti.s  * cfg.moltiplicatori.s),
-    cfg.minimoCamera
-  );
+  // 1. Tariffa giornaliera della camera specifica
+  const tariffaGiornaliera = getRoomRate(booking.r, 'giornaliera');
 
-  // 2. Tariffa base × posti letto
-  const tariffaGiornaliera = cfg.tariffaBase * postiLetto;
-
-  // 3. Stagionalità: calcola media moltiplicatore sui giorni
+  // 2. Stagionalità: media moltiplicatore sui giorni
   const moltStagionale = calcolaMoltiplicatoreStagionale(booking.s, booking.e, cfg.stagioni);
+  const prezzoNotte    = parseFloat((tariffaGiornaliera * moltStagionale).toFixed(2));
+  const subtotaleBase  = parseFloat((prezzoNotte * notti).toFixed(2));
 
-  // 4. Verifica convenzione
+  // 3. Convenzione cliente
   let convenzione = null;
   for (const cv of (cfg.convenzioni || [])) {
-    if (nomeCliente.includes(cv.nome.toLowerCase())) {
-      convenzione = cv; break;
-    }
+    if (nomeCliente.includes(cv.nome.toLowerCase())) { convenzione = cv; break; }
   }
 
-  // 5. Sconto durata
+  // 4. Sconto durata (solo se no convenzione)
   let scontoDurata = 0;
-  const scontiOrdinati = [...(cfg.scontiDurata || [])].sort((a,b) => b.soglia - a.soglia);
-  for (const sd of scontiOrdinati) {
-    if (notti >= sd.soglia) { scontoDurata = sd.sconto; break; }
+  if (!convenzione) {
+    const scontiOrd = [...(cfg.scontiDurata || [])].sort((a,b) => b.soglia - a.soglia);
+    for (const sd of scontiOrd) { if (notti >= sd.soglia) { scontoDurata = sd.sconto; break; } }
   }
 
   // ── Costruisci righe ──
   const righe = [];
-
-  // Riga notti base
-  const baseNotte = parseFloat((tariffaGiornaliera * moltStagionale).toFixed(2));
-  const subtotaleBase = parseFloat((baseNotte * notti).toFixed(2));
+  const stagLabel = moltStagionale !== 1 ? ` ×${moltStagionale.toFixed(2)}` : '';
   righe.push({
-    label: `Pernottamento (${postiLetto.toFixed(1)} posti × ${cfg.tariffaBase}€/notte)`,
-    qty: notti,
-    unitPrice: baseNotte,
-    total: subtotaleBase,
+    label: `Pernottamento cam. ${roomName(booking.r)}${stagLabel}`,
+    qty: notti, unitPrice: prezzoNotte, total: subtotaleBase,
     tipo: 'base',
     badge: moltStagionale !== 1 ? `×${moltStagionale.toFixed(2)} stagionale` : null
   });
 
   let subtotale = subtotaleBase;
 
-  // Sconto convenzione
   if (convenzione) {
-    if (convenzione.tipo === 'sconto') {
-      const sconto = parseFloat((subtotale * convenzione.valore / 100).toFixed(2));
-      righe.push({
-        label: `Tariffa convenzionata — ${convenzione.nome} (-${convenzione.valore}%)`,
-        qty: null, unitPrice: null, total: -sconto, tipo:'sconto',
-        badge: 'conv'
-      });
-      subtotale -= sconto;
-    } else if (convenzione.tipo === 'netta') {
-      const tariffaNetta = convenzione.valore * postiLetto * notti;
-      righe.push({
-        label: `Tariffa netta — ${convenzione.nome}`,
-        qty: notti, unitPrice: convenzione.valore * postiLetto, total: tariffaNetta,
-        tipo:'conv', badge:'conv'
-      });
-      // Sostituisce la base
-      righe[0].total = 0;
-      righe[0].label += ' (sostituita da tariffa netta)';
-      subtotale = tariffaNetta;
-    }
+    const sconto = parseFloat((subtotale * convenzione.valore / 100).toFixed(2));
+    righe.push({
+      label: `Conv. ${convenzione.nome} (-${convenzione.valore}%)`,
+      qty: null, unitPrice: null, total: -sconto, tipo:'sconto', badge:'conv'
+    });
+    subtotale -= sconto;
   } else if (scontoDurata > 0) {
-    // Sconto durata solo se non c'è convenzione
     const sconto = parseFloat((subtotale * scontoDurata / 100).toFixed(2));
     righe.push({
-      label: `Sconto soggiorno lungo (${notti} notti, -${scontoDurata}%)`,
+      label: `Sconto lunga durata ${notti} notti (-${scontoDurata}%)`,
       qty: null, unitPrice: null, total: -sconto, tipo:'sconto', badge:'lunga'
     });
     subtotale -= sconto;
   }
 
-  // Extra aggiuntivi (colazioni, pulizie, ecc.)
   for (const ex of extraRows) {
     const tot = parseFloat((ex.qty * ex.unitPrice).toFixed(2));
     righe.push({ label: ex.label, qty: ex.qty, unitPrice: ex.unitPrice, total: tot, tipo:'extra' });
     subtotale += tot;
   }
 
-  const totale = parseFloat(subtotale.toFixed(2));
-
-  return {
-    righe,
-    totale,
-    notti,
-    postiLetto,
-    moltStagionale,
-    convenzione,
-    scontoDurata,
-    cfg
-  };
+  return { righe, totale: parseFloat(subtotale.toFixed(2)), notti, moltStagionale, convenzione, scontoDurata, tariffaGiornaliera, cfg };
 }
 
 /**
@@ -4973,22 +4950,33 @@ function renderDrawerBill(b) {
 }
 
 function renderDrawerBillAppart(b, room) {
-  const cfg = loadBillSettings();
-  const appart = cfg.appartamenti.find(a => a.nome.toLowerCase() === room.name.toLowerCase());
-  const canone = appart ? appart.canone : 0;
-  const mesi = parseFloat((nights(b.s, b.e) / 30).toFixed(1));
+  const notti      = nights(b.s, b.e);
+  const mesi       = parseFloat((notti / 30).toFixed(2));
+  const canoneM    = getRoomRate(room.id, 'mensile');
+  const canoneG    = getRoomRate(room.id, 'giornaliera');
+  // Usa mensile se soggiorno >= 20 notti, altrimenti giornaliero
+  const usaMensile = notti >= 20;
+  const importo    = usaMensile
+    ? parseFloat((canoneM * mesi).toFixed(2))
+    : parseFloat((canoneG * notti).toFixed(2));
+  const modeLabel  = usaMensile
+    ? `${mesi} mesi × ${canoneM}€/mese`
+    : `${notti} notti × ${canoneG}€/notte`;
 
   return `
     <div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
-        <span style="font-size:11px;color:var(--text3)">APPARTAMENTO — CANONE</span>
+        <span style="font-size:11px;color:var(--text3)">APPARTAMENTO — ${usaMensile?'CANONE MENSILE':'TARIFFA GIORNALIERA'}</span>
         <span class="rate-badge appart">affitto</span>
       </div>
       <div class="bill-row">
-        <span class="bill-row-label">Canone mensile ${room.name}</span>
-        <span class="bill-row-qty">${mesi}m</span>
-        <span class="bill-row-price">${canone}€/mese</span>
-        <span class="bill-row-total">${(canone*mesi).toFixed(2)}€</span>
+        <span class="bill-row-label">${room.name}</span>
+        <span class="bill-row-qty" style="width:auto;flex:1;text-align:right;color:var(--text2)">${modeLabel}</span>
+        <span class="bill-row-total">${importo.toFixed(2)}€</span>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:4px;text-align:right">
+        Alt: ${usaMensile ? notti+' notti × '+canoneG+'€ = '+( canoneG*notti).toFixed(2)+'€ (giorn.)' : mesi+' mesi × '+canoneM+'€ = '+(canoneM*mesi).toFixed(2)+'€ (mens.)'}
+        <button onclick="toggleAppartMode(${b.id})" style="border:none;background:none;color:var(--accent);font-size:10px;cursor:pointer;margin-left:6px;text-decoration:underline">usa ${usaMensile?'giornaliera':'mensile'}</button>
       </div>
       ${renderExtraRows(b.id)}
     </div>
@@ -5108,18 +5096,38 @@ function emettiConto(bid) {
 }
 
 function calcolaContoAppart(b, room, extras) {
-  const cfg    = loadBillSettings();
-  const appart = cfg.appartamenti.find(a => a.nome.toLowerCase() === room.name.toLowerCase());
-  const canone = appart ? appart.canone : 0;
-  const mesi   = parseFloat((nights(b.s, b.e) / 30).toFixed(2));
-  const righe  = [{ label:`Canone mensile ${room.name}`, qty:mesi, unitPrice:canone, total:parseFloat((canone*mesi).toFixed(2)), tipo:'base', badge:'appart' }];
-  let totale   = canone * mesi;
+  const notti      = nights(b.s, b.e);
+  const mesi       = parseFloat((notti / 30).toFixed(2));
+  const usaMensile = getAppartMode(b.id, notti);
+  const canone     = usaMensile ? getRoomRate(room.id, 'mensile') : getRoomRate(room.id, 'giornaliera');
+  const qty        = usaMensile ? mesi : notti;
+  const unitLabel  = usaMensile ? 'mese' : 'notte';
+  const total      = parseFloat((canone * qty).toFixed(2));
+  const righe      = [{ label:`${room.name} (${qty} ${unitLabel} × ${canone}€)`, qty, unitPrice:canone, total, tipo:'base', badge:'appart' }];
+  let totale       = total;
   for (const ex of extras) {
-    const tot = ex.qty * ex.unitPrice;
+    const tot = parseFloat((ex.qty * ex.unitPrice).toFixed(2));
     righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:tot, tipo:'extra' });
     totale += tot;
   }
   return { righe, totale: parseFloat(totale.toFixed(2)) };
+}
+
+// Modalità mensile/giornaliera per appartamento (override manuale)
+function getAppartMode(bid, notti) {
+  const key = `appartMode_${bid}`;
+  const stored = localStorage.getItem(key);
+  if (stored === 'giornaliera') return false;
+  if (stored === 'mensile')     return true;
+  return notti >= 20; // default automatico
+}
+function toggleAppartMode(bid) {
+  const b    = bookings.find(x => x.id === bid);
+  const room = ROOMS.find(r => r.id === b?.r);
+  const notti = nights(b.s, b.e);
+  const current = getAppartMode(bid, notti);
+  localStorage.setItem(`appartMode_${bid}`, current ? 'giornaliera' : 'mensile');
+  if (b) showBookingDetail(bid);
 }
 
 function apriPdf(bid) {
@@ -5308,21 +5316,40 @@ function renderContiAppart() {
 
 // ── Listino tariffe (visualizzazione) ──
 function renderListino() {
-  const cfg = loadBillSettings();
-  return `
+  const cfg    = loadBillSettings();
+  const groups = {};
+  ROOMS.forEach(r => {
+    if (!groups[r.g]) groups[r.g] = [];
+    groups[r.g].push(r);
+  });
+
+  const groupsHtml = Object.entries(groups).map(([g, rooms]) => `
     <div class="conti-section">
-      <div class="conti-section-title">Tariffa base</div>
-      <div class="bill-row"><span class="bill-row-label">Posto letto singolo / notte</span><span class="bill-row-total">${cfg.tariffaBase}€</span></div>
-      <div class="bill-row"><span class="bill-row-label">Matrimoniale (×${cfg.moltiplicatori.m})</span><span class="bill-row-total">${(cfg.tariffaBase*cfg.moltiplicatori.m).toFixed(0)}€</span></div>
-      <div class="bill-row"><span class="bill-row-label">Matrimoniale uso singolo (×${cfg.moltiplicatori.ms})</span><span class="bill-row-total">${(cfg.tariffaBase*cfg.moltiplicatori.ms).toFixed(0)}€</span></div>
-    </div>
+      <div class="conti-section-title">${g}</div>
+      <div style="display:grid;grid-template-columns:1fr 70px 70px;gap:4px;font-size:11px;font-weight:600;color:var(--text3);padding:0 0 4px;border-bottom:1px solid var(--border);margin-bottom:4px">
+        <span>Camera</span><span style="text-align:right">Notte</span><span style="text-align:right">Mensile</span>
+      </div>
+      ${rooms.map(r => {
+        const t = cfg.tariffeCamere?.[r.id] || {giornaliera:0, mensile:0};
+        const gColor = t.giornaliera>0 ? '' : 'color:var(--text3)';
+        const mColor = t.mensile>0    ? '' : 'color:var(--text3)';
+        return `<div style="display:grid;grid-template-columns:1fr 70px 70px;gap:4px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <span>${r.name}</span>
+          <span style="text-align:right;font-weight:600;${gColor}">${t.giornaliera>0?t.giornaliera+'€':'—'}</span>
+          <span style="text-align:right;font-weight:600;${mColor}">${t.mensile>0?t.mensile+'€':'—'}</span>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+
+  return `
+    ${groupsHtml}
     <div class="conti-section">
       <div class="conti-section-title">Stagionalità</div>
       ${cfg.stagioni.map(s=>`<div class="bill-row"><span class="bill-row-label">${s.nome} (${s.dal} → ${s.al})</span><span class="rate-badge stagionale">×${s.molt}</span></div>`).join('')}
     </div>
     <div class="conti-section">
       <div class="conti-section-title">Convenzioni</div>
-      ${cfg.convenzioni.map(c=>`<div class="bill-row"><span class="bill-row-label">${c.nome}</span><span class="rate-badge conv">${c.tipo==='sconto'?'-'+c.valore+'%':'€'+c.valore+'/notte'}</span></div>`).join('')}
+      ${cfg.convenzioni.map(c=>`<div class="bill-row"><span class="bill-row-label">${c.nome}</span><span class="rate-badge conv">-${c.valore}%</span></div>`).join('')}
     </div>
     <div class="conti-section">
       <div class="conti-section-title">Sconti durata</div>
@@ -5353,46 +5380,60 @@ function buildContiSettingsForm(cfg) {
       <input type="number" value="${s.molt}" step="0.1" min="0.5" max="3" placeholder="×molt" id="stagMolt_${i}">
       <button class="btn-icon-sm" onclick="removeStagRow(${i})">✕</button>
     </div>`;
-
   const convRow = (c, i) => `
     <div class="rate-conv-row" id="convRow_${i}">
       <input type="text" value="${c.nome}" placeholder="Nome cliente/azienda" id="convNome_${i}">
-      <input type="text" value="${c.tipo==='sconto'?c.valore+'%':c.valore+'€'}" placeholder="20% o 30€" id="convVal_${i}">
+      <input type="text" value="${c.valore}%" placeholder="20%" id="convVal_${i}">
       <button class="btn-icon-sm" onclick="removeConvRow(${i})">✕</button>
     </div>`;
-
   const durRow = (d, i) => `
     <div class="rate-season-row" id="durRow_${i}" style="grid-template-columns:1fr 1fr 36px">
       <input type="number" value="${d.soglia}" placeholder="Soglia notti" id="durSoglia_${i}">
-      <input type="text" value="${d.sconto}%" placeholder="Sconto %" id="durSconto_${i}">
+      <input type="number" value="${d.sconto}" placeholder="%" id="durSconto_${i}">
       <button class="btn-icon-sm" onclick="removeDurRow(${i})">✕</button>
     </div>`;
 
+  // Costruisce la griglia tariffe per gruppo di camere
+  const groups = {};
+  ROOMS.forEach(r => { if (!groups[r.g]) groups[r.g] = []; groups[r.g].push(r); });
+  const cameraRows = Object.entries(groups).map(([g, rooms]) => `
+    <div class="conti-section">
+      <div class="conti-section-title">${g}</div>
+      <div style="display:grid;grid-template-columns:1fr 90px 90px;gap:6px 10px;align-items:center;margin-bottom:4px">
+        <span style="font-size:10px;font-weight:600;color:var(--text3)">Camera</span>
+        <span style="font-size:10px;font-weight:600;color:var(--text3);text-align:center">€/notte</span>
+        <span style="font-size:10px;font-weight:600;color:var(--text3);text-align:center">€/mese</span>
+        ${rooms.map(r => {
+          const t = cfg.tariffeCamere?.[r.id] || {giornaliera:0, mensile:0};
+          return `<label style="font-size:12px;font-weight:500">${r.name}</label>
+            <input type="number" id="tg_${r.id}" value="${t.giornaliera||''}" placeholder="0" min="0" step="1"
+              style="padding:5px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:center;width:100%">
+            <input type="number" id="tm_${r.id}" value="${t.mensile||''}"     placeholder="0" min="0" step="10"
+              style="padding:5px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:center;width:100%">`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+
   return `
     <div class="conti-section">
-      <div class="conti-section-title">Hotel</div>
+      <div class="conti-section-title">Struttura</div>
       <div class="rate-grid">
         <div class="rate-field" style="grid-column:1/-1"><label>Nome struttura</label><input id="cfgHotelName" value="${cfg.hotelName}"></div>
         <div class="rate-field" style="grid-column:1/-1"><label>Indirizzo</label><input id="cfgHotelAddr" value="${cfg.hotelAddress||''}"></div>
         <div class="rate-field"><label>Telefono</label><input id="cfgHotelTel" value="${cfg.hotelTel||''}"></div>
-        <div class="rate-field"><label>Tariffa base (€/letto/notte)</label><input type="number" id="cfgBase" value="${cfg.tariffaBase}" step="0.5"></div>
-      </div>
-      <div class="rate-grid">
-        <div class="rate-field"><label>Moltipl. Matrimoniale</label><input type="number" id="cfgMoltM" value="${cfg.moltiplicatori.m}" step="0.1"></div>
-        <div class="rate-field"><label>Moltipl. M/S</label><input type="number" id="cfgMoltMS" value="${cfg.moltiplicatori.ms}" step="0.1"></div>
-        <div class="rate-field"><label>Moltipl. Singolo</label><input type="number" id="cfgMoltS" value="${cfg.moltiplicatori.s}" step="0.1"></div>
-        <div class="rate-field"><label>Minimo letti/camera</label><input type="number" id="cfgMinimo" value="${cfg.minimoCamera}" step="0.5"></div>
+        <div class="rate-field"><label>Tariffa fallback (€/notte)</label><input type="number" id="cfgBase" value="${cfg.tariffaBase}" step="1"></div>
       </div>
     </div>
+    ${cameraRows}
     <div class="conti-section">
-      <div class="conti-section-title">Stagioni</div>
-      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Formato periodo: MM-DD–MM-DD (es. 06-15–09-15)</div>
+      <div class="conti-section-title">Stagionalità</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Formato: MM-DD–MM-DD · es. 06-15–09-15 per 15 giu → 15 set</div>
       <div id="stagRows">${cfg.stagioni.map(stagRow).join('')}</div>
       <button class="btn-icon-add" onclick="addStagRow()" style="margin-top:4px">+</button>
     </div>
     <div class="conti-section">
-      <div class="conti-section-title">Convenzioni clienti</div>
-      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Valore: "20%" per sconto percentuale, "30€" per tariffa netta per letto</div>
+      <div class="conti-section-title">Convenzioni (sconto %)</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Nome cliente o azienda come appare nelle prenotazioni</div>
       <div id="convRows">${cfg.convenzioni.map(convRow).join('')}</div>
       <button class="btn-icon-add" onclick="addConvRow()" style="margin-top:4px">+</button>
     </div>
@@ -5451,11 +5492,15 @@ function saveContiSettings() {
   cfg.hotelName    = document.getElementById('cfgHotelName')?.value || cfg.hotelName;
   cfg.hotelAddress = document.getElementById('cfgHotelAddr')?.value || '';
   cfg.hotelTel     = document.getElementById('cfgHotelTel')?.value  || '';
-  cfg.tariffaBase  = parseFloat(document.getElementById('cfgBase')?.value   || cfg.tariffaBase);
-  cfg.moltiplicatori.m  = parseFloat(document.getElementById('cfgMoltM')?.value  || 1.8);
-  cfg.moltiplicatori.ms = parseFloat(document.getElementById('cfgMoltMS')?.value || 1.0);
-  cfg.moltiplicatori.s  = parseFloat(document.getElementById('cfgMoltS')?.value  || 1.0);
-  cfg.minimoCamera      = parseFloat(document.getElementById('cfgMinimo')?.value || 1);
+  cfg.tariffaBase  = parseFloat(document.getElementById('cfgBase')?.value || cfg.tariffaBase);
+
+  // Tariffe per camera
+  if (!cfg.tariffeCamere) cfg.tariffeCamere = {};
+  ROOMS.forEach(r => {
+    const g = parseFloat(document.getElementById(`tg_${r.id}`)?.value || 0);
+    const m = parseFloat(document.getElementById(`tm_${r.id}`)?.value || 0);
+    cfg.tariffeCamere[r.id] = { giornaliera: g, mensile: m };
+  });
 
   // Stagioni
   cfg.stagioni = [];
@@ -5470,16 +5515,13 @@ function saveContiSettings() {
     }
   });
 
-  // Convenzioni
+  // Convenzioni (sempre sconto %)
   cfg.convenzioni = [];
   document.querySelectorAll('[id^=convRow_]').forEach(row => {
     const i   = row.id.split('_')[1];
     const nom = document.getElementById(`convNome_${i}`)?.value?.trim();
-    const val = document.getElementById(`convVal_${i}`)?.value?.trim();
-    if (nom && val) {
-      if (val.endsWith('%')) cfg.convenzioni.push({ nome:nom, tipo:'sconto', valore:parseFloat(val) });
-      else if (val.endsWith('€')) cfg.convenzioni.push({ nome:nom, tipo:'netta', valore:parseFloat(val) });
-    }
+    const val = parseFloat(document.getElementById(`convVal_${i}`)?.value || 0);
+    if (nom && val > 0) cfg.convenzioni.push({ nome:nom, tipo:'sconto', valore:val });
   });
 
   // Sconti durata
@@ -5488,11 +5530,11 @@ function saveContiSettings() {
     const i   = row.id.split('_')[1];
     const sog = parseInt(document.getElementById(`durSoglia_${i}`)?.value || 0);
     const sco = parseFloat(document.getElementById(`durSconto_${i}`)?.value || 0);
-    if (sog > 0) cfg.scontiDurata.push({ soglia:sog, sconto:sco });
+    if (sog > 0 && sco > 0) cfg.scontiDurata.push({ soglia:sog, sconto:sco });
   });
   cfg.scontiDurata.sort((a,b) => b.soglia - a.soglia);
 
-  // Extra
+  // Extra predefiniti
   ['colazione','pranzo','cena','pulizie','cambioLenzuola'].forEach(k => {
     cfg.prezziExtra[k] = parseFloat(document.getElementById(`extra_${k}`)?.value || 0);
   });
