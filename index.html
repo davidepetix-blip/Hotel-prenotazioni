@@ -3198,30 +3198,23 @@ function updateStats(){
 }
 
 function changeMonth(d, animate=false){
-  const dir = d > 0 ? 'slide-left' : 'slide-right';
-  const gi  = document.getElementById('ginner');
-  if (animate && gi) {
-    gi.classList.add(dir);
-    setTimeout(() => {
-      curM += d; if(curM>11){curM=0;curY++;} if(curM<0){curM=11;curY--;}
-      render();
+  curM += d;
+  if(curM > 11){ curM = 0; curY++; }
+  if(curM <  0){ curM = 11; curY--; }
+  render();
+  // Breve fade-in sul nuovo contenuto
+  if(animate){
+    const gi = document.getElementById('ginner');
+    if(gi){
+      gi.style.opacity = '0';
+      gi.style.transform = d > 0 ? 'translateX(32px)' : 'translateX(-32px)';
       requestAnimationFrame(() => {
-        const gi2 = document.getElementById('ginner');
-        if (gi2) {
-          gi2.style.opacity = '0';
-          gi2.style.transform = d>0 ? 'translateX(48px)' : 'translateX(-48px)';
-          requestAnimationFrame(() => {
-            gi2.style.transition = 'opacity .18s ease, transform .18s ease';
-            gi2.style.opacity = '';
-            gi2.style.transform = '';
-            setTimeout(() => { gi2.style.transition = ''; }, 200);
-          });
-        }
+        gi.style.transition = 'opacity .2s ease, transform .2s ease';
+        gi.style.opacity = '1';
+        gi.style.transform = 'translateX(0)';
+        setTimeout(() => { gi.style.transition = ''; }, 220);
       });
-    }, 160);
-  } else {
-    curM += d; if(curM>11){curM=0;curY++;} if(curM<0){curM=11;curY--;}
-    render();
+    }
   }
 }
 function goToday(){ const t=new Date(); curM=t.getMonth(); curY=t.getFullYear(); render(); setTimeout(()=>{ document.getElementById('gscroll').scrollLeft=Math.max(0,(t.getDate()-4)*34+90); },60); }
