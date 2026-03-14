@@ -659,7 +659,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 15.1</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 15.2</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -680,7 +680,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 15.1">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 15.2">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -3364,7 +3364,7 @@ function cellClick(rid,day){
 // ═══════════════════════════════════════════════════════════════════
 // DRAWER
 // ═══════════════════════════════════════════════════════════════════
-function openDrawer(){ document.getElementById('drawer').classList.add('open'); document.getElementById('dov').classList.add('open'); }
+function openDrawer(){ hideTT(); document.getElementById('drawer').classList.add('open'); document.getElementById('dov').classList.add('open'); }
 
 function openRoomDrawer(roomId) {
   const room = ROOMS.find(r=>r.id===roomId);
@@ -3599,7 +3599,8 @@ function movTT(e){
   tt.style.left=lx+'px'; tt.style.top=ly+'px';
 }
 function hideTT(){ document.getElementById('tt').style.display='none'; }
-document.addEventListener('mousemove',movTT);
+document.addEventListener('mousemove', movTT);
+document.addEventListener('touchstart', hideTT, { passive: true });
 
 // ═══════════════════════════════════════════════════════════════════
 // INIT
