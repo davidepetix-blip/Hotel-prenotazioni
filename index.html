@@ -652,6 +652,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 14</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -672,7 +673,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 14">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -1518,7 +1519,16 @@ async function dbGet(range) {
   const id = DATABASE_SHEET_ID;
   if (!id) throw new Error('DATABASE_SHEET_ID non configurato. Vai in Impostazioni.');
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`;
-  const r = await apiFetch(url);
+  // Timeout 30s per evitare blocco UI su rete lenta
+  const ctrl = new AbortController();
+  const tid   = setTimeout(() => ctrl.abort(), 30000);
+  let r;
+  try {
+    r = await apiFetch(url, { signal: ctrl.signal });
+  } catch(e) {
+    if (e.name === 'AbortError') throw new Error('DB GET timeout (>30s) — controlla la connessione');
+    throw e;
+  } finally { clearTimeout(tid); }
   if (!r.ok) throw new Error(`DB GET error ${r.status}: ${await r.text()}`);
   return r.json();
 }
@@ -1558,7 +1568,8 @@ async function dbUpdateRow(rowNum, values) {
   // rowNum è 1-based (riga nel foglio Google)
   const id = DATABASE_SHEET_ID;
   if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
-  const range = `${DB_SHEET_NAME}!A${rowNum}:L${rowNum}`;
+  const lastCol = values.length >= 13 ? 'N' : 'L';
+  const range = `${DB_SHEET_NAME}!A${rowNum}:${lastCol}${rowNum}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
   const r = await apiFetch(url, {
     method: 'PUT',
@@ -1813,7 +1824,7 @@ function syncRoomSettingsFromStates() {
 
 // ── Leggi tutto il DATABASE ──
 async function readDatabase() {
-  const data = await dbGet(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:L9999`);
+  const data = await dbGet(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:N9999`); // A:N = 14 col (include DELETED_AT, REASON)
   const rows = data.values || [];
   dbRowCache = [];
   const result = [];
