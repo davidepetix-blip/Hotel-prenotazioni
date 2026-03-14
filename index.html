@@ -92,7 +92,14 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 /* ── BODY ── */
 .body { flex: 1; display: flex; overflow: hidden; }
 .gscroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; }
-.ginner { min-width: max-content; padding-bottom: 20px; background: var(--bg); }
+.ginner { min-width: max-content; padding-bottom: 20px; background: var(--bg);
+  transition: opacity .18s ease, transform .18s ease; }
+.ginner.slide-left  { opacity: 0; transform: translateX(-48px); }
+.ginner.slide-right { opacity: 0; transform: translateX( 48px); }
+/* Frecce mese su mobile — nascoste, rimpiazzate dallo swipe */
+@media (max-width: 600px) {
+  .month-nav button { opacity: .45; font-size: 18px; padding: 0 6px; }
+}
 
 /* ── LEGEND ── */
 .legend { display: flex; align-items: center; gap: 12px; padding: 6px 14px; border-bottom: 1px solid var(--border); background: var(--surface2); position: sticky; top: 0; z-index: 20; overflow-x: auto; scrollbar-width: none; }
@@ -3190,8 +3197,80 @@ function updateStats(){
   document.getElementById('stfre').textContent=ROOMS.length-occ;
 }
 
-function changeMonth(d){ curM+=d; if(curM>11){curM=0;curY++;} if(curM<0){curM=11;curY--;} render(); }
+function changeMonth(d, animate=false){
+  const dir = d > 0 ? 'slide-left' : 'slide-right';
+  const gi  = document.getElementById('ginner');
+  if (animate && gi) {
+    gi.classList.add(dir);
+    setTimeout(() => {
+      curM += d; if(curM>11){curM=0;curY++;} if(curM<0){curM=11;curY--;}
+      render();
+      requestAnimationFrame(() => {
+        const gi2 = document.getElementById('ginner');
+        if (gi2) {
+          gi2.style.opacity = '0';
+          gi2.style.transform = d>0 ? 'translateX(48px)' : 'translateX(-48px)';
+          requestAnimationFrame(() => {
+            gi2.style.transition = 'opacity .18s ease, transform .18s ease';
+            gi2.style.opacity = '';
+            gi2.style.transform = '';
+            setTimeout(() => { gi2.style.transition = ''; }, 200);
+          });
+        }
+      });
+    }, 160);
+  } else {
+    curM += d; if(curM>11){curM=0;curY++;} if(curM<0){curM=11;curY--;}
+    render();
+  }
+}
 function goToday(){ const t=new Date(); curM=t.getMonth(); curY=t.getFullYear(); render(); setTimeout(()=>{ document.getElementById('gscroll').scrollLeft=Math.max(0,(t.getDate()-4)*34+90); },60); }
+
+// ── SWIPE orizzontale per cambiare mese ──
+// Logica: se l'utente ha scrollato fino al bordo E continua a trascinare
+// nella stessa direzione oltre una soglia → cambia mese.
+(function initSwipeMonth() {
+  let tx0=0, ty0=0, sx0=0, _locked=false, _dir=0;
+  const THRESH_PX  = 55;   // px di overscroll per triggerare
+  const MIN_HORIZ  = 28;   // movimento minimo orizzontale
+  const MAX_VERT   = 40;   // massimo verticale (se troppo verticale = scroll normale)
+
+  function gs() { return document.getElementById('gscroll'); }
+
+  document.addEventListener('touchstart', e => {
+    const el = gs(); if (!el || !el.contains(e.target)) return;
+    tx0 = e.touches[0].clientX;
+    ty0 = e.touches[0].clientY;
+    sx0 = el.scrollLeft;
+    _locked = false; _dir = 0;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', e => {
+    if (_locked) return;
+    const el = gs(); if (!el) return;
+    const dx = e.touches[0].clientX - tx0;
+    const dy = Math.abs(e.touches[0].clientY - ty0);
+    if (dy > MAX_VERT) { _locked = true; return; }
+    if (Math.abs(dx) < MIN_HORIZ) return;
+
+    const atLeft  = el.scrollLeft <= 0;
+    const atRight = el.scrollLeft >= el.scrollWidth - el.clientWidth - 2;
+
+    if (dx > THRESH_PX && atLeft && sx0 <= 0) {
+      _locked = true; _dir = -1;
+    } else if (dx < -THRESH_PX && atRight) {
+      _locked = true; _dir = 1;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', () => {
+    if (_dir !== 0) {
+      changeMonth(_dir, true);
+      _dir = 0;
+    }
+    _locked = false;
+  });
+})();
 
 // ═══════════════════════════════════════════════════════════════════
 // INTERAZIONI
