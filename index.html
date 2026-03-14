@@ -2724,9 +2724,9 @@ async function writeFragment(sName, cameraName, startDay, endDay, firstCellText,
   }
 
   const sid = arguments[8] || (annualSheets.find(e => e.sheetId)?.sheetId || '');
-  const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}:batchUpdate`, {
+  const resp = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}:batchUpdate`, {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests })
   });
   if (!resp.ok) throw new Error(`Scrittura fallita (${resp.status}): ${await resp.text()}`);
@@ -2750,10 +2750,14 @@ async function writeBookingToSheet(b) {
   }
 
   // 2. Scrivi/aggiorna nel DATABASE
+  // fonte='app' finché la prenotazione non viene confermata dal foglio.
+  // Al prossimo sync il foglio la sovrascriverà e diventerà 'manuale',
+  // ma questo non è un problema perché i dati sono gli stessi.
   if (DATABASE_SHEET_ID) {
-    b.dbId  = b.dbId  || genBookingId(b.s.getFullYear());
-    b.ts    = nowISO();
-    b.fonte = 'app';
+    b.dbId    = b.dbId  || genBookingId(b.s.getFullYear());
+    b.ts      = nowISO();
+    b.fonte   = 'app';
+    b.fromSheet = true;  // ora è anche sul foglio
     await dbUpsert(b, 'app');
   }
 }
@@ -3014,15 +3018,17 @@ async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap, sp
     }
   ];
   const cSid = spreadsheetId || annualSheets.find(e => e.sheetId)?.sheetId || '';
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cSid}:batchUpdate`, {
+  const cr = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${cSid}:batchUpdate`, {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests })
   });
+  if (!cr.ok) console.warn(`clearFragment HTTP ${cr.status}`);
 }
 
 async function clearBookingFromSheet(b) {
-  if (!b.fromSheet) return;
+  // Pulisci foglio sempre, indipendentemente da fromSheet
+  // (bidirezionale: funziona per prenotazioni nate dall'app o dal foglio)
   const fragments = splitBookingByMonth(b);
   for (const frag of fragments) {
     const colorEnd = frag.isLastFrag ? frag.endDay - 1 : frag.endDay;
@@ -3261,8 +3267,9 @@ async function delBook(id){
   closeDrawer();
   showLoading('Rimozione…');
   try {
-    if(b.fromSheet) await clearBookingFromSheet(b);
-    if(DATABASE_SHEET_ID && b.dbRow) await dbDelete(b);
+    // Rimuovi dal foglio Google sempre (bidirezionale)
+    await clearBookingFromSheet(b);
+    if(DATABASE_SHEET_ID && b.dbRow) await dbDelete(b, 'Eliminata dall\'app');
     bookings=bookings.filter(x=>x.id!==id);
     hideLoading(); render();
     showToast('Prenotazione eliminata', 'success');
@@ -3478,9 +3485,9 @@ async function saveBooking(){
   showLoading('Scrittura sul foglio Google…');
 
   try {
-    // Se è una modifica, prima cancella il vecchio
-    const oldB = bookings.find(b=>b.id===newB.id&&b.fromSheet);
-    if(oldB) await clearBookingFromSheet(oldB);
+    // Se è una modifica, cancella sempre il vecchio dal foglio (bidirezionale)
+    const oldB = existingB || bookings.find(b=>b.id===newB.id);
+    if(oldB && oldB.id === newB.id) await clearBookingFromSheet({...oldB, fromSheet:true});
 
     await writeBookingToSheet(newB);
     // Segna come salvato
