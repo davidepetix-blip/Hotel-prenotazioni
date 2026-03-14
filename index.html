@@ -652,7 +652,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 14</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 15</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -673,7 +673,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 14">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 15">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -1969,10 +1969,35 @@ async function ensureCestinoHeaders() {
   _cestinoHeadersChecked = true;
   const id = DATABASE_SHEET_ID;
   if (!id) return;
+
+  // Controlla se la scheda CESTINO esiste già
+  let exists = false;
+  try {
+    const meta = await apiFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=sheets.properties.title`
+    );
+    const metaJson = await meta.json();
+    exists = (metaJson.sheets || []).some(s => s.properties.title === CESTINO_SHEET_NAME);
+  } catch(e) { console.warn('[CESTINO] Errore lettura metadati:', e.message); }
+
+  if (!exists) {
+    // Crea la scheda CESTINO via addSheet
+    try {
+      await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests: [{ addSheet: { properties: { title: CESTINO_SHEET_NAME } } }] })
+      });
+      console.log('[CESTINO] Scheda creata nel foglio DB');
+    } catch(e) { console.warn('[CESTINO] Errore creazione scheda:', e.message); return; }
+  }
+
+  // Scrivi intestazioni (solo se riga 1 è vuota)
   try {
     const d = await dbGet(`${CESTINO_SHEET_NAME}!A1:O1`);
-    if (d.values?.[0]?.length > 0) return;
-  } catch(e) { /* foglio non esiste ancora */ }
+    if (d.values?.[0]?.length > 0) return; // già presenti
+  } catch(e) {}
+
   try {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME+'!A1:O1')}?valueInputOption=RAW`;
     await apiFetch(url, {
@@ -1980,6 +2005,7 @@ async function ensureCestinoHeaders() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: [['ID','CAMERA','NOME','DAL','AL','DISPOSIZIONE','NOTE','COLORE','ANNO','FONTE','TS_MODIFICA','DELETED','DELETED_AT','REASON','RIGA_ORIGINALE']] })
     });
+    console.log('[CESTINO] Intestazioni scritte');
   } catch(e) { console.warn('[CESTINO] Errore intestazioni:', e.message); }
 }
 
