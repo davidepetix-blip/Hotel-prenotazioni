@@ -958,7 +958,8 @@ const DB_COLS = {
   TS:          11, // K — timestamp ISO
   DELETED:     12, // L — "true" se eliminata (soft delete)
 };
-const DB_SHEET_NAME  = 'PRENOTAZIONI';
+const DB_SHEET_NAME     = 'PRENOTAZIONI';
+const CESTINO_SHEET_NAME = 'CESTINO';          // Righe cancellate spostate qui
 const DB_HEADER_ROW  = 1;
 const DB_FIRST_ROW   = 2;
 
@@ -1211,10 +1212,10 @@ const roomName  = rid => ROOMS.find(r=>r.id===rid)?.name || rid;
 const roomGroup = rid => ROOMS.find(r=>r.id===rid)?.g || '';
 const sheetName = (y,m) => `${MONTHS_IT[m]} ${y}`;
 
-function showToast(msg, type='') {
+function showToast(msg, type='', ms=3000) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.className = 'toast show ' + type;
-  setTimeout(() => { t.className = 'toast'; }, 3000);
+  setTimeout(() => { t.className = 'toast'; }, ms);
 }
 function showLoading(msg='Caricamento…') {
   if (_bgSyncRunning) return;  // mai bloccare l'UI durante bgSync
@@ -1590,6 +1591,8 @@ function bookingToDbRow(b, fonte = 'app') {
   arr[DB_COLS.FONTE-1]   = fonte;
   arr[DB_COLS.TS-1]      = b.ts || nowISO();
   arr[DB_COLS.DELETED-1] = b.deleted ? 'true' : '';
+  arr[12] = b.deletedAt || '';   // col M: timestamp cancellazione (per CESTINO)
+  arr[13] = b.deleteReason || ''; // col N: motivo cancellazione
   return arr;
 }
 
@@ -1860,12 +1863,77 @@ async function dbUpsert(b, fonte = 'app') {
 }
 
 // ── Soft-delete nel DATABASE ──
-async function dbDelete(b) {
+// ─────────────────────────────────────────────────────────────────
+// CESTINO — Le righe cancellate vengono SPOSTATE nella scheda CESTINO
+// invece di essere marcate inline. Questo:
+//   1. Mantiene PRENOTAZIONI pulita e veloce
+//   2. Permette il recupero in caso di errore
+//   3. Registra il motivo e il timestamp di cancellazione
+// ─────────────────────────────────────────────────────────────────
+
+async function dbDelete(b, reason = 'cancellata dal foglio') {
   if (!b.dbRow) return;
+  try {
+    // 1. Sposta nel CESTINO (append)
+    await moveToCestino(b, reason);
+    // 2. Cancella la riga da PRENOTAZIONI (sovrascriviamo con riga vuota
+    //    per non spostare i rowNum delle righe successive)
+    //    Usiamo solo DELETED=true + timestamp, NON spostiamo la riga fisicamente
+    //    (deleteRow sposterebbe tutti i rowNum → romperebbe la cache)
+    const row = bookingToDbRow(b, b.fonte || 'app');
+    row[DB_COLS.DELETED-1] = 'true';
+    row[DB_COLS.TS-1]      = nowISO();
+    row[12] = nowISO();      // DELETED_AT
+    row[13] = reason;        // REASON
+    await dbUpdateRow(b.dbRow, row);
+  } catch(e) {
+    console.warn('[dbDelete] Errore:', e.message);
+  }
+}
+
+/**
+ * Copia una riga nel foglio CESTINO con metadati aggiuntivi.
+ * Crea il foglio CESTINO se non esiste ancora.
+ */
+async function moveToCestino(b, reason) {
+  const id = DATABASE_SHEET_ID;
+  if (!id) return;
+
+  // Intestazioni CESTINO (prima volta)
+  await ensureCestinoHeaders();
+
   const row = bookingToDbRow(b, b.fonte || 'app');
   row[DB_COLS.DELETED-1] = 'true';
-  row[DB_COLS.TS-1] = nowISO();
-  await dbUpdateRow(b.dbRow, row);
+  row[12] = nowISO();   // DELETED_AT
+  row[13] = reason;     // REASON
+  row[14] = b.dbRow || ''; // RIGA_ORIGINALE (per recupero)
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+  await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [row] })
+  });
+}
+
+let _cestinoHeadersChecked = false;
+async function ensureCestinoHeaders() {
+  if (_cestinoHeadersChecked) return;
+  _cestinoHeadersChecked = true;
+  const id = DATABASE_SHEET_ID;
+  if (!id) return;
+  try {
+    const d = await dbGet(`${CESTINO_SHEET_NAME}!A1:O1`);
+    if (d.values?.[0]?.length > 0) return; // intestazioni già presenti
+  } catch(e) { /* foglio non esiste ancora, verrà creato dall'append */ }
+  try {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME+'!A1:O1')}?valueInputOption=RAW`;
+    await apiFetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: [['ID','CAMERA','NOME','DAL','AL','DISPOSIZIONE','NOTE','COLORE','ANNO','FONTE','TS_MODIFICA','DELETED','DELETED_AT','REASON','RIGA_ORIGINALE']] })
+    });
+  } catch(e) { console.warn('[CESTINO] Errore intestazioni:', e.message); }
 }
 
 // ── Leggi tutte le prenotazioni dalle righe 45 di UN foglio annuale ──
@@ -2180,31 +2248,47 @@ async function syncWithDatabase(annualBookings, forceSync = false) {
   }
 
   // ── Prenotazioni solo nel DB ──
-  // Se fonte='manuale' e NON trovabile nel foglio neanche con tolleranza ±1gg → DELETED
-  // Se fonte='app' → mantieni sempre (inserita dall'app, non necessariamente nel foglio)
+  // Regole:
+  //   fonte='app'     → mantieni sempre (non necessariamente nel foglio Gantt)
+  //   fonte='manuale' + non trovata + nome valido → CESTINO (cancellata dal foglio)
+  //   fonte='manuale' + nome="???" → NON cancellare: è un'anomalia di parsing,
+  //                                   non una cancellazione vera
   const toDeleteInDb = [];
   for (const db of dbBookings) {
     if (seen.has(db.dbId)) continue;
-    // Cerca nel foglio con tolleranza
-    const keyExact = `${db.cameraName}|${db.n}|${db.s.getTime()}`;
-    const keyM1    = `${db.cameraName}|${db.n}|${db.s.getTime()-DAY_MS}`;
-    const keyP1    = `${db.cameraName}|${db.n}|${db.s.getTime()+DAY_MS}`;
+
+    // Prenotazione inserita dall'app: non eliminiamo mai automaticamente
+    if (db.fonte !== 'manuale') { result.push(db); continue; }
+
+    // Nome "???" = parsing fallito → NON eliminare, potrebbe matchare in futuro
+    if (!db.n || db.n === '???' || db.n.trim() === '') { result.push(db); continue; }
+
+    // Cerca nel foglio con tolleranza ±1gg
+    const keyExact = db.cameraName+'|'+db.n+'|'+db.s.getTime();
+    const keyM1    = db.cameraName+'|'+db.n+'|'+(db.s.getTime()-DAY_MS);
+    const keyP1    = db.cameraName+'|'+db.n+'|'+(db.s.getTime()+DAY_MS);
     const stillInFoglio = annByKey.has(keyExact) || annByKey.has(keyM1) || annByKey.has(keyP1);
 
-    if (!stillInFoglio && db.fonte === 'manuale') {
-      console.log(`Cancellazione rilevata: ${db.cameraName} / ${db.n}`);
+    if (!stillInFoglio) {
+      const reason = 'Non trovata nel foglio Gantt alla sincronizzazione del ' + new Date().toLocaleDateString('it-IT');
+      console.log('[CESTINO] ' + db.cameraName + ' / ' + db.n + ' — ' + reason);
       db.deleted = true;
+      db.deleteReason = reason;
+      db.deletedAt = nowISO();
       toDeleteInDb.push(db);
     } else {
       result.push(db);
     }
   }
 
-  // Soft-delete in batch nel DB
+  // Sposta nel CESTINO (async, non bloccante)
   for (const b of toDeleteInDb) {
-    try { await dbDelete(b); } catch(e) { console.warn('dbDelete error:', e.message); }
+    try { await dbDelete(b, b.deleteReason); } catch(e) { console.warn('[CESTINO] Errore:', e.message); }
   }
-  if (toDeleteInDb.length > 0) console.log(`✓ ${toDeleteInDb.length} prenotazioni rimosse (cancellate dal foglio)`);
+  if (toDeleteInDb.length > 0) {
+    console.log('[CESTINO] ' + toDeleteInDb.length + ' prenotazioni spostate nel CESTINO');
+    showToast('🗑 ' + toDeleteInDb.length + ' prenotazion' + (toDeleteInDb.length===1?'e':'i') + ' spostat' + (toDeleteInDb.length===1?'a':'e') + ' nel Cestino (scheda CESTINO nel foglio DB)', 'warn', 6000);
+  };
 
   // ── Import batch: 50 righe per chiamata ──
   if (toImportBatch.length > 0) {
