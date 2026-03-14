@@ -1882,49 +1882,85 @@ async function dbUpsert(b, fonte = 'app') {
 //   3. Registra il motivo e il timestamp di cancellazione
 // ─────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────
+// CESTINO — scheda "CESTINO" nel foglio DATABASE Google
+// Le righe cancellate vengono:
+//   1. Copiate in CESTINO (batch, 1 sola chiamata API per N righe)
+//   2. Marcate DELETED=true in PRENOTAZIONI (batch batchUpdate)
+// Non si cancellano fisicamente per non spostare i rowNum.
+// ─────────────────────────────────────────────────────────────────
+
+// Cancellazione singola (es. cancellazione manuale dall'app)
 async function dbDelete(b, reason = 'cancellata dal foglio') {
   if (!b.dbRow) return;
   try {
-    // 1. Sposta nel CESTINO (append)
-    await moveToCestino(b, reason);
-    // 2. Cancella la riga da PRENOTAZIONI (sovrascriviamo con riga vuota
-    //    per non spostare i rowNum delle righe successive)
-    //    Usiamo solo DELETED=true + timestamp, NON spostiamo la riga fisicamente
-    //    (deleteRow sposterebbe tutti i rowNum → romperebbe la cache)
-    const row = bookingToDbRow(b, b.fonte || 'app');
-    row[DB_COLS.DELETED-1] = 'true';
-    row[DB_COLS.TS-1]      = nowISO();
-    row[12] = nowISO();      // DELETED_AT
-    row[13] = reason;        // REASON
-    await dbUpdateRow(b.dbRow, row);
+    await archiviaInCestino([b], reason);
   } catch(e) {
     console.warn('[dbDelete] Errore:', e.message);
   }
 }
 
 /**
- * Copia una riga nel foglio CESTINO con metadati aggiuntivi.
- * Crea il foglio CESTINO se non esiste ancora.
+ * Archivia un array di prenotazioni nel CESTINO in un'unica chiamata API
+ * e le marca DELETED nel DB in un'altra unica chiamata (batchUpdate).
+ *
+ * @param {Array}  lista   Prenotazioni da archiviare
+ * @param {string} reason  Motivo della cancellazione
  */
-async function moveToCestino(b, reason) {
+async function archiviaInCestino(lista, reason) {
   const id = DATABASE_SHEET_ID;
-  if (!id) return;
+  if (!id || lista.length === 0) return;
 
-  // Intestazioni CESTINO (prima volta)
+  const ts = nowISO();
   await ensureCestinoHeaders();
 
-  const row = bookingToDbRow(b, b.fonte || 'app');
-  row[DB_COLS.DELETED-1] = 'true';
-  row[12] = nowISO();   // DELETED_AT
-  row[13] = reason;     // REASON
-  row[14] = b.dbRow || ''; // RIGA_ORIGINALE (per recupero)
+  // ── 1. Append batch nel CESTINO (1 chiamata) ──
+  const righe = lista.map(b => {
+    const row = bookingToDbRow(b, b.fonte || 'app');
+    row[DB_COLS.DELETED-1] = 'true';
+    row[12] = ts;
+    row[13] = reason || 'motivo non specificato';
+    row[14] = b.dbRow || '';
+    return row;
+  });
 
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-  await apiFetch(url, {
+  const urlAppend = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+  await apiFetch(urlAppend, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [row] })
+    body: JSON.stringify({ values: righe })
   });
+
+  // ── 2. Marca DELETED in PRENOTAZIONI (batch, 1 chiamata) ──
+  // Usa batchUpdate per aggiornare tutte le righe in un colpo solo
+  const conRiga = lista.filter(b => b.dbRow);
+  if (conRiga.length > 0) {
+    const data = conRiga.map(b => {
+      const row = bookingToDbRow(b, b.fonte || 'app');
+      row[DB_COLS.DELETED-1] = 'true';
+      row[DB_COLS.TS-1]      = ts;
+      row[12] = ts;
+      row[13] = reason;
+      const lastCol = String.fromCharCode(64 + row.length); // A=1 → 'A', 14 → 'N'
+      return {
+        range: `${DB_SHEET_NAME}!A${b.dbRow}:${lastCol}${b.dbRow}`,
+        values: [row]
+      };
+    });
+
+    // Sheets batchUpdate valori: max 1000 range per chiamata
+    for (let i = 0; i < data.length; i += 1000) {
+      const chunk = data.slice(i, i + 1000);
+      const urlBatch = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchUpdate`;
+      await apiFetch(urlBatch, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valueInputOption: 'RAW', data: chunk })
+      });
+    }
+  }
+
+  console.log(`[CESTINO] ${lista.length} righe archiviate sul foglio DB`);
 }
 
 let _cestinoHeadersChecked = false;
@@ -1935,8 +1971,8 @@ async function ensureCestinoHeaders() {
   if (!id) return;
   try {
     const d = await dbGet(`${CESTINO_SHEET_NAME}!A1:O1`);
-    if (d.values?.[0]?.length > 0) return; // intestazioni già presenti
-  } catch(e) { /* foglio non esiste ancora, verrà creato dall'append */ }
+    if (d.values?.[0]?.length > 0) return;
+  } catch(e) { /* foglio non esiste ancora */ }
   try {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME+'!A1:O1')}?valueInputOption=RAW`;
     await apiFetch(url, {
@@ -2202,9 +2238,12 @@ async function cleanupDeletedFromDb(dbRows) {
   const alreadyDeleted = dbRows.filter(b => b.deleted && b.dbRow);
   if (alreadyDeleted.length === 0) return 0;
 
-  console.log(`[CESTINO] Pulizia ${alreadyDeleted.length} righe già DELETED…`);
-  for (const b of alreadyDeleted) {
-    try { await moveToCestino(b, 'Pulizia avvio — era già marcata DELETED'); } catch(e) {}
+  console.log(`[CESTINO] Pulizia batch ${alreadyDeleted.length} righe già DELETED…`);
+  // Una sola chiamata API per tutto il batch
+  try {
+    await archiviaInCestino(alreadyDeleted, 'Pulizia avvio — era già marcata DELETED');
+  } catch(e) {
+    console.warn('[CESTINO] Errore pulizia batch:', e.message);
   }
   console.log('[CESTINO] Pulizia completata');
   return alreadyDeleted.length;
@@ -2344,11 +2383,14 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
     console.log(`[DB] Aggiornate ${toUpdateInDB.length} prenotazioni`);
   }
 
-  // 3c. Archivia nel CESTINO (una per una, con log del motivo)
+  // 3c. Archivia nel CESTINO — batch (2 chiamate API totali, indipendentemente dal numero)
   if (toArchive.length > 0) {
     showLoading(`Cestino: ${toArchive.length} prenotazioni…`);
-    for (const b of toArchive) {
-      try { await dbDelete(b, b.deleteReason); } catch(e) { console.warn('[CESTINO] Errore:', e.message); }
+    const reason = 'Rimossa dal foglio Gantt · ' + new Date().toLocaleDateString('it-IT');
+    try {
+      await archiviaInCestino(toArchive, reason);
+    } catch(e) {
+      console.warn('[CESTINO] Errore batch:', e.message);
     }
     console.log(`[CESTINO] ${toArchive.length} prenotazioni archiviate`);
     showToast(
