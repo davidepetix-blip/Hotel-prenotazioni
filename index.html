@@ -2117,241 +2117,272 @@ function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
   return result;
 }
 
-// ── SYNC BIDIREZIONALE: DATABASE vs righe 45 ──
-// ── Cache locale del DATABASE in localStorage ──
-const DB_CACHE_KEY     = 'hotelDbCache';
-const DB_CACHE_TTL_MS  = 60 * 60 * 1000; // 1 ora
-const BATCH_SIZE       = 50; // righe per chiamata API durante import
+// ── SYNC ENGINE — Cache locale ──
+const DB_CACHE_KEY    = 'hotelDbCache';
+const DB_CACHE_TTL_MS = 60 * 60 * 1000; // 1h
+const BATCH_SIZE      = 50;
+const DAY_MS          = 86400000;
 
-function saveDbCache(bookings) {
+function saveDbCache(data) {
   try {
-    const payload = {
+    localStorage.setItem(DB_CACHE_KEY, JSON.stringify({
       ts: Date.now(),
-      data: bookings.map(b => ({
-        ...b,
-        s: b.s?.toISOString(),
-        e: b.e?.toISOString(),
-      }))
-    };
-    localStorage.setItem(DB_CACHE_KEY, JSON.stringify(payload));
-  } catch(e) { console.warn('Cache DB non salvata:', e.message); }
+      data: data.map(b => ({ ...b, s: b.s?.toISOString(), e: b.e?.toISOString() }))
+    }));
+  } catch(e) { console.warn('Cache non salvata:', e.message); }
 }
-
 function loadDbCache() {
   try {
-    const raw = localStorage.getItem(DB_CACHE_KEY);
-    if (!raw) return null;
-    const payload = JSON.parse(raw);
-    if (Date.now() - payload.ts > DB_CACHE_TTL_MS) return null; // scaduta
-    return payload.data.map(b => ({
-      ...b,
-      s: new Date(b.s),
-      e: new Date(b.e),
-    }));
+    const p = JSON.parse(localStorage.getItem(DB_CACHE_KEY) || 'null');
+    if (!p || Date.now() - p.ts > DB_CACHE_TTL_MS) return null;
+    return p.data.map(b => ({ ...b, s: new Date(b.s), e: new Date(b.e) }));
   } catch(e) { return null; }
 }
+function invalidateDbCache() { localStorage.removeItem(DB_CACHE_KEY); }
 
-function invalidateDbCache() {
-  localStorage.removeItem(DB_CACHE_KEY);
+// ═══════════════════════════════════════════════════════════════════
+// SYNC ENGINE — Logica conservativa
+// ═══════════════════════════════════════════════════════════════════
+//
+//  REGOLE FONDAMENTALI:
+//
+//  fonte = 'manuale'  →  prenotazione nata dal foglio Google Gantt
+//  fonte = 'app'      →  prenotazione nata dall'app (check-in, nuova dal form)
+//
+//  1. Foglio Google = fonte di verità ASSOLUTA per le prenotazioni manuali.
+//     Il foglio non ha timestamp → vince sempre sul DB per fonte='manuale'.
+//
+//  2. DB Google (scheda PRENOTAZIONI) = fonte di verità per fonte='app'.
+//     Le prenotazioni inserite dall'app NON vengono mai sovrascritte
+//     dal foglio e NON vengono mai cancellate automaticamente.
+//
+//  3. Se una prenotazione manuale è nel DB ma NON nel foglio → CESTINO.
+//     (è stata cancellata dal foglio, che è la fonte di verità)
+//
+//  4. Il localStorage è solo una cache per velocizzare il caricamento.
+//     Non è una fonte di verità. Viene invalidata ad ogni sync completo.
+//
+//  5. Conflitti multi-dispositivo: non esistono per fonte='manuale'
+//     perché il foglio è sempre la fonte di verità e tutti i dispositivi
+//     leggono la stessa cosa. Per fonte='app' l'ultimo che scrive sul DB vince.
+//
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Cerca un match tra una prenotazione e una lista.
+ * Tolleranza ±1gg sulla data inizio per gestire convenzioni foglio/app.
+ */
+function findMatch(target, list) {
+  const camT = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
+  const nomT = (target.n || '').toLowerCase().trim();
+  const dayT = Math.round((target.s?.getTime?.() || 0) / DAY_MS);
+
+  // Pass 1: camera + nome + giorno esatto
+  let m = list.find(b => {
+    if ((b.n||'').toLowerCase().trim() !== nomT) return false;
+    if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
+    return Math.round((b.s?.getTime?.() || 0) / DAY_MS) === dayT;
+  });
+  if (m) return m;
+
+  // Pass 2: camera + nome + giorno ±1 (off-by-one tra foglio e app)
+  m = list.find(b => {
+    if ((b.n||'').toLowerCase().trim() !== nomT) return false;
+    if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
+    return Math.abs(Math.round((b.s?.getTime?.() || 0) / DAY_MS) - dayT) <= 1;
+  });
+  return m || null;
 }
 
-async function syncWithDatabase(annualBookings, forceSync = false) {
-  if (!DATABASE_SHEET_ID) return annualBookings;
+/**
+ * Pulizia avvio: sposta nel CESTINO le righe già marcate DELETED nel DB.
+ * Evita che il DB cresca a dismisura con righe inutili.
+ */
+async function cleanupDeletedFromDb(dbRows) {
+  const alreadyDeleted = dbRows.filter(b => b.deleted && b.dbRow);
+  if (alreadyDeleted.length === 0) return 0;
 
-  // ── Usa cache locale se non scaduta e non forzato ──
-  if (!forceSync) {
-    const cached = loadDbCache();
-    if (cached) {
-      showLoading(`✓ ${cached.length} prenotazioni da cache locale`);
-      // Merge: aggiungi prenotazioni annual non in cache (nuove da foglio)
-      const cachedIds = new Set(cached.map(b => b.dbId).filter(Boolean));
-      const newFromAnnual = annualBookings.filter(a => {
-        if (!a.dbId) return true; // non ha ancora dbId → potenzialmente nuova
-        return !cachedIds.has(a.dbId);
-      });
-      if (newFromAnnual.length > 0) {
-        // Ci sono nuove prenotazioni nel foglio non ancora in cache → sync completo
-        console.log(`${newFromAnnual.length} nuove prenotazioni nel foglio, sync completo`);
-      } else {
-        return cached; // tutto aggiornato
-      }
-    }
+  console.log(`[CESTINO] Pulizia ${alreadyDeleted.length} righe già DELETED…`);
+  for (const b of alreadyDeleted) {
+    try { await moveToCestino(b, 'Pulizia avvio — era già marcata DELETED'); } catch(e) {}
   }
+  console.log('[CESTINO] Pulizia completata');
+  return alreadyDeleted.length;
+}
 
-  await ensureDbHeaders();
+/**
+ * SYNC PRINCIPALE
+ *
+ * @param {Array}   sheetBookings  Prenotazioni lette dal foglio Google
+ * @param {boolean} forceFullSync  Ignora cache locale
+ * @returns {Array} Lista finale da mostrare in app
+ */
+async function syncWithDatabase(sheetBookings, forceFullSync = false) {
+  if (!DATABASE_SHEET_ID) return sheetBookings;
+
+  // ── Leggi tutto il DB (righe attive + deleted per pulizia) ──
   showLoading('Lettura database…');
-  const dbBookings = await readDatabase();
+  const allDbRows  = await readDatabase();           // include deleted=true
+  const cleanedN   = await cleanupDeletedFromDb(allDbRows);
+  if (cleanedN > 0) showLoading(`Cestino: ${cleanedN} righe spostate…`);
 
-  const result        = [];
-  const toUpdateInDb  = [];
-  const toImportBatch = []; // nuove da importare in batch
-  const seen          = new Set();
+  const dbActive   = allDbRows.filter(b => !b.deleted); // solo attive
 
-  // ── Confronta annual vs DB ──
-  // Strategia di matching a 3 livelli (dal più preciso al più tollerante):
-  // 1. Match esatto: camera + nome + dataInizio + dataFine
-  // 2. Match parziale: camera + nome + dataInizio (tolera modifica data fine / disposizione)
-  // 3. Match approssimato: camera + nome + dataInizio ±1gg (tolera off-by-one da convenzione dd/mm)
+  const result        = [];  // lista finale da mostrare
+  const toAddToDB     = [];  // nuove prenotazioni da aggiungere al DB
+  const toUpdateInDB  = [];  // prenotazioni da aggiornare nel DB
+  const toArchive     = [];  // da spostare nel CESTINO
+  const seenDbIds     = new Set();
+
+  // ── FASE 1: Foglio Google → verità assoluta per fonte='manuale' ──
   //
-  // La chiave "canonica" per rilevare cancellazioni usa solo camera+nome+dataInizio
-  // perché è l'unica combinazione stabile quando si modifica una prenotazione nel foglio.
+  // Per ogni prenotazione nel foglio:
+  //   - Se non è nel DB → importa (nuova)
+  //   - Se è nel DB → aggiorna i campi che il foglio controlla
+  //     (disposizione, colore, note, date) senza toccare dbId/dbRow/fonte
+  //   - Il foglio NON ha timestamp propri → aggiorniamo sempre
+  //
+  for (const sheet of sheetBookings) {
+    // Salta prenotazioni con parsing fallito (nome mancante o "???")
+    if (!sheet.n || sheet.n === '???' || sheet.n.trim() === '') continue;
 
-  const DAY_MS = 86400000;
-
-  function findDbMatch(ann, dbList) {
-    // 1. Esatto
-    let m = dbList.find(db =>
-      db.cameraName === ann.cameraName && db.n === ann.n &&
-      db.s.getTime() === ann.s.getTime() && db.e.getTime() === ann.e.getTime()
-    );
-    if (m) return m;
-    // 2. Stessa camera + nome + dataInizio, data fine diversa (modifica durata/disposizione)
-    m = dbList.find(db =>
-      db.cameraName === ann.cameraName && db.n === ann.n &&
-      db.s.getTime() === ann.s.getTime()
-    );
-    if (m) return m;
-    // 3. Off-by-one sulla data fine (convenzione foglio vs app: ±1 giorno)
-    m = dbList.find(db =>
-      db.cameraName === ann.cameraName && db.n === ann.n &&
-      Math.abs(db.s.getTime() - ann.s.getTime()) <= DAY_MS &&
-      Math.abs(db.e.getTime() - ann.e.getTime()) <= DAY_MS
-    );
-    return m || null;
-  }
-
-  // Fingerprint per rilevare cancellazioni: camera|nome|dataInizio (±1gg tolleranza)
-  // Costruiamo una mappa daInizio → booking annuale per lookup rapido
-  const annByKey = new Map();
-  annualBookings.forEach(a => {
-    const key = `${a.cameraName}|${a.n}|${a.s.getTime()}`;
-    annByKey.set(key, a);
-    // Aggiungi anche chiavi ±1gg per la tolleranza off-by-one
-    annByKey.set(`${a.cameraName}|${a.n}|${a.s.getTime()-DAY_MS}`, a);
-    annByKey.set(`${a.cameraName}|${a.n}|${a.s.getTime()+DAY_MS}`, a);
-  });
-
-  for (const ann of annualBookings) {
-    const match = findDbMatch(ann, dbBookings);
+    const match = findMatch(sheet, dbActive);
 
     if (!match) {
-      ann.dbId  = genBookingId(ann.s.getFullYear());
-      ann.ts    = nowISO();
-      ann.fonte = 'manuale';
-      toImportBatch.push(ann);
-      result.push(ann);
+      // Nuova prenotazione nel foglio, non ancora nel DB
+      sheet.dbId  = genBookingId(sheet.s.getFullYear());
+      sheet.ts    = nowISO();
+      sheet.fonte = 'manuale';
+      toAddToDB.push(sheet);
+      result.push(sheet);
     } else {
-      seen.add(match.dbId);
-      // Aggiorna sempre disposizione, note, colore e data fine dal foglio
-      // (il foglio è la fonte di verità per le modifiche manuali)
-      const changed = match.d !== ann.d || match.c !== ann.c ||
-                      match.note !== ann.note ||
-                      match.e.getTime() !== ann.e.getTime() ||
-                      match.s.getTime() !== ann.s.getTime();
-      if (changed) {
-        match.d = ann.d; match.c = ann.c; match.note = ann.note;
-        match.e = ann.e; match.s = ann.s;  // aggiorna anche le date se cambiate
-        match.ts = nowISO(); match.fonte = 'manuale';
-        toUpdateInDb.push(match);
+      seenDbIds.add(match.dbId);
+
+      if (match.fonte === 'app') {
+        // Prenotazione nata dall'app: il foglio non la sovrascrive MAI
+        result.push(match);
+      } else {
+        // fonte='manuale': il foglio è la fonte di verità → aggiorna se cambiato
+        const changed =
+          match.d !== sheet.d ||
+          match.c !== sheet.c ||
+          match.note !== sheet.note ||
+          Math.abs(match.e.getTime() - sheet.e.getTime()) > DAY_MS / 2 ||
+          Math.abs(match.s.getTime() - sheet.s.getTime()) > DAY_MS / 2;
+
+        if (changed) {
+          match.d    = sheet.d;
+          match.c    = sheet.c;
+          match.note = sheet.note;
+          match.s    = sheet.s;
+          match.e    = sheet.e;
+          match.ts   = nowISO();
+          toUpdateInDB.push(match);
+        }
+        result.push(match);
       }
-      result.push(match);
     }
   }
 
-  // ── Prenotazioni solo nel DB ──
-  // Regole:
-  //   fonte='app'     → mantieni sempre (non necessariamente nel foglio Gantt)
-  //   fonte='manuale' + non trovata + nome valido → CESTINO (cancellata dal foglio)
-  //   fonte='manuale' + nome="???" → NON cancellare: è un'anomalia di parsing,
-  //                                   non una cancellazione vera
-  const toDeleteInDb = [];
-  for (const db of dbBookings) {
-    if (seen.has(db.dbId)) continue;
+  // ── FASE 2: DB → verità per fonte='app', CESTINO per fonte='manuale' scomparsa ──
+  //
+  // Per ogni prenotazione nel DB non trovata nel foglio:
+  //   fonte='app'      → mantieni sempre in app (non è nel foglio per scelta)
+  //   fonte='manuale'  → era nel foglio, ora non c'è più → CESTINO
+  //   nome='???'/vuoto → non cancellare (parsing fallito, non è una vera cancellazione)
+  //
+  for (const db of dbActive) {
+    if (seenDbIds.has(db.dbId)) continue; // già gestita nella fase 1
 
-    // Prenotazione inserita dall'app: non eliminiamo mai automaticamente
-    if (db.fonte !== 'manuale') { result.push(db); continue; }
-
-    // Nome "???" = parsing fallito → NON eliminare, potrebbe matchare in futuro
-    if (!db.n || db.n === '???' || db.n.trim() === '') { result.push(db); continue; }
-
-    // Cerca nel foglio con tolleranza ±1gg
-    const keyExact = db.cameraName+'|'+db.n+'|'+db.s.getTime();
-    const keyM1    = db.cameraName+'|'+db.n+'|'+(db.s.getTime()-DAY_MS);
-    const keyP1    = db.cameraName+'|'+db.n+'|'+(db.s.getTime()+DAY_MS);
-    const stillInFoglio = annByKey.has(keyExact) || annByKey.has(keyM1) || annByKey.has(keyP1);
-
-    if (!stillInFoglio) {
-      const reason = 'Non trovata nel foglio Gantt alla sincronizzazione del ' + new Date().toLocaleDateString('it-IT');
-      console.log('[CESTINO] ' + db.cameraName + ' / ' + db.n + ' — ' + reason);
-      db.deleted = true;
-      db.deleteReason = reason;
-      db.deletedAt = nowISO();
-      toDeleteInDb.push(db);
-    } else {
+    if (db.fonte === 'app') {
+      // Inserita dall'app: rimane in app indipendentemente dal foglio
       result.push(db);
+      continue;
     }
+
+    if (!db.n || db.n === '???' || db.n.trim() === '') {
+      // Nome non valido: probabile errore di parsing, non una vera cancellazione
+      result.push(db);
+      continue;
+    }
+
+    // fonte='manuale' e non trovata nel foglio → cancellata dal foglio → CESTINO
+    const reason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
+    db.deleted       = true;
+    db.deleteReason  = reason;
+    db.deletedAt     = nowISO();
+    toArchive.push(db);
+    // NON aggiunge a result → sparisce dall'app
   }
 
-  // Sposta nel CESTINO (async, non bloccante)
-  for (const b of toDeleteInDb) {
-    try { await dbDelete(b, b.deleteReason); } catch(e) { console.warn('[CESTINO] Errore:', e.message); }
-  }
-  if (toDeleteInDb.length > 0) {
-    console.log('[CESTINO] ' + toDeleteInDb.length + ' prenotazioni spostate nel CESTINO');
-    showToast('🗑 ' + toDeleteInDb.length + ' prenotazion' + (toDeleteInDb.length===1?'e':'i') + ' spostat' + (toDeleteInDb.length===1?'a':'e') + ' nel Cestino (scheda CESTINO nel foglio DB)', 'warn', 6000);
-  };
+  // ── FASE 3: Scrittura sul DB ──
 
-  // ── Import batch: 50 righe per chiamata ──
-  if (toImportBatch.length > 0) {
-    const total = toImportBatch.length;
+  // 3a. Aggiungi nuove (batch per efficienza)
+  if (toAddToDB.length > 0) {
+    const total = toAddToDB.length;
     for (let i = 0; i < total; i += BATCH_SIZE) {
-      const chunk = toImportBatch.slice(i, i + BATCH_SIZE);
+      const chunk = toAddToDB.slice(i, i + BATCH_SIZE);
       showLoading(`Importazione ${Math.min(i + BATCH_SIZE, total)}/${total}…`);
-      const rows = chunk.map(b => bookingToDbRow(b, 'manuale'));
-      const resp = await dbBatchAppendRows(rows);
-      // Aggiorna dbRow per ciascuno nel chunk (opzionale, best-effort)
-      const updRange = resp?.updates?.updatedRange || '';
-      const m = updRange.match(/(\d+):/);
-      if (m) {
-        let startRow = parseInt(m[1]) - chunk.length + 1;
-        chunk.forEach((b, idx) => { b.dbRow = startRow + idx; });
-      }
+      try {
+        const resp = await dbBatchAppendRows(chunk.map(b => bookingToDbRow(b, 'manuale')));
+        const m = (resp?.updates?.updatedRange || '').match(/(\d+):/);
+        if (m) {
+          const startRow = parseInt(m[1]) - chunk.length + 1;
+          chunk.forEach((b, idx) => { b.dbRow = startRow + idx; });
+        }
+      } catch(e) { console.warn('[DB] Errore import batch:', e.message); }
     }
-    console.log(`✓ Importate ${total} prenotazioni nel DB`);
+    console.log(`[DB] Importate ${total} nuove prenotazioni`);
   }
 
-  // ── Aggiornamenti singoli (cambiate da foglio) ──
-  for (const b of toUpdateInDb) await dbUpsert(b, b.fonte);
+  // 3b. Aggiorna modificate (singole, sono poche)
+  if (toUpdateInDB.length > 0) {
+    showLoading(`Aggiornamento ${toUpdateInDB.length} prenotazioni…`);
+    for (const b of toUpdateInDB) {
+      try { await dbUpsert(b, b.fonte); } catch(e) { console.warn('[DB] Update error:', e.message); }
+    }
+    console.log(`[DB] Aggiornate ${toUpdateInDB.length} prenotazioni`);
+  }
 
-  // ── Salva cache ──
+  // 3c. Archivia nel CESTINO (una per una, con log del motivo)
+  if (toArchive.length > 0) {
+    showLoading(`Cestino: ${toArchive.length} prenotazioni…`);
+    for (const b of toArchive) {
+      try { await dbDelete(b, b.deleteReason); } catch(e) { console.warn('[CESTINO] Errore:', e.message); }
+    }
+    console.log(`[CESTINO] ${toArchive.length} prenotazioni archiviate`);
+    showToast(
+      `🗑 ${toArchive.length} prenotazion${toArchive.length === 1 ? 'e' : 'i'} nel Cestino`,
+      'warn', 5000
+    );
+  }
+
+  // ── Salva cache locale aggiornata ──
   saveDbCache(result);
-
   return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// BACKGROUND SYNC — controlla fogli annuali ogni 5 min in silenzio
+// BACKGROUND SYNC — ogni 5 minuti, silenzioso
+// Legge solo il DB (1 chiamata API) e aggiorna l'UI se cambiato.
+// Non ri-legge il foglio Google → veloce e non invasivo.
 // ═══════════════════════════════════════════════════════════════════
-let _bgSyncTimer = null;
+let _bgSyncTimer   = null;
 let _bgSyncRunning = false;
 
 function startBgSync() {
   if (_bgSyncTimer) clearInterval(_bgSyncTimer);
-  _bgSyncTimer = setInterval(bgSync, 5 * 60 * 1000); // ogni 5 minuti
+  _bgSyncTimer = setInterval(bgSync, 5 * 60 * 1000);
 }
-
 function stopBgSync() {
   if (_bgSyncTimer) { clearInterval(_bgSyncTimer); _bgSyncTimer = null; }
 }
-
-function showBgToast(msg, duration = 2500) {
+function showBgToast(msg, ms = 2500) {
   const el = document.getElementById('bgSyncToast');
   if (!el) return;
-  el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), duration);
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), ms);
 }
-
 function setSyncPulsing(on) {
   const dot = document.getElementById('syncDot');
   if (!dot) return;
@@ -2361,159 +2392,147 @@ function setSyncPulsing(on) {
 
 async function bgSync() {
   if (!accessToken || _bgSyncRunning) return;
-  _bgSyncRunning = true;   // blocca showLoading/hideLoading
+  _bgSyncRunning = true;
   setSyncPulsing(true);
-  const currentLen = bookings.length;
-
   try {
-    annualSheets = loadAnnualSheets();
     if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
-
-    // Leggi solo il DATABASE (1 chiamata) — fonte primaria
     const dbFresh = await readDatabase();
+    const active  = dbFresh.filter(b => !b.deleted);
 
-    // Confronta timestamps per capire se c'è qualcosa di nuovo
-    const dbMap = new Map(dbFresh.map(b => [b.dbId, b]));
-    const localMap = new Map(bookings.map(b => [b.dbId, b]).filter(([k]) => k));
-
-    let changed = dbFresh.length !== localMap.size;
+    // Confronta con quello in memoria
+    const prevCount = bookings.length;
+    let changed = active.length !== prevCount;
     if (!changed) {
-      for (const [id, db] of dbMap) {
-        const local = localMap.get(id);
-        if (!local || (db.ts && local.ts && db.ts > local.ts)) { changed = true; break; }
+      const localMap = new Map(bookings.map(b => [b.dbId, b.ts]).filter(([k]) => k));
+      for (const db of active) {
+        const localTs = localMap.get(db.dbId);
+        if (!localTs || (db.ts && db.ts > localTs)) { changed = true; break; }
       }
     }
+    const rimossi = bookings.filter(b => b.dbId && !active.find(d => d.dbId === b.dbId)).length;
 
-    // Controlla anche cancellazioni: prenotazioni in memoria non più nel DB
-    const dbIds = new Set(dbFresh.map(b => b.dbId).filter(Boolean));
-    const cancellate = bookings.filter(b => b.dbId && !dbIds.has(b.dbId));
-
-    if (changed || cancellate.length > 0) {
-      bookings = mergeMultiMonthBookings(dbFresh);
-      saveDbCache(dbFresh);
+    if (changed || rimossi > 0) {
+      bookings = mergeMultiMonthBookings(active);
+      saveDbCache(active);
       render();
-      const diff = dbFresh.length - currentLen;
-      const msg = cancellate.length > 0 ? `↻ ${cancellate.length} rimoss${cancellate.length===1?'a':'e'}` :
-                  diff > 0 ? `↻ +${diff} prenotazioni` : '↻ Aggiornato';
-      showBgToast(msg);
+      const diff = active.length - prevCount;
+      showBgToast(
+        rimossi > 0 ? `↻ ${rimossi} rimoss${rimossi === 1 ? 'a' : 'e'}` :
+        diff    > 0 ? `↻ +${diff} nuove` : '↻ Aggiornato'
+      );
     }
-
-    // Aggiorna stato camere (leggero, dalla cache se possibile)
     await loadRoomStates();
-    if (document.getElementById('roomDashPage').classList.contains('open')) renderRoomDash();
-
+    if (document.getElementById('roomDashPage')?.classList.contains('open')) renderRoomDash();
   } catch(e) {
-    console.warn('bgSync error:', e.message);
+    console.warn('[bgSync] Errore:', e.message);
   } finally {
     setSyncPulsing(false);
     _bgSyncRunning = false;
   }
 }
 
-// ── Caricamento iniziale DB-first ──
+// ═══════════════════════════════════════════════════════════════════
+// CARICAMENTO INIZIALE
+// ═══════════════════════════════════════════════════════════════════
+//
+//  FAST PATH  (cache locale valida, < 1h):
+//    Mostra subito da localStorage → sync DB in background dopo 2s
+//
+//  FULL PATH  (nessuna cache o forceSync):
+//    1. Leggi foglio Google (JSON_ANNUALE o 12 fogli mensili)
+//    2. Leggi DB e sincronizza (syncWithDatabase)
+//    3. Mostra risultato e salva cache
+//
+// ═══════════════════════════════════════════════════════════════════
 async function loadFromSheets() {
   if (!accessToken) return;
-  document.getElementById('syncDot').classList.remove('show');
-  document.getElementById('syncDot').classList.remove('pulsing');
+  document.getElementById('syncDot')?.classList.remove('show', 'pulsing');
 
   if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
   annualSheets = loadAnnualSheets();
   const forcing = loadFromSheets._forceNext === true;
   loadFromSheets._forceNext = false;
-
   stopBgSync();
 
   try {
     bookings = [];
     sheetColumnMap = {};
 
+    // ── FAST PATH: cache locale valida ──
     if (DATABASE_SHEET_ID && !forcing) {
-      // ── FAST PATH: leggi cache locale o DATABASE direttamente ──
       const cached = loadDbCache();
       if (cached && cached.length > 0) {
-        // Usa cache → mostra subito
-        showLoading(`Caricamento da cache (${cached.length} prenotazioni)…`);
         bookings = mergeMultiMonthBookings(cached);
         await loadRoomStates();
-        hideLoading(); render();
+        hideLoading();
+        render();
         showToast(`✓ ${bookings.length} prenotazioni (cache)`, 'success');
-        // Poi lancia sync fogli in background dopo 2s
+        // Sync completo in background dopo 2 secondi
         setTimeout(bgSync, 2000);
         startBgSync();
         return;
-      } else {
-        // Nessuna cache → leggi DB (1 chiamata sola)
-        showLoading('Lettura database…');
-        await ensureDbHeaders();
-        const dbBookings = await readDatabase();
-        if (dbBookings.length > 0) {
-          bookings = mergeMultiMonthBookings(dbBookings);
-          saveDbCache(dbBookings);
-          await loadRoomStates();
-          hideLoading(); render();
-          showToast(`✓ ${bookings.length} prenotazioni caricate`, 'success');
-          // Sync fogli in background subito dopo
-          setTimeout(bgSync, 1500);
-          startBgSync();
-          return;
-        }
-        // DB vuoto → fallback al percorso completo
       }
     }
 
-    // ── FULL PATH: legge JSON_ANNUALE centralizzato (1 chiamata) oppure fallback ai fogli mensili ──
-    showLoading('Lettura JSON_ANNUALE…');
+    // ── FULL PATH ──
+
+    // Step 1: leggi foglio Google
     const sheetEntry = annualSheets.find(e => e.sheetId);
-    let allAnnual = [];
+    let sheetBookings = [];
 
     if (sheetEntry) {
+      showLoading('Lettura JSON_ANNUALE…');
       try {
-        allAnnual = await readJSONAnnuale(sheetEntry.sheetId);
-        showLoading(`JSON_ANNUALE: ${allAnnual.length} prenotazioni`);
+        sheetBookings = await readJSONAnnuale(sheetEntry.sheetId);
+        showLoading(`Foglio: ${sheetBookings.length} prenotazioni`);
       } catch(err) {
-        // Fallback: leggi i 12 fogli mensili se JSON_ANNUALE non esiste ancora
-        console.warn('[JSON_ANNUALE] Fallback ai fogli mensili:', err.message);
-        showLoading(`⚠ ${err.message} — lettura fogli mensili…`);
-        const sheetsToRead = annualSheets.filter(e => e.sheetId);
-        const annualResults = [];
-        for (let i = 0; i < sheetsToRead.length; i++) {
-          const entry = sheetsToRead[i];
-          showLoading(`Lettura ${entry.label} (${i+1}/${sheetsToRead.length})…`);
-          try { annualResults.push(await readAnnualSheet(entry)); }
-          catch(e2) { annualResults.push([]); }
-          if (i < sheetsToRead.length - 1) await new Promise(r => setTimeout(r, 300));
+        console.warn('[JSON_ANNUALE] Fallback fogli mensili:', err.message);
+        for (let i = 0; i < annualSheets.length; i++) {
+          const entry = annualSheets[i];
+          if (!entry.sheetId) continue;
+          showLoading(`Lettura ${entry.label} (${i + 1}/${annualSheets.length})…`);
+          try { sheetBookings.push(...(await readAnnualSheet(entry))); } catch(e2) {}
+          if (i < annualSheets.length - 1) await new Promise(r => setTimeout(r, 300));
         }
-        allAnnual = annualResults.flat();
       }
     }
 
+    // Step 2+3: sincronizza con DB e aggiorna
     if (DATABASE_SHEET_ID) {
       showLoading('Sincronizzazione database…');
-      allAnnual = await syncWithDatabase(allAnnual, true);
-      showLoading('Caricamento stato camere…');
-      await loadRoomStates();
+      await ensureDbHeaders();
+      sheetBookings = await syncWithDatabase(sheetBookings, true);
     }
 
-    bookings = mergeMultiMonthBookings(allAnnual);
-    hideLoading(); render();
-    const fromJSON = allAnnual.some(b => b.fromJSONAnnuale);
+    // Step 4: stato camere
+    await loadRoomStates();
+
+    // Step 5: mostra
+    bookings = mergeMultiMonthBookings(sheetBookings);
+    hideLoading();
+    render();
+
+    const fromJSON = sheetBookings.some(b => b.fromJSONAnnuale);
     const badge = document.getElementById('jsonSourceBadge');
     if (badge) {
       badge.textContent = fromJSON ? 'JSON' : '12f';
       badge.title = fromJSON
-        ? 'Dati da JSON_ANNUALE (veloce, 1 chiamata API)'
-        : 'Dati dai 12 fogli mensili (fallback — genera JSON_ANNUALE dal menu del foglio)';
+        ? 'Dati da JSON_ANNUALE (1 chiamata API)'
+        : 'Dati dai 12 fogli mensili (fallback)';
       badge.style.display = 'inline';
-      badge.style.color = fromJSON ? '#2d6a4f' : '#e67e22';
+      badge.style.color   = fromJSON ? '#2d6a4f' : '#e67e22';
     }
-    showToast(`✓ ${bookings.length} prenotazioni${fromJSON ? ' · JSON_ANNUALE' : ' · fogli mensili'}`, 'success');
+    showToast(`✓ ${bookings.length} prenotazioni`, 'success');
     startBgSync();
 
   } catch(e) {
-    hideLoading(); console.error(e);
-    showToast('Errore lettura: ' + e.message, 'error');
+    hideLoading();
+    console.error('[loadFromSheets]', e);
+    showToast('Errore caricamento: ' + e.message, 'error');
   }
 }
+
+
 
 // ═══════════════════════════════════════════════════════════════════
 // MULTI-MESE: spezza una prenotazione in frammenti mensili
