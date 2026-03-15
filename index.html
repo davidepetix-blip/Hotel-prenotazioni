@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.8</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.9</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 16.8">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 16.9">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -6270,13 +6270,13 @@ function esportaXML() {
     .replace(/[ìíîï]/g, 'i').replace(/[òóôõ]/g, 'o')
     .replace(/[ùúûü]/g, 'u').replace(/[ÀÁ]/g, 'A')
     .replace(/[ÈÉ]/g, 'E').replace(/[ÙÚ]/g, 'U')
-    .replace(/[^\x00-\xFF]/g, '?'); // tutto il resto → ?
+    .replace(/[^\u0000-\u00FF]/g, '?'); // tutto il resto → ?
   const esc = s => toLatin(s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;')
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
   // Pulisce un campo per uso in elementi stringa FatturaPA (no caratteri di controllo)
-  const clean = s => esc(s).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'').trim();
+  const clean = s => esc(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim();
 
   // P.IVA hotel: letta da impostazioni, default placeholder valido per schema
   const pivaHotel = clean(cfg.pivaHotel || cfg.piva || '00000000000');
