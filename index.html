@@ -6245,6 +6245,7 @@ function shareDocEmail() {
 }
 
 function esportaXML() {
+  try {
   const bid = _currentPdfBid;
   if (!bid) { showToast('Apri prima un conto', 'error'); return; }
   const b    = bookings.find(x=>x.id===bid); if(!b) return;
@@ -6298,37 +6299,32 @@ function esportaXML() {
   // Causale: solo ASCII, max 200 char
   const causale = clean('Soggiorno ' + b.n + ' cam. ' + (room?.name||roomName(b.r)) + ' ' + fmtD(b.s) + ' - ' + fmtD(b.e)).slice(0, 200);
 
-  // Linee dettaglio: Descrizione solo ASCII, max 1000 char
-  // I prezzi del conto sono IMPONIBILI (IVA esclusa).
-  // ImponibileImporto = somma esatta dei PrezzoTotale delle righe (regola SDI 00422).
-  // Imposta = arrotondamento cent per cent di ImponibileImporto × aliquota%.
+  // aliqXML deve essere definita PRIMA del map che la usa
+  const aliqXML    = parseFloat(conto.aliquotaIVA || cfg.aliquotaIVA || 10);
+  const aliqFactor = 1 + aliqXML / 100;
+
+  // Linee dettaglio — i totali sono IVA inclusa, li scorporiamo per FatturaPA
   const righeXml = conto.righe.filter(r=>r.total!==0);
-  let   imponibile = 0;
 
   const linee = righeXml.map((r,i) => {
-    const desc  = clean(r.label).slice(0, 1000);
-    const qty   = r.qty   != null ? parseFloat(r.qty).toFixed(2)         : null;
-    const prezzo= r.unitPrice != null ? Math.abs(r.unitPrice).toFixed(2) : null;
-    const tot   = parseFloat(r.total.toFixed(2));
-    imponibile += tot;
+    const desc      = clean(r.label).slice(0, 1000);
+    const totIvaInc = parseFloat(r.total.toFixed(2));
+    const totImpon  = parseFloat((totIvaInc / aliqFactor).toFixed(2));
+    const qty       = r.qty       != null ? parseFloat(r.qty).toFixed(2)        : null;
+    const prezzo    = r.unitPrice != null ? (Math.abs(r.unitPrice) / aliqFactor).toFixed(2) : null;
     return `
     <DettaglioLinee>
       <NumeroLinea>${i+1}</NumeroLinea>
       <Descrizione>${desc||'Servizio'}</Descrizione>
-      ${qty   ? '<Quantita>'+qty+'</Quantita>' : ''}
-      ${prezzo? '<PrezzoUnitario>'+prezzo+'</PrezzoUnitario>' : '<PrezzoUnitario>'+Math.abs(r.total).toFixed(2)+'</PrezzoUnitario>'}
-      <PrezzoTotale>${tot.toFixed(2)}</PrezzoTotale>
+      ${qty    ? '<Quantita>'+qty+'</Quantita>' : ''}
+      ${prezzo ? '<PrezzoUnitario>'+prezzo+'</PrezzoUnitario>' : '<PrezzoUnitario>'+Math.abs(totImpon).toFixed(2)+'</PrezzoUnitario>'}
+      <PrezzoTotale>${totImpon.toFixed(2)}</PrezzoTotale>
       <AliquotaIVA>${aliqXML.toFixed(2)}</AliquotaIVA>
     </DettaglioLinee>`;
   }).join('');
 
-  // I totali delle righe sono IVA INCLUSA → scorporiamo per l'XML
-  // ImponibileImporto = totale_riga / (1 + aliquota/100)  per ogni riga
-  // La somma deve quadrare con Imposta = ImponibileImporto × aliquota%
-  const aliqXML      = parseFloat(conto.aliquotaIVA || cfg.aliquotaIVA || 10);
-  const aliqFactor   = 1 + aliqXML / 100;
-  // Ricalcola l'imponibile come somma degli imponibili riga per riga
-  imponibile = parseFloat(righeXml.reduce((s,r) => s + r.total / aliqFactor, 0).toFixed(2));
+  // DatiRiepilogo: ImponibileImporto = somma PrezzoTotale righe, Imposta = × aliquota
+  const imponibile   = parseFloat(righeXml.reduce((s,r) => s + r.total / aliqFactor, 0).toFixed(2));
   const iva          = parseFloat((imponibile * aliqXML / 100).toFixed(2));
   const totDocumento = parseFloat((imponibile + iva).toFixed(2));
 
@@ -6418,14 +6414,25 @@ function esportaXML() {
 </p:FatturaElettronica>`;
 
   // Download file
-  const blob = new Blob([xml], { type: 'application/xml' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `fattura_${b.n.replace(/\s+/g,'_')}_${fmtD(oggi)}.xml`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('✓ XML scaricato', 'success');
+  try {
+    const blob = new Blob([xml], { type: 'application/xml' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `fattura_${b.n.replace(/\s+/g,'_')}_${fmtD(oggi)}.xml`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('✓ XML scaricato', 'success');
+  } catch(e) {
+    showToast('Errore XML: ' + e.message, 'error');
+    console.error('[XML]', e);
+  }
+  } catch(outerErr) {
+    showToast('Errore generazione XML: ' + outerErr.message, 'error');
+    console.error('[XML outer]', outerErr);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────
