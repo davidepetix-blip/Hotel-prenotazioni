@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.6</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.8</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 16.6">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 16.8">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -796,6 +796,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   </div>
   <div class="conti-tabs">
     <div class="conti-tab active" onclick="switchContiTab('lista')">📋 Conti</div>
+    <div class="conti-tab" onclick="switchContiTab('gruppo')">👥 Gruppo</div>
     <div class="conti-tab" onclick="switchContiTab('appart')">🏠 Appartamenti</div>
     <div class="conti-tab" onclick="switchContiTab('tariffe')">📊 Listino</div>
   </div>
@@ -6305,28 +6306,63 @@ function esportaXML() {
   const aliqXML    = parseFloat(conto.aliquotaIVA || cfg.aliquotaIVA || 10);
   const aliqFactor = 1 + aliqXML / 100;
 
-  // Linee dettaglio — i totali sono IVA inclusa, li scorporiamo per FatturaPA
-  const righeXml = conto.righe.filter(r=>r.total!==0);
+  // ── Linee dettaglio ──
+  // Le righe di tipo 'sconto' (total < 0) NON vanno come DettaglioLinee separate
+  // ma come ScontoMaggiorazione sulla riga base precedente.
+  // Strategia: raggruppa ogni riga base con gli sconti che la seguono.
+  // Sconti globali (convenzione/durata) → ScontoMaggiorazione sulla prima riga base.
 
-  const linee = righeXml.map((r,i) => {
+  const righeBase   = conto.righe.filter(r => r.total > 0);
+  const righeSconto = conto.righe.filter(r => r.total < 0);
+
+  // Associa gli sconti alla prima riga base (comportamento standard per sconti globali)
+  let lineaNum = 0;
+  const linee = righeBase.map(r => {
+    lineaNum++;
     const desc      = clean(r.label).slice(0, 1000);
     const totIvaInc = parseFloat(r.total.toFixed(2));
     const totImpon  = parseFloat((totIvaInc / aliqFactor).toFixed(2));
-    const qty       = r.qty       != null ? parseFloat(r.qty).toFixed(2)        : null;
-    const prezzo    = r.unitPrice != null ? (Math.abs(r.unitPrice) / aliqFactor).toFixed(2) : null;
+    const qty       = r.qty != null ? parseFloat(r.qty).toFixed(2) : null;
+    const prezzoUnit= r.unitPrice != null
+      ? parseFloat((Math.abs(r.unitPrice) / aliqFactor).toFixed(2))
+      : parseFloat((totImpon / (qty ? parseFloat(qty) : 1)).toFixed(2));
+
+    // Gli sconti globali li attacchiamo solo alla prima riga base (lineaNum === 1)
+    const scontiTag = lineaNum === 1 ? righeSconto.map(s => {
+      const importoSconto = parseFloat((Math.abs(s.total) / aliqFactor).toFixed(2));
+      // Determina se è una percentuale o un importo fisso
+      const percTag = s.tipo === 'sconto' && s.label && s.label.match(/(\d+)%/)
+        ? `<Percentuale>${s.label.match(/(\d+)%/)[1]}</Percentuale>`
+        : `<Importo>${importoSconto.toFixed(2)}</Importo>`;
+      return `
+        <ScontoMaggiorazione>
+          <Tipo>SC</Tipo>
+          ${percTag}
+          <Importo>${importoSconto.toFixed(2)}</Importo>
+        </ScontoMaggiorazione>`;
+    }).join('') : '';
+
+    // PrezzoTotale = prezzo lordo - sconti applicati a questa riga
+    const scontiImporto = lineaNum === 1
+      ? parseFloat(righeSconto.reduce((s,r) => s + Math.abs(r.total) / aliqFactor, 0).toFixed(2))
+      : 0;
+    const prezzoTotale = parseFloat((totImpon - scontiImporto).toFixed(2));
+
     return `
     <DettaglioLinee>
-      <NumeroLinea>${i+1}</NumeroLinea>
+      <NumeroLinea>${lineaNum}</NumeroLinea>
       <Descrizione>${desc||'Servizio'}</Descrizione>
-      ${qty    ? '<Quantita>'+qty+'</Quantita>' : ''}
-      ${prezzo ? '<PrezzoUnitario>'+prezzo+'</PrezzoUnitario>' : '<PrezzoUnitario>'+Math.abs(totImpon).toFixed(2)+'</PrezzoUnitario>'}
-      <PrezzoTotale>${totImpon.toFixed(2)}</PrezzoTotale>
+      ${qty ? '<Quantita>'+qty+'</Quantita>' : ''}
+      <PrezzoUnitario>${prezzoUnit.toFixed(2)}</PrezzoUnitario>
+      ${scontiTag}
+      <PrezzoTotale>${prezzoTotale.toFixed(2)}</PrezzoTotale>
       <AliquotaIVA>${aliqXML.toFixed(2)}</AliquotaIVA>
     </DettaglioLinee>`;
   }).join('');
 
-  // DatiRiepilogo: ImponibileImporto = somma PrezzoTotale righe, Imposta = × aliquota
-  const imponibile   = parseFloat(righeXml.reduce((s,r) => s + r.total / aliqFactor, 0).toFixed(2));
+  // DatiRiepilogo: ImponibileImporto = somma netta (righe positive - sconti) / aliqFactor
+  const totaleNetto  = conto.righe.reduce((s,r) => s + r.total, 0);
+  const imponibile   = parseFloat((totaleNetto / aliqFactor).toFixed(2));
   const iva          = parseFloat((imponibile * aliqXML / 100).toFixed(2));
   const totDocumento = parseFloat((imponibile + iva).toFixed(2));
 
@@ -6461,14 +6497,17 @@ function closeConti() { document.getElementById('contiScreen').classList.remove(
 
 function switchContiTab(tab) {
   _contiTab = tab;
-  document.querySelectorAll('.conti-tab').forEach((t,i)=>{
-    t.classList.toggle('active', ['lista','appart','tariffe'][i]===tab);
+  document.querySelectorAll('.conti-tab').forEach(t=>{
+    t.classList.toggle('active', t.textContent.includes(
+      tab==='lista'?'Conti':tab==='gruppo'?'Gruppo':tab==='appart'?'Appartamenti':'Listino'
+    ));
   });
   renderContiTab(tab);
 }
 function renderContiTab(tab) {
   const body = document.getElementById('contiBody');
   if (tab==='lista')   body.innerHTML = renderContiLista();
+  if (tab==='gruppo')  { body.innerHTML = renderContoGruppo(); bindContoGruppo(); }
   if (tab==='appart')  body.innerHTML = renderContiAppart();
   if (tab==='tariffe') body.innerHTML = renderListino();
 }
@@ -6503,6 +6542,443 @@ function renderContiLista() {
 function riapriFoglio(bid) {
   closeConti();
   if (bookings.find(x=>x.id===bid)) showBookingDetail(bid);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CONTO DI GRUPPO — fattura riepilogativa per più prenotazioni
+// ═══════════════════════════════════════════════════════════════════
+
+function renderContoGruppo() {
+  const mesPad = n => String(n).padStart(2,'0');
+
+  // Genera shortcut mesi: mese corrente + 5 precedenti
+  const mesiShortcut = [];
+  for (let i = 0; i < 6; i++) {
+    let m = curM - i, y = curY;
+    if (m < 0) { m += 12; y--; }
+    mesiShortcut.push({ y, m, label: MONTHS_S[m] + ' ' + y });
+  }
+  const shortcutHtml = mesiShortcut.map(s =>
+    `<span class="sf-chip" onclick="setGrpMese(${s.y},${s.m})">${s.label}</span>`
+  ).join('');
+
+  const dalDef = `${curY}-${mesPad(curM+1)}-01`;
+  const alDef  = `${curY}-${mesPad(curM+1)}-${new Date(curY,curM+1,0).getDate()}`;
+
+  // Autocomplete nomi clienti
+  const nomiUnici = [...new Set(bookings.map(b=>b.n).filter(Boolean))].sort();
+  const datalist  = nomiUnici.map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('');
+
+  return `
+    <div class="conti-section">
+      <div class="conti-section-title">Cerca prenotazioni per cliente</div>
+      <datalist id="dlNomiGruppo">${datalist}</datalist>
+      <div style="display:flex;flex-direction:column;gap:10px">
+
+        <div>
+          <label style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Nome cliente / gruppo</label>
+          <input id="grpNome" list="dlNomiGruppo" placeholder="es. mammana"
+            style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:14px;background:var(--surface2);color:var(--text)">
+        </div>
+
+        <div>
+          <label style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Periodo rapido</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">${shortcutHtml}</div>
+        </div>
+
+        <div>
+          <label style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Oppure date libere</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+              <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:3px">Dal</label>
+              <input id="grpDal" type="date" value="${dalDef}"
+                style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;background:var(--surface2);color:var(--text)">
+            </div>
+            <div>
+              <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:3px">Al</label>
+              <input id="grpAl" type="date" value="${alDef}"
+                style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;background:var(--surface2);color:var(--text)">
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px">
+          <button class="btn primary" id="grpCercaBtn" style="flex:1;justify-content:center">🔍 Cerca prenotazioni</button>
+          <button class="btn" onclick="setGrpTutto()" style="justify-content:center" title="Cerca in tutto l'anno">Tutti</button>
+        </div>
+      </div>
+    </div>
+    <div id="grpRisultati"></div>`;
+}
+
+function setGrpMese(y, m) {
+  const mesPad = n => String(n).padStart(2,'0');
+  const dal = document.getElementById('grpDal');
+  const al  = document.getElementById('grpAl');
+  if (dal) dal.value = `${y}-${mesPad(m+1)}-01`;
+  if (al)  al.value  = `${y}-${mesPad(m+1)}-${new Date(y,m+1,0).getDate()}`;
+  // Evidenzia il chip selezionato
+  document.querySelectorAll('#contiBody .sf-chip').forEach(c => {
+    c.classList.toggle('active', c.textContent === MONTHS_S[m]+' '+y);
+  });
+}
+
+function setGrpTutto() {
+  const dal = document.getElementById('grpDal');
+  const al  = document.getElementById('grpAl');
+  if (dal) dal.value = `${curY}-01-01`;
+  if (al)  al.value  = `${curY}-12-31`;
+  document.querySelectorAll('#contiBody .sf-chip').forEach(c => c.classList.remove('active'));
+}
+
+function bindContoGruppo() {
+  const btn = document.getElementById('grpCercaBtn');
+  if (btn) btn.onclick = cercaContoGruppo;
+  const inp = document.getElementById('grpNome');
+  if (inp) inp.addEventListener('keydown', e => { if(e.key==='Enter') cercaContoGruppo(); });
+}
+
+function cercaContoGruppo() {
+  const nome = (document.getElementById('grpNome')?.value||'').trim().toLowerCase();
+  const dal  = document.getElementById('grpDal')?.value;
+  const al   = document.getElementById('grpAl')?.value;
+  if (!nome) { showToast('Inserisci il nome del cliente','error'); return; }
+
+  const dalD = dal ? new Date(dal+'T00:00:00') : null;
+  const alD  = al  ? new Date(al +'T23:59:59') : null;
+
+  // Cerca prenotazioni che contengono il nome e si sovrappongono al periodo
+  const trovate = bookings.filter(b => {
+    if (!b.n.toLowerCase().includes(nome)) return false;
+    if (dalD && b.e < dalD) return false;
+    if (alD  && b.s > alD)  return false;
+    return true;
+  }).sort((a,b)=>a.s-b.s);
+
+  const el = document.getElementById('grpRisultati');
+  if (!trovate.length) {
+    el.innerHTML = `<div class="search-empty" style="padding:30px 0">
+      <div class="emptyicon">🔍</div>
+      <div style="font-size:12px;color:var(--text3)">Nessuna prenotazione trovata per "<b>${nome}</b>"</div>
+    </div>`;
+    return;
+  }
+
+  renderRisultatiGruppo(trovate, nome, dalD, alD, el);
+}
+
+function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
+  const cfg  = loadBillSettings();
+  let righeGruppo = [];
+  let totaleGruppo = 0;
+
+  const righeHtml = trovate.map(b => {
+    const room   = ROOMS.find(r=>r.id===b.r);
+    const n      = nights(b.s, b.e);
+    const conto  = getContoEffettivo(b.id);
+    const totB   = conto?.totale || 0;
+    totaleGruppo += totB;
+
+    // Aggiungi riga per il conto di gruppo
+    righeGruppo.push({
+      label:     `${room?.name||roomName(b.r)} · ${fmt(b.s)} → ${fmt(b.e)} (${n} notti) · ${b.d||''}`,
+      qty:       n,
+      unitPrice: n > 0 ? parseFloat((totB/n).toFixed(2)) : totB,
+      total:     totB,
+      tipo:      'base',
+      bookingId: b.id
+    });
+
+    return `<div class="sr-item" style="cursor:default">
+      <div class="sr-dot" style="background:${b.c}"></div>
+      <div class="sr-body">
+        <div class="sr-name">${room?.name||roomName(b.r)}</div>
+        <div class="sr-meta">
+          <span class="sr-badge">${fmt(b.s)} → ${fmt(b.e)}</span>
+          <span class="sr-badge">${n} notti</span>
+          ${b.d?`<span class="sr-badge">${b.d}</span>`:''}
+        </div>
+      </div>
+      <div style="font-weight:700;font-size:13px;color:var(--accent);padding-top:2px;flex-shrink:0">${totB.toFixed(2)}€</div>
+    </div>`;
+  }).join('');
+
+  // Applica eventuale convenzione al totale di gruppo
+  const nomeCliente = nome;
+  const convenzione = (cfg.convenzioni||[]).find(cv =>
+    nomeCliente.includes(cv.nome.toLowerCase())
+  );
+  let scontoHtml = '';
+  if (convenzione) {
+    const sc = parseFloat((totaleGruppo * convenzione.sconto / 100).toFixed(2));
+    totaleGruppo -= sc;
+    righeGruppo.push({
+      label: `Convenzione "${convenzione.nome}" -${convenzione.sconto}%`,
+      qty: null, unitPrice: null, total: -sc, tipo: 'sconto'
+    });
+    scontoHtml = `<div class="bill-row discount" style="font-size:12px">
+      <span class="bill-row-label">Conv. ${convenzione.nome} -${convenzione.sconto}%</span>
+      <span style="color:var(--danger);font-weight:600">-${sc.toFixed(2)}€</span>
+    </div>`;
+  }
+
+  const aliqIVA     = cfg.aliquotaIVA || 10;
+  const imponibile  = parseFloat((totaleGruppo / (1+aliqIVA/100)).toFixed(2));
+  const iva         = parseFloat((totaleGruppo - imponibile).toFixed(2));
+
+  el.innerHTML = `
+    <div class="conti-section">
+      <div class="conti-section-title">${trovate.length} prenotazioni trovate</div>
+      ${righeHtml}
+    </div>
+    <div class="conti-section">
+      <div class="conti-section-title">Riepilogo conto di gruppo</div>
+      ${scontoHtml}
+      <div class="bill-row" style="font-size:12px">
+        <span class="bill-row-label">Imponibile (IVA ${aliqIVA}% esclusa)</span>
+        <span style="font-weight:600">${imponibile.toFixed(2)}€</span>
+      </div>
+      <div class="bill-row" style="font-size:12px">
+        <span class="bill-row-label">IVA ${aliqIVA}%</span>
+        <span style="font-weight:600">${iva.toFixed(2)}€</span>
+      </div>
+      <div class="bill-row total-row">
+        <span class="bill-row-label"><b>TOTALE IVA inclusa</b></span>
+        <span style="font-size:18px;font-weight:700;color:var(--accent)">${totaleGruppo.toFixed(2)}€</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn primary" onclick="emettiContoGruppo()" style="flex:1;justify-content:center">📄 Emetti conto</button>
+        <button class="btn" onclick="apriPdfGruppo()" style="flex:1;justify-content:center">👁 PDF</button>
+        <button class="btn" onclick="esportaXMLGruppo()" style="flex:1;justify-content:center">📄 XML</button>
+      </div>
+    </div>`;
+
+  // Salva in variabile globale per PDF/XML
+  window._gruppoCorrente = {
+    nome:    trovate[0]?.n || nome,
+    righe:   righeGruppo,
+    totale:  parseFloat(totaleGruppo.toFixed(2)),
+    aliquotaIVA: aliqIVA,
+    bookings: trovate,
+    dalD, alD
+  };
+}
+
+function emettiContoGruppo() {
+  const g = window._gruppoCorrente;
+  if (!g) return;
+  apriPdfGruppo();
+  showToast('✓ Conto di gruppo emesso', 'success');
+}
+
+function apriPdfGruppo() {
+  const g = window._gruppoCorrente;
+  if (!g) return;
+  const cfg  = loadBillSettings();
+  const oggi = new Date();
+
+  const aliqIVA    = g.aliquotaIVA || 10;
+  const imponibile = parseFloat((g.totale / (1+aliqIVA/100)).toFixed(2));
+  const iva        = parseFloat((g.totale - imponibile).toFixed(2));
+
+  const righeHtml = g.righe.map(r => `
+    <tr>
+      <td>${r.label}</td>
+      <td style="text-align:center">${r.qty!=null?r.qty:'—'}</td>
+      <td style="text-align:right">${r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':'—'}</td>
+      <td style="text-align:right;color:${r.total<0?'#c0392b':'inherit'}">${r.total>=0?'+':''}${r.total.toFixed(2)}€</td>
+    </tr>`).join('');
+
+  const periodoLabel = g.dalD && g.alD
+    ? `${g.dalD.toLocaleDateString('it-IT')} — ${g.alD.toLocaleDateString('it-IT')}`
+    : '';
+
+  document.getElementById('pdfTitle').textContent = `Conto gruppo — ${g.nome}`;
+  document.getElementById('printDoc').innerHTML = `
+    <div class="doc-header">
+      <div class="doc-hotel-name">${cfg.hotelName}</div>
+      ${cfg.hotelAddress?`<div class="doc-hotel-sub">${cfg.hotelAddress}</div>`:''}
+      <div class="doc-type">Conto di Gruppo</div>
+    </div>
+    <div class="doc-section">
+      <div class="doc-section-title">Cliente</div>
+      <div class="doc-info-grid">
+        <div class="doc-info-item"><label>Nome</label><span>${g.nome}</span></div>
+        <div class="doc-info-item"><label>Periodo</label><span>${periodoLabel}</span></div>
+        <div class="doc-info-item"><label>Soggiorni</label><span>${g.bookings.length}</span></div>
+      </div>
+    </div>
+    <div class="doc-section">
+      <div class="doc-section-title">Dettaglio soggiorni</div>
+      <table class="doc-table">
+        <thead><tr><th>Descrizione</th><th style="text-align:center">Qtà</th><th style="text-align:right">Prezzo</th><th style="text-align:right">Importo</th></tr></thead>
+        <tbody>${righeHtml}</tbody>
+        <tfoot>
+          <tr style="font-size:11px;color:#666"><td colspan="3">Imponibile (IVA ${aliqIVA}% esclusa)</td><td style="text-align:right">${imponibile.toFixed(2)} €</td></tr>
+          <tr style="font-size:11px;color:#666"><td colspan="3">IVA ${aliqIVA}%</td><td style="text-align:right">${iva.toFixed(2)} €</td></tr>
+          <tr class="doc-total-row"><td colspan="3"><strong>TOTALE IVA inclusa</strong></td><td><strong>${g.totale.toFixed(2)} €</strong></td></tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="doc-footer">${cfg.hotelName} · ${oggi.toLocaleDateString('it-IT')}</div>`;
+
+  document.getElementById('pdfOverlay').classList.add('open');
+  // Imposta bid fittizio per XML gruppo
+  _currentPdfBid = '__gruppo__';
+}
+
+function esportaXMLGruppo() {
+  apriPdfGruppo();
+  // Dopo che il PDF overlay è aperto, triggera esportaXML in modo speciale
+  setTimeout(() => _esportaXMLGruppo(), 100);
+}
+
+function _esportaXMLGruppo() {
+  const g = window._gruppoCorrente;
+  if (!g) return;
+  try {
+    const cfg    = loadBillSettings();
+    const oggi   = new Date();
+    const fmtD   = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    const toLatin= s => String(s||'').replace(/[·•]/g,'-').replace(/[→⇒►]/g,'->').replace(/[×✕]/g,'x')
+      .replace(/[àáâã]/g,'a').replace(/[èéêë]/g,'e').replace(/[ìíîï]/g,'i')
+      .replace(/[òóôõ]/g,'o').replace(/[ùúûü]/g,'u').replace(/[ÀÁ]/g,'A')
+      .replace(/[ÈÉ]/g,'E').replace(/[ÙÚ]/g,'U').replace(/[^ -ÿ]/g,'?');
+    const esc    = s => toLatin(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const clean  = s => esc(s).replace(/[ --]/g,'').trim();
+
+    const pivaHotel = clean(cfg.pivaHotel || '00000000000');
+    const aliqXML   = parseFloat(g.aliquotaIVA || 10);
+    const aliqFactor= 1 + aliqXML / 100;
+    const numFattura= String(oggi.getFullYear()).slice(-2)+String(oggi.getMonth()+1).padStart(2,'0')+String(oggi.getDate()).padStart(2,'0')+'GR';
+
+    const nomeParti = g.nome.trim().split(/\s+/);
+    const usaDenom  = nomeParti.length===1 || g.nome.length>30;
+    const clienteAnag = usaDenom
+      ? `<Denominazione>${clean(g.nome)}</Denominazione>`
+      : `<Nome>${clean(nomeParti[0])}</Nome><Cognome>${clean(nomeParti.slice(1).join(' '))}</Cognome>`;
+
+    const righeBase   = g.righe.filter(r=>r.total>0);
+    const righeSconto = g.righe.filter(r=>r.total<0);
+    let lineaNum = 0;
+
+    const linee = righeBase.map(r => {
+      lineaNum++;
+      const desc      = clean(r.label).slice(0,1000);
+      const totImpon  = parseFloat((r.total / aliqFactor).toFixed(2));
+      const qty       = r.qty != null ? parseFloat(r.qty).toFixed(2) : null;
+      const prezzoUnit= r.unitPrice != null ? parseFloat((r.unitPrice/aliqFactor).toFixed(2)) : totImpon;
+      const scontiTag = lineaNum===1 ? righeSconto.map(s=>{
+        const imp = parseFloat((Math.abs(s.total)/aliqFactor).toFixed(2));
+        return `<ScontoMaggiorazione><Tipo>SC</Tipo><Importo>${imp.toFixed(2)}</Importo></ScontoMaggiorazione>`;
+      }).join('') : '';
+      const scontiImp = lineaNum===1 ? parseFloat(righeSconto.reduce((s,r)=>s+Math.abs(r.total)/aliqFactor,0).toFixed(2)) : 0;
+      const prezzoTot = parseFloat((totImpon - scontiImp).toFixed(2));
+      return `
+    <DettaglioLinee>
+      <NumeroLinea>${lineaNum}</NumeroLinea>
+      <Descrizione>${desc||'Soggiorno'}</Descrizione>
+      ${qty?'<Quantita>'+qty+'</Quantita>':''}
+      <PrezzoUnitario>${prezzoUnit.toFixed(2)}</PrezzoUnitario>
+      ${scontiTag}
+      <PrezzoTotale>${prezzoTot.toFixed(2)}</PrezzoTotale>
+      <AliquotaIVA>${aliqXML.toFixed(2)}</AliquotaIVA>
+    </DettaglioLinee>`;
+    }).join('');
+
+    const totaleNetto = g.righe.reduce((s,r)=>s+r.total,0);
+    const imponibile  = parseFloat((totaleNetto/aliqFactor).toFixed(2));
+    const iva         = parseFloat((imponibile*aliqXML/100).toFixed(2));
+    const totDoc      = parseFloat((imponibile+iva).toFixed(2));
+    const causale     = clean('Conto gruppo '+g.nome+(g.dalD?' dal '+fmtD(g.dalD):'')+(g.alD?' al '+fmtD(g.alD):'')).slice(0,200);
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<p:FatturaElettronica versione="FPR12"
+  xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <FatturaElettronicaHeader>
+    <DatiTrasmissione>
+      <IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>${pivaHotel}</IdCodice></IdTrasmittente>
+      <ProgressivoInvio>${numFattura}</ProgressivoInvio>
+      <FormatoTrasmissione>FPR12</FormatoTrasmissione>
+      <CodiceDestinatario>0000000</CodiceDestinatario>
+    </DatiTrasmissione>
+    <CedentePrestatore>
+      <DatiAnagrafici>
+        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>${pivaHotel}</IdCodice></IdFiscaleIVA>
+        <Anagrafica><Denominazione>${clean(cfg.hotelName)}</Denominazione></Anagrafica>
+        <RegimeFiscale>RF01</RegimeFiscale>
+      </DatiAnagrafici>
+      <Sede>
+        <Indirizzo>${clean(cfg.hotelAddress||'Da definire')}</Indirizzo>
+        <CAP>${clean(cfg.hotelCAP||'00000')}</CAP>
+        <Comune>${clean(cfg.hotelComune||'Da definire')}</Comune>
+        <Provincia>${clean(cfg.hotelProv||'XX')}</Provincia>
+        <Nazione>IT</Nazione>
+      </Sede>
+    </CedentePrestatore>
+    <CessionarioCommittente>
+      <DatiAnagrafici>
+        <CodiceFiscale>RSSMRA00A00H501U</CodiceFiscale>
+        <Anagrafica>${clienteAnag}</Anagrafica>
+      </DatiAnagrafici>
+      <Sede><Indirizzo>Da definire</Indirizzo><CAP>00000</CAP><Comune>Da definire</Comune><Nazione>IT</Nazione></Sede>
+    </CessionarioCommittente>
+  </FatturaElettronicaHeader>
+  <FatturaElettronicaBody>
+    <DatiGenerali>
+      <DatiGeneraliDocumento>
+        <TipoDocumento>TD01</TipoDocumento><Divisa>EUR</Divisa>
+        <Data>${fmtD(oggi)}</Data>
+        <Numero>${numFattura}</Numero>
+        <ImportoTotaleDocumento>${totDoc.toFixed(2)}</ImportoTotaleDocumento>
+        <Causale>${causale}</Causale>
+      </DatiGeneraliDocumento>
+    </DatiGenerali>
+    <DatiBeniServizi>
+      ${linee}
+      <DatiRiepilogo>
+        <AliquotaIVA>${aliqXML.toFixed(2)}</AliquotaIVA>
+        <ImponibileImporto>${imponibile.toFixed(2)}</ImponibileImporto>
+        <Imposta>${iva.toFixed(2)}</Imposta>
+        <EsigibilitaIVA>I</EsigibilitaIVA>
+      </DatiRiepilogo>
+    </DatiBeniServizi>
+    <DatiPagamento>
+      <CondizioniPagamento>TP02</CondizioniPagamento>
+      <DettaglioPagamento>
+        <ModalitaPagamento>MP01</ModalitaPagamento>
+        <ImportoPagamento>${totDoc.toFixed(2)}</ImportoPagamento>
+      </DettaglioPagamento>
+    </DatiPagamento>
+  </FatturaElettronicaBody>
+</p:FatturaElettronica>`;
+
+    const nomeFile = 'fattura_gruppo_'+g.nome.replace(/\s+/g,'_')+'_'+fmtD(oggi)+'.xml';
+    const blob     = new Blob([xml],{type:'application/xml;charset=utf-8'});
+    const url      = URL.createObjectURL(blob);
+    const ov       = document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+    ov.innerHTML=`<div style="background:var(--surface);border-radius:16px;padding:24px;max-width:360px;width:100%;text-align:center">
+      <div style="font-size:36px;margin-bottom:10px">📄</div>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px">XML Conto Gruppo pronto</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:20px;word-break:break-all">${nomeFile}</div>
+      <a href="${url}" download="${nomeFile}" id="_grpXmlLink"
+        style="display:block;background:var(--accent);color:#fff;padding:14px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin-bottom:10px">
+        ⬇ Scarica XML
+      </a>
+      <button onclick="this.closest('div[style]').remove()"
+        style="background:none;border:1px solid var(--border);padding:10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);width:100%">Chiudi</button>
+    </div>`;
+    document.body.appendChild(ov);
+    ov.querySelector('#_grpXmlLink').addEventListener('click',()=>setTimeout(()=>{URL.revokeObjectURL(url);ov.remove();},1000));
+    ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+
+  } catch(err) {
+    showToast('Errore XML gruppo: '+err.message,'error');
+    console.error('[XML gruppo]',err);
+  }
 }
 
 function renderContiAppart() {
