@@ -659,7 +659,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 15.2</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -680,7 +680,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 15.2">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 16">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -772,6 +772,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
       <button class="btn" onclick="window.print()" style="flex:1;justify-content:center;">🖨 Stampa / PDF</button>
       <button class="btn" onclick="shareDocWhatsApp()" style="flex:1;justify-content:center;background:#25D366;color:#fff;border-color:#25D366;">📱 WhatsApp</button>
       <button class="btn" onclick="shareDocEmail()" style="flex:1;justify-content:center;">📧 Email</button>
+      <button class="btn" onclick="esportaXML()" style="flex:1;justify-content:center;">📄 XML</button>
     </div>
   </div>
 </div>
@@ -1335,6 +1336,13 @@ async function onLoginSuccess() {
       av.title = `${u.name} — Clicca per uscire`;
     }
   } catch(e) {}
+  // Precarica impostazioni billing dal DB (aggiorna cache localStorage)
+  if (DATABASE_SHEET_ID || loadDbSheetId()) {
+    DATABASE_SHEET_ID = DATABASE_SHEET_ID || loadDbSheetId();
+    loadBillSettingsDB().then(s => {
+      if (s) localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s));
+    }).catch(()=>{});
+  }
   await loadFromSheets();
 }
 
@@ -2599,6 +2607,8 @@ async function loadFromSheets() {
     }
     showToast(`✓ ${bookings.length} prenotazioni`, 'success');
     startBgSync();
+    // Precarica dati conto (extra, override, modo) in background
+    preloadContoDati().catch(e => console.warn('[CONTI] preload fallito:', e.message));
 
   } catch(e) {
     hideLoading();
@@ -5151,26 +5161,342 @@ function billSettingsDefault() {
   };
 }
 
-// ── Carica/salva settings (merge con default) ──
-function loadBillSettings() {
+// ═══════════════════════════════════════════════════════════════════
+// BILLING DB LAYER
+// ═══════════════════════════════════════════════════════════════════
+// Tutte le informazioni operative di fatturazione vivono sul DATABASE
+// Google (foglio condiviso), non in localStorage.
+// Il localStorage è usato SOLO come cache read-through con TTL 5min.
+//
+// Schede nel foglio DATABASE:
+//   IMPOSTAZIONI  — tariffe, convenzioni, extra (riga 2 = JSON)
+//   CONTI         — una riga per prenotazione con extra, override, modo
+//
+// Pattern di accesso:
+//   leggi → prova cache → se scaduta leggi DB → aggiorna cache
+//   scrivi → scrivi DB → invalida cache
+// ═══════════════════════════════════════════════════════════════════
+
+const IMPOSTAZIONI_SHEET = 'IMPOSTAZIONI';
+const CONTI_SHEET        = 'CONTI';
+const BILL_DB_TTL        = 5 * 60 * 1000; // cache 5 minuti
+
+// ── Cache keys (localStorage, solo temporanea) ──
+const _C_SETTINGS = 'hotelBillSettingsCache';
+const _C_CONTI    = 'hotelContiCache';
+const _C_DATI     = 'hotelContoDatiCache'; // extra+override+modo per bid
+
+// ─────────────────────────────────────────────────────────────────
+// IMPOSTAZIONI (tariffe, convenzioni, extra)
+// ─────────────────────────────────────────────────────────────────
+
+async function ensureImpostazioniSheet() {
+  if (!DATABASE_SHEET_ID) return;
+  // Verifica se la scheda esiste
+  try {
+    const meta = await apiFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}?fields=sheets.properties.title`
+    );
+    const mj = await meta.json();
+    const exists = (mj.sheets||[]).some(s=>s.properties.title===IMPOSTAZIONI_SHEET);
+    if (!exists) {
+      await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}:batchUpdate`,{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ requests:[{ addSheet:{ properties:{ title:IMPOSTAZIONI_SHEET } } }] })
+      });
+    }
+    // Scrivi intestazione riga 1
+    const u = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(IMPOSTAZIONI_SHEET+'!A1:B1')}?valueInputOption=RAW`;
+    const d = await dbGet(`${IMPOSTAZIONI_SHEET}!A1:A1`);
+    if (!d.values?.[0]?.[0]) {
+      await apiFetch(u,{ method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ values:[['CHIAVE','VALORE']] }) });
+    }
+  } catch(e) { console.warn('[IMPOSTAZIONI] ensure:', e.message); }
+}
+
+async function loadBillSettingsDB() {
+  // 1. Prova cache
+  try {
+    const raw = localStorage.getItem(_C_SETTINGS);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (Date.now() - p.ts < BILL_DB_TTL) return mergeSettings(p.data);
+    }
+  } catch(e) {}
+
+  // 2. Leggi dal DB
+  if (!DATABASE_SHEET_ID) return loadBillSettingsLocal();
+  try {
+    const d = await dbGet(`${IMPOSTAZIONI_SHEET}!A2:B99`);
+    const rows = d.values || [];
+    const map = {};
+    rows.forEach(r => { if(r[0]) map[r[0]] = r[1]; });
+    if (map['billSettings']) {
+      const saved = JSON.parse(map['billSettings']);
+      localStorage.setItem(_C_SETTINGS, JSON.stringify({ ts:Date.now(), data:saved }));
+      return mergeSettings(saved);
+    }
+  } catch(e) { console.warn('[IMPOSTAZIONI] load:', e.message); }
+
+  return loadBillSettingsLocal(); // fallback
+}
+
+async function saveBillSettingsDB(s) {
+  // Invalida cache
+  localStorage.removeItem(_C_SETTINGS);
+  // Salva anche in localStorage per compatibilità
+  localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s));
+
+  if (!DATABASE_SHEET_ID) return;
+  try {
+    await ensureImpostazioniSheet();
+    // Leggi righe esistenti per trovare/aggiornare la riga billSettings
+    const d = await dbGet(`${IMPOSTAZIONI_SHEET}!A2:B99`);
+    const rows = d.values || [];
+    const idx  = rows.findIndex(r=>r[0]==='billSettings');
+    const rowNum = idx >= 0 ? idx + 2 : rows.length + 2;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(`${IMPOSTAZIONI_SHEET}!A${rowNum}:B${rowNum}`)}?valueInputOption=RAW`;
+    await apiFetch(url,{ method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ values:[['billSettings', JSON.stringify(s)]] }) });
+    // Aggiorna cache
+    localStorage.setItem(_C_SETTINGS, JSON.stringify({ ts:Date.now(), data:s }));
+  } catch(e) { console.warn('[IMPOSTAZIONI] save:', e.message); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// DATI CONTO PER PRENOTAZIONE (extra, override, modo appartamento)
+// Una riga per prenotazione nella scheda CONTI
+// Colonne: BOOKING_ID | EXTRA_JSON | OVERRIDE_JSON | APPART_MODE | TS
+// ─────────────────────────────────────────────────────────────────
+
+let _contiSheetReady = false;
+
+async function ensureContiSheet() {
+  if (_contiSheetReady || !DATABASE_SHEET_ID) return;
+  _contiSheetReady = true;
+  try {
+    const meta = await apiFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}?fields=sheets.properties.title`
+    );
+    const mj = await meta.json();
+    if (!(mj.sheets||[]).some(s=>s.properties.title===CONTI_SHEET)) {
+      await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}:batchUpdate`,{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ requests:[{ addSheet:{ properties:{ title:CONTI_SHEET } } }] })
+      });
+    }
+    const hd = await dbGet(`${CONTI_SHEET}!A1:F1`);
+    if (!hd.values?.[0]?.[0]) {
+      const u = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(CONTI_SHEET+'!A1:F1')}?valueInputOption=RAW`;
+      await apiFetch(u,{ method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ values:[['BOOKING_ID','EXTRA_JSON','OVERRIDE_JSON','APPART_MODE','CONTO_EMESSO_JSON','TS']] }) });
+    }
+  } catch(e) { console.warn('[CONTI] ensure:', e.message); }
+}
+
+// Cache in-memory per la sessione (riduce letture DB durante la stessa sessione)
+const _contiDatiCache = {}; // bid → { extra, override, appartMode, contoEmesso, dbRow, ts }
+
+async function loadContoDati(bid) {
+  // 1. Cache in-memory
+  if (_contiDatiCache[bid]) return _contiDatiCache[bid];
+
+  // 2. Cache localStorage (5min)
+  try {
+    const raw = localStorage.getItem(`${_C_DATI}_${bid}`);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (Date.now() - p.ts < BILL_DB_TTL) {
+        _contiDatiCache[bid] = p.data;
+        return p.data;
+      }
+    }
+  } catch(e) {}
+
+  // 3. Leggi dal DB (fallback su localStorage legacy)
+  const def = { extra:[], override:null, appartMode:null, contoEmesso:null, dbRow:null };
+
+  if (!DATABASE_SHEET_ID) return _migraDatiLocali(bid, def);
+
+  try {
+    await ensureContiSheet();
+    const d = await dbGet(`${CONTI_SHEET}!A2:F9999`);
+    const rows = d.values || [];
+    // Cerca tutte le prenotazioni e metti in cache (1 lettura per tutte)
+    rows.forEach((row, i) => {
+      const id = String(row[0]||'').trim();
+      if (!id) return;
+      const dati = {
+        extra:        _jsonParse(row[1], []),
+        override:     _jsonParse(row[2], null),
+        appartMode:   row[3] || null,
+        contoEmesso:  _jsonParse(row[4], null),
+        dbRow:        i + 2,
+        ts:           row[5] || ''
+      };
+      _contiDatiCache[id] = dati;
+      localStorage.setItem(`${_C_DATI}_${id}`, JSON.stringify({ ts:Date.now(), data:dati }));
+    });
+    return _contiDatiCache[bid] || _migraDatiLocali(bid, def);
+  } catch(e) {
+    console.warn('[CONTI] load:', e.message);
+    return _migraDatiLocali(bid, def);
+  }
+}
+
+function _migraDatiLocali(bid, def) {
+  // Migra dati legacy da localStorage se presenti
+  const extra    = _jsonParse(localStorage.getItem(`billExtra_${bid}`), []);
+  const override = _jsonParse(localStorage.getItem(`billOv_${bid}`), null);
+  const appartM  = localStorage.getItem(`appartMode_${bid}`) || null;
+  return { ...def, extra, override, appartMode:appartM };
+}
+
+async function saveContoDati(bid, patch) {
+  // Aggiorna cache in-memory
+  const cur = _contiDatiCache[bid] || { extra:[], override:null, appartMode:null, contoEmesso:null, dbRow:null };
+  const next = { ...cur, ...patch, ts: nowISO() };
+  _contiDatiCache[bid] = next;
+  // Invalida localStorage cache
+  localStorage.removeItem(`${_C_DATI}_${bid}`);
+  // Rimuovi dati legacy
+  localStorage.removeItem(`billExtra_${bid}`);
+  localStorage.removeItem(`billOv_${bid}`);
+  localStorage.removeItem(`appartMode_${bid}`);
+
+  if (!DATABASE_SHEET_ID) return;
+  try {
+    await ensureContiSheet();
+    const row = [
+      String(bid),
+      JSON.stringify(next.extra || []),
+      next.override ? JSON.stringify(next.override) : '',
+      next.appartMode || '',
+      next.contoEmesso ? JSON.stringify(next.contoEmesso) : '',
+      next.ts
+    ];
+    if (next.dbRow) {
+      const u = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(`${CONTI_SHEET}!A${next.dbRow}:F${next.dbRow}`)}?valueInputOption=RAW`;
+      await apiFetch(u,{ method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ values:[row] }) });
+    } else {
+      const u = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(CONTI_SHEET)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+      const resp = await apiFetch(u,{ method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ values:[row] }) });
+      const rj = await resp.json();
+      const m  = (rj.updates?.updatedRange||'').match(/(\d+):/);
+      if (m) { next.dbRow = parseInt(m[1]); _contiDatiCache[bid] = next; }
+    }
+  } catch(e) { console.warn('[CONTI] save:', e.message); }
+}
+
+function _jsonParse(s, fallback) {
+  if (!s || s === '') return fallback;
+  try { return JSON.parse(s); } catch(e) { return fallback; }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// API PUBBLICA — sostituisce le vecchie funzioni localStorage
+// ─────────────────────────────────────────────────────────────────
+
+// SINCRONO (usa cache in-memory, parte da vuoto se non ancora caricato)
+function getExtraForBooking(bid) {
+  return _contiDatiCache[bid]?.extra ?? _jsonParse(localStorage.getItem(`billExtra_${bid}`), []);
+}
+function setExtraForBooking(bid, extras) {
+  if (_contiDatiCache[bid]) _contiDatiCache[bid].extra = extras;
+  else _contiDatiCache[bid] = { extra:extras, override:null, appartMode:null, contoEmesso:null, dbRow:null };
+  saveContoDati(bid, { extra: extras }); // fire-and-forget
+}
+
+function getContoOverrides(bid) {
+  return _contiDatiCache[bid]?.override ?? _jsonParse(localStorage.getItem(`billOv_${bid}`), null);
+}
+function setContoOverrides(bid, righe) {
+  if (_contiDatiCache[bid]) _contiDatiCache[bid].override = righe;
+  else _contiDatiCache[bid] = { extra:[], override:righe, appartMode:null, contoEmesso:null, dbRow:null };
+  saveContoDati(bid, { override: righe }); // fire-and-forget
+}
+
+function getAppartMode(bid, notti) {
+  const m = _contiDatiCache[bid]?.appartMode ?? localStorage.getItem(`appartMode_${bid}`);
+  if (m === 'giornaliera') return false;
+  if (m === 'mensile')     return true;
+  return notti >= 20;
+}
+function toggleAppartMode(bid) {
+  const b = bookings.find(x=>x.id===bid); if(!b) return;
+  const cur  = getAppartMode(bid, nights(b.s,b.e));
+  const next = cur ? 'giornaliera' : 'mensile';
+  if (_contiDatiCache[bid]) _contiDatiCache[bid].appartMode = next;
+  else _contiDatiCache[bid] = { extra:[], override:null, appartMode:next, contoEmesso:null, dbRow:null };
+  saveContoDati(bid, { appartMode: next });
+  showBookingDetail(bid);
+}
+
+// Conti emessi: salvati nella riga del conto specifica
+function loadConti() {
+  // Raccoglie tutti i contoEmesso dalla cache in-memory
+  return Object.entries(_contiDatiCache)
+    .filter(([,d]) => d.contoEmesso)
+    .map(([,d]) => d.contoEmesso)
+    .sort((a,b) => (b.emessoIl||'').localeCompare(a.emessoIl||''));
+}
+function saveConti(contiArray) {
+  // Salva ogni conto nella riga della prenotazione corrispondente
+  contiArray.forEach(doc => {
+    const bid = doc.bookingId;
+    if (!bid) return;
+    if (_contiDatiCache[bid]) _contiDatiCache[bid].contoEmesso = doc;
+    else _contiDatiCache[bid] = { extra:[], override:null, appartMode:null, contoEmesso:doc, dbRow:null };
+    saveContoDati(bid, { contoEmesso: doc });
+  });
+}
+
+// Settings billing (async)
+function loadBillSettings() { return loadBillSettingsLocal(); } // sincrono per compatibilità render
+function loadBillSettingsLocal() {
   try {
     const raw = localStorage.getItem(BILL_SETTINGS_KEY);
     if (!raw) return billSettingsDefault();
-    const saved = JSON.parse(raw);
-    const def   = billSettingsDefault();
-    return {
-      ...def, ...saved,
-      tariffe: { ...def.tariffe, ...(saved.tariffe||{}) },
-      tariffeCamere: { ...(saved.tariffeCamere||{}) },
-    };
+    return mergeSettings(JSON.parse(raw));
   } catch(e) { return billSettingsDefault(); }
 }
-function saveBillSettings(s) { localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s)); }
-
-function loadConti() {
-  try { return JSON.parse(localStorage.getItem(BILL_CONTI_KEY)||'[]'); } catch(e) { return []; }
+function mergeSettings(saved) {
+  const def = billSettingsDefault();
+  return { ...def, ...saved, tariffe:{ ...def.tariffe,...(saved.tariffe||{}) }, tariffeCamere:{...(saved.tariffeCamere||{})} };
 }
-function saveConti(c) { localStorage.setItem(BILL_CONTI_KEY, JSON.stringify(c)); }
+function saveBillSettings(s) {
+  localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s)); // sincrono immediato
+  saveBillSettingsDB(s); // asincrono al DB
+}
+
+// ── Precarica i dati di conto all'avvio (dopo loadFromSheets) ──
+async function preloadContoDati() {
+  if (!DATABASE_SHEET_ID) return;
+  try {
+    await ensureContiSheet();
+    // Legge tutta la scheda CONTI in una chiamata e popola la cache
+    const d = await dbGet(`${CONTI_SHEET}!A2:F9999`);
+    const rows = d.values || [];
+    rows.forEach((row, i) => {
+      const id = String(row[0]||'').trim();
+      if (!id) return;
+      const dati = {
+        extra:       _jsonParse(row[1], []),
+        override:    _jsonParse(row[2], null),
+        appartMode:  row[3] || null,
+        contoEmesso: _jsonParse(row[4], null),
+        dbRow:       i + 2,
+        ts:          row[5] || ''
+      };
+      _contiDatiCache[id] = dati;
+    });
+    console.log(`[CONTI] Precaricati ${rows.length} record`);
+  } catch(e) { console.warn('[CONTI] preload:', e.message); }
+}
+
 
 // ─────────────────────────────────────────────────────────────────
 // MOTORE DI CALCOLO
@@ -5331,36 +5657,117 @@ function calcolaContoAppart(b, room, extras) {
   return { righe, totale:parseFloat(totale.toFixed(2)) };
 }
 
-function getAppartMode(bid, notti) {
-  const s = localStorage.getItem(`appartMode_${bid}`);
-  if (s==='giornaliera') return false;
-  if (s==='mensile')     return true;
-  return notti >= 20;
-}
-function toggleAppartMode(bid) {
-  const b = bookings.find(x=>x.id===bid);
-  if (!b) return;
-  const cur = getAppartMode(bid, nights(b.s,b.e));
-  localStorage.setItem(`appartMode_${bid}`, cur?'giornaliera':'mensile');
-  showBookingDetail(bid);
-}
+// getAppartMode + toggleAppartMode → vedi billing DB layer
 
 // ─────────────────────────────────────────────────────────────────
 // RENDER — TAB CONTO NEL DRAWER
 // ─────────────────────────────────────────────────────────────────
 
+// getContoOverrides + setContoOverrides → vedi billing DB layer
+
+// Apri editor inline per una riga del conto (override)
+function editRigaConto(bid, idx) {
+  const b = bookings.find(x=>x.id===bid); if(!b) return;
+  const room = ROOMS.find(r=>r.id===b.r);
+  const isA  = room?.g==='Appartamenti';
+  const ext  = getExtraForBooking(bid);
+  const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
+  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const r    = ovs[idx]; if(!r) return;
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-end;justify-content:center';
+  overlay.innerHTML=`
+    <div style="background:var(--surface);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:460px;box-sizing:border-box">
+      <div style="font-size:13px;font-weight:600;margin-bottom:14px;display:flex;justify-content:space-between">
+        <span>✏️ Modifica voce</span>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--text2)">✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <label style="font-size:11px;color:var(--text3)">Descrizione</label>
+        <input id="_ovLabel" value="${r.label.replace(/"/g,'&quot;')}" style="border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;width:100%;box-sizing:border-box">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div>
+            <label style="font-size:11px;color:var(--text3)">Qtà</label>
+            <input id="_ovQty" type="number" step="0.01" value="${r.qty??''}" placeholder="—" style="border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;width:100%;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text3)">Prezzo unitario €</label>
+            <input id="_ovPrice" type="number" step="0.01" value="${r.unitPrice??''}" placeholder="—" style="border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;width:100%;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text3)">Totale €</label>
+            <input id="_ovTotal" type="number" step="0.01" value="${r.total.toFixed(2)}" style="border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;width:100%;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--text3)">💡 Modifica il totale direttamente oppure qtà × prezzo. Il totale ha la precedenza se compilato.</div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button onclick="salvaOverrideRiga(${bid},${idx},this)" class="btn primary" style="flex:1;justify-content:center">✓ Applica</button>
+          <button onclick="rimuoviOverrideRiga(${bid},${idx},this)" class="btn" style="flex:1;justify-content:center;color:var(--danger)">✕ Rimuovi voce</button>
+          <button onclick="resetOverride(${bid},this)" class="btn" style="flex:1;justify-content:center">↺ Reset</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+}
+
+function salvaOverrideRiga(bid, idx, btn) {
+  const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const room = ROOMS.find(r=>r.id===b.r);
+  const isA  = room?.g==='Appartamenti';
+  const ext  = getExtraForBooking(bid);
+  const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
+  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+
+  const label    = document.getElementById('_ovLabel')?.value.trim() || ovs[idx].label;
+  const qty      = parseFloat(document.getElementById('_ovQty')?.value) || null;
+  const price    = parseFloat(document.getElementById('_ovPrice')?.value) || null;
+  const totalRaw = document.getElementById('_ovTotal')?.value;
+  const total    = totalRaw !== '' ? parseFloat(totalRaw) : (qty!=null&&price!=null ? qty*price : ovs[idx].total);
+
+  ovs[idx] = { ...ovs[idx], label, qty, unitPrice:price, total: parseFloat(total.toFixed(2)) };
+  setContoOverrides(bid, ovs);
+  btn.closest('[style*=fixed]').remove();
+  showBookingDetail(bid);
+}
+
+function rimuoviOverrideRiga(bid, idx, btn) {
+  const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const room = ROOMS.find(r=>r.id===b.r);
+  const isA  = room?.g==='Appartamenti';
+  const ext  = getExtraForBooking(bid);
+  const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
+  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  ovs.splice(idx, 1);
+  setContoOverrides(bid, ovs);
+  btn.closest('[style*=fixed]').remove();
+  showBookingDetail(bid);
+}
+
+function resetOverride(bid, btn) {
+  setContoOverrides(bid, null);
+  btn.closest('[style*=fixed]').remove();
+  showBookingDetail(bid);
+}
+
 function renderDrawerBill(b) {
   const room     = ROOMS.find(r=>r.id===b.r);
   const isAppart = room?.g === 'Appartamenti';
-  const extras   = getExtraForBooking(b.id);
-  const conto    = isAppart ? calcolaContoAppart(b, room, extras) : calcolaConto(b, extras);
+  const ext      = getExtraForBooking(b.id);
+  const base     = isAppart ? calcolaContoAppart(b, room, ext) : calcolaConto(b, ext);
+  // Applica override se presenti
+  const ovs      = getContoOverrides(b.id);
+  const righe    = ovs || base.righe;
+  const totale   = parseFloat(righe.reduce((s,r)=>s+r.total,0).toFixed(2));
+  const hasOv    = ovs !== null;
 
-  const rigaHtml = r => {
+  const rigaHtml = (r, idx) => {
     const neg = r.total < 0;
     const tot = `<span style="font-weight:600;${neg?'color:var(--danger)':''}">${neg?'':'+'}${r.total.toFixed(2)}€</span>`;
-    return `<div class="bill-row ${r.tipo==='sconto'?'discount':''}">
-      <span class="bill-row-label">${r.label}${r.badge?` <span class="rate-badge ${r.badge==='conv'?'conv':r.badge==='appart'?'appart':r.badge.startsWith('stagione')?'stagionale':'lunga'}">${r.badge}</span>`:''}</span>
-      <span style="color:var(--text3);font-size:11px;white-space:nowrap">${r.qty!=null?r.qty+(r.tipo==='base'?'×':'×'):''}</span>
+    return `<div class="bill-row ${r.tipo==='sconto'?'discount':''}" style="cursor:pointer" onclick="editRigaConto(${b.id},${idx})" title="Clicca per modificare">
+      <span class="bill-row-label">${r.label}${r.badge?` <span class="rate-badge ${r.badge==='conv'?'conv':r.badge==='appart'?'appart':r.badge.startsWith('stagione')?'stagionale':'lunga'}">${r.badge}</span>`:''} <span style="font-size:9px;color:var(--text3);margin-left:3px">✏️</span></span>
+      <span style="color:var(--text3);font-size:11px;white-space:nowrap">${r.qty!=null?r.qty+'×':''}</span>
       <span style="color:var(--text2);font-size:11px;white-space:nowrap">${r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':''}</span>
       ${tot}
     </div>`;
@@ -5415,11 +5822,11 @@ function renderDrawerBill(b) {
 
   return `
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
-      <span style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase">Conto preventivo</span>
-      <span style="font-size:20px;font-weight:700;color:var(--accent);font-family:'Playfair Display',serif">${conto.totale.toFixed(2)}€</span>
+      <span style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase">Conto preventivo${hasOv?' <span style="font-size:9px;color:var(--accent);margin-left:4px">● modificato</span>':''}</span>
+      <span style="font-size:20px;font-weight:700;color:var(--accent);font-family:'Playfair Display',serif">${totale.toFixed(2)}€</span>
     </div>
     ${toggleHtml}
-    ${conto.righe.map(rigaHtml).join('')}
+    ${righe.map((r,i)=>rigaHtml(r,i)).join('')}
     ${renderExtraRows(b.id)}
     <div class="conti-section-title" style="margin-top:14px">Aggiungi voce</div>
     ${extraAdder}
@@ -5434,10 +5841,7 @@ function renderDrawerBill(b) {
 // EXTRA
 // ─────────────────────────────────────────────────────────────────
 
-function getExtraForBooking(bid) {
-  try { return JSON.parse(localStorage.getItem(`billExtra_${bid}`)||'[]'); } catch(e) { return []; }
-}
-function setExtraForBooking(bid, extras) { localStorage.setItem(`billExtra_${bid}`, JSON.stringify(extras)); }
+// getExtraForBooking + setExtraForBooking → vedi billing DB layer
 
 function renderExtraRows(bid) {
   const extras = getExtraForBooking(bid);
@@ -5536,12 +5940,24 @@ function drTab(el, showId) {
 // EMETTI CONTO + PDF
 // ─────────────────────────────────────────────────────────────────
 
+function getContoEffettivo(bid) {
+  const b    = bookings.find(x=>x.id===bid); if(!b) return null;
+  const room = ROOMS.find(r=>r.id===b.r);
+  const isA  = room?.g==='Appartamenti';
+  const ext  = getExtraForBooking(bid);
+  const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
+  const ovs  = getContoOverrides(bid);
+  if (ovs) {
+    return { ...base, righe: ovs, totale: parseFloat(ovs.reduce((s,r)=>s+r.total,0).toFixed(2)) };
+  }
+  return base;
+}
+
 function emettiConto(bid) {
   const b    = bookings.find(x=>x.id===bid); if(!b) return;
   const room = ROOMS.find(r=>r.id===b.r);
   const isA  = room?.g==='Appartamenti';
-  const ext  = getExtraForBooking(bid);
-  const conto= isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
+  const conto= getContoEffettivo(bid);
   const conti= loadConti();
   const idx  = conti.findIndex(c=>c.bookingId===bid);
   const doc  = {
@@ -5557,12 +5973,13 @@ function emettiConto(bid) {
   showToast('✓ Conto emesso','success');
 }
 
+let _currentPdfBid = null;
 function apriPdf(bid) {
+  _currentPdfBid = bid;
   const b=bookings.find(x=>x.id===bid); if(!b) return;
   const room=ROOMS.find(r=>r.id===b.r);
   const isA=room?.g==='Appartamenti';
-  const ext=getExtraForBooking(bid);
-  const conto=isA?calcolaContoAppart(b,room,ext):calcolaConto(b,ext);
+  const conto=getContoEffettivo(bid);
   const cfg=loadBillSettings();
   document.getElementById('pdfTitle').textContent=`Conto — ${b.n}`;
   document.getElementById('printDoc').innerHTML=buildPdfDoc(b,room,conto,cfg,isA);
@@ -5618,6 +6035,122 @@ function shareDocEmail() {
   const s=encodeURIComponent('Conto — '+document.getElementById('pdfTitle').textContent);
   const b=encodeURIComponent(document.getElementById('printDoc').innerText);
   window.open(`mailto:?subject=${s}&body=${b}`,'_blank');
+}
+
+function esportaXML() {
+  const bid = _currentPdfBid;
+  if (!bid) { showToast('Apri prima un conto', 'error'); return; }
+  const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const room = ROOMS.find(r=>r.id===b.r);
+  const cfg  = loadBillSettings();
+  const conto= getContoEffettivo(bid);
+  const oggi = new Date();
+  const fmtD = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const esc  = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const linee = conto.righe.filter(r=>r.total!==0).map((r,i)=>`
+    <DettaglioLinee>
+      <NumeroLinea>${i+1}</NumeroLinea>
+      <Descrizione>${esc(r.label)}</Descrizione>
+      ${r.qty!=null?`<Quantita>${parseFloat(r.qty).toFixed(2)}</Quantita>`:''}
+      ${r.unitPrice!=null?`<PrezzoUnitario>${Math.abs(r.unitPrice).toFixed(2)}</PrezzoUnitario>`:''}
+      <PrezzoTotale>${r.total.toFixed(2)}</PrezzoTotale>
+      <AliquotaIVA>10.00</AliquotaIVA>
+    </DettaglioLinee>`).join('');
+
+  const imponibile = parseFloat((conto.totale / 1.10).toFixed(2));
+  const iva        = parseFloat((conto.totale - imponibile).toFixed(2));
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- FatturaPA v1.2.1 - Da completare e firmare prima della trasmissione SDI -->
+<p:FatturaElettronica versione="FPR12"
+  xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2"
+  xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <FatturaElettronicaHeader>
+    <DatiTrasmissione>
+      <IdTrasmittente>
+        <IdPaese>IT</IdPaese>
+        <IdCodice><!-- P.IVA cedente --></IdCodice>
+      </IdTrasmittente>
+      <ProgressivoInvio>001</ProgressivoInvio>
+      <FormatoTrasmissione>FPR12</FormatoTrasmissione>
+      <CodiceDestinatario>0000000</CodiceDestinatario>
+    </DatiTrasmissione>
+
+    <CedentePrestatore>
+      <DatiAnagrafici>
+        <IdFiscaleIVA>
+          <IdPaese>IT</IdPaese>
+          <IdCodice><!-- inserire P.IVA hotel --></IdCodice>
+        </IdFiscaleIVA>
+        <Anagrafica>
+          <Denominazione>${esc(cfg.hotelName)}</Denominazione>
+        </Anagrafica>
+        <RegimeFiscale>RF01</RegimeFiscale>
+      </DatiAnagrafici>
+      <Sede>
+        <Indirizzo>${esc(cfg.hotelAddress||'')}</Indirizzo>
+        <Nazione>IT</Nazione>
+      </Sede>
+    </CedentePrestatore>
+
+    <CessionarioCommittente>
+      <DatiAnagrafici>
+        <CodiceFiscale><!-- CF o P.IVA cliente --></CodiceFiscale>
+        <Anagrafica>
+          <Nome>${esc(b.n)}</Nome>
+        </Anagrafica>
+      </DatiAnagrafici>
+      <Sede>
+        <Indirizzo><!-- indirizzo cliente --></Indirizzo>
+        <Nazione>IT</Nazione>
+      </Sede>
+    </CessionarioCommittente>
+  </FatturaElettronicaHeader>
+
+  <FatturaElettronicaBody>
+    <DatiGenerali>
+      <DatiGeneraliDocumento>
+        <TipoDocumento>TD01</TipoDocumento>
+        <Divisa>EUR</Divisa>
+        <Data>${fmtD(oggi)}</Data>
+        <Numero><!-- numero fattura --></Numero>
+        <ImportoTotaleDocumento>${conto.totale.toFixed(2)}</ImportoTotaleDocumento>
+        <Causale>Soggiorno ${esc(b.n)} · ${esc(room?.name||roomName(b.r))} · ${fmtD(b.s)} → ${fmtD(b.e)}</Causale>
+      </DatiGeneraliDocumento>
+    </DatiGenerali>
+
+    <DatiBeniServizi>
+      ${linee}
+      <DatiRiepilogo>
+        <AliquotaIVA>10.00</AliquotaIVA>
+        <ImponibileImporto>${imponibile.toFixed(2)}</ImponibileImporto>
+        <Imposta>${iva.toFixed(2)}</Imposta>
+        <EsigibilitaIVA>I</EsigibilitaIVA>
+      </DatiRiepilogo>
+    </DatiBeniServizi>
+
+    <DatiPagamento>
+      <CondizioniPagamento>TP02</CondizioniPagamento>
+      <DettaglioPagamento>
+        <ModalitaPagamento>MP01</ModalitaPagamento>
+        <ImportoPagamento>${conto.totale.toFixed(2)}</ImportoPagamento>
+      </DettaglioPagamento>
+    </DatiPagamento>
+  </FatturaElettronicaBody>
+</p:FatturaElettronica>`;
+
+  // Download file
+  const blob = new Blob([xml], { type: 'application/xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `fattura_${b.n.replace(/\s+/g,'_')}_${fmtD(oggi)}.xml`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('✓ XML scaricato', 'success');
 }
 
 // ─────────────────────────────────────────────────────────────────
