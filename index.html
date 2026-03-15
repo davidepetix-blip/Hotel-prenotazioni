@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.9</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.2</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 16.9">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 17.2">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -2082,7 +2082,7 @@ async function readAnnualSheet(entry) {
   const meta = await metaR.json();
   const sheetNames = meta.sheets
     .map(s => s.properties.title)
-    .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4}$/i.test(n));
+    .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF]+\s+\d{4}$/i.test(n));
 
   for (const sName of sheetNames) {
     try {
@@ -2883,7 +2883,7 @@ async function updateJsonRow45(sName, colIdx, cameraName) {
   };
 
   // Estrai anno e mese dal nome foglio (es. "Marzo 2026")
-  const sheetMatch = sName.match(/([A-Za-zÀ-ÖØ-öø-ÿ]+)\s+(\d{4})/i);
+  const sheetMatch = sName.match(/([A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF]+)\s+(\d{4})/i);
   const sheetYear  = sheetMatch ? parseInt(sheetMatch[2]) : new Date().getFullYear();
   const sheetMonthName = sheetMatch ? sheetMatch[1].toLowerCase() : '';
   const MESI = {gennaio:0,febbraio:1,marzo:2,aprile:3,maggio:4,giugno:5,
@@ -6843,9 +6843,9 @@ function _esportaXMLGruppo() {
     const toLatin= s => String(s||'').replace(/[·•]/g,'-').replace(/[→⇒►]/g,'->').replace(/[×✕]/g,'x')
       .replace(/[àáâã]/g,'a').replace(/[èéêë]/g,'e').replace(/[ìíîï]/g,'i')
       .replace(/[òóôõ]/g,'o').replace(/[ùúûü]/g,'u').replace(/[ÀÁ]/g,'A')
-      .replace(/[ÈÉ]/g,'E').replace(/[ÙÚ]/g,'U').replace(/[^ -ÿ]/g,'?');
+      .replace(/[ÈÉ]/g,'E').replace(/[ÙÚ]/g,'U').replace(/[^\u0000-\u00FF]/g,'?');
     const esc    = s => toLatin(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    const clean  = s => esc(s).replace(/[ --]/g,'').trim();
+    const clean  = s => esc(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim();
 
     const pivaHotel = clean(cfg.pivaHotel || '00000000000');
     const aliqXML   = parseFloat(g.aliquotaIVA || 10);
