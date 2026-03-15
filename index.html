@@ -206,8 +206,32 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .ttr { color: rgba(255,255,255,.75); line-height: 1.7; }
 
 /* ── FAB ── */
-.fab { position: fixed; bottom: 20px; right: 16px; width: 50px; height: 50px; border-radius: 50%; background: var(--accent); color: #fff; border: none; font-size: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(45,106,79,.35); z-index: 60; transition: background .15s, transform .15s, box-shadow .15s; }
-.fab:hover { background: var(--accent2); transform: scale(1.05); box-shadow: 0 6px 20px rgba(45,106,79,.4); }
+.fab-group { position:fixed; bottom:20px; right:16px; display:flex; flex-direction:column; align-items:flex-end; gap:10px; z-index:60; }
+.fab { width:50px; height:50px; border-radius:50%; background:var(--accent); color:#fff; border:none; font-size:24px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 16px rgba(45,106,79,.35); transition:background .15s,transform .15s,box-shadow .15s; }
+.fab:hover { background:var(--accent2); transform:scale(1.05); box-shadow:0 6px 20px rgba(45,106,79,.4); }
+.fab.fab-search { background:var(--surface); color:var(--accent); border:2px solid var(--accent); font-size:18px; width:44px; height:44px; }
+.fab.fab-search:hover { background:var(--accent); color:#fff; }
+/* Search overlay */
+#searchOverlay { display:none; position:fixed; inset:0; background:var(--bg); z-index:200; flex-direction:column; }
+#searchOverlay.open { display:flex; }
+.search-hdr { display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border); background:var(--surface); }
+.search-input { flex:1; border:1px solid var(--border); border-radius:8px; padding:9px 13px; font-size:14px; background:var(--surface2); color:var(--text); outline:none; }
+.search-input:focus { border-color:var(--accent); }
+.search-filters { display:flex; gap:6px; padding:8px 14px; overflow-x:auto; scrollbar-width:none; border-bottom:1px solid var(--border); background:var(--surface); flex-shrink:0; }
+.search-filters::-webkit-scrollbar { display:none; }
+.sf-chip { border:1px solid var(--border); background:var(--surface2); color:var(--text2); padding:4px 10px; border-radius:20px; font-size:11px; cursor:pointer; white-space:nowrap; flex-shrink:0; }
+.sf-chip.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.search-results { flex:1; overflow-y:auto; padding:8px 0; }
+.sr-item { display:flex; align-items:flex-start; gap:10px; padding:11px 14px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .1s; }
+.sr-item:hover,.sr-item:active { background:var(--surface2); }
+.sr-dot { width:10px; height:10px; border-radius:2px; flex-shrink:0; margin-top:4px; }
+.sr-body { flex:1; min-width:0; }
+.sr-name { font-size:13px; font-weight:600; color:var(--text); margin-bottom:2px; }
+.sr-name mark { background:#fff3b0; color:var(--text); border-radius:2px; padding:0 1px; }
+.sr-meta { font-size:11px; color:var(--text3); display:flex; flex-wrap:wrap; gap:4px; }
+.sr-badge { background:var(--surface2); padding:2px 6px; border-radius:10px; border:1px solid var(--border); }
+.search-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:200px; color:var(--text3); gap:8px; }
+.search-empty .emptyicon { font-size:32px; }
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -659,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.1</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -680,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 16">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 16.1">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -740,8 +764,28 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   </div>
 </div>
 
-<!-- ══ FAB ══ -->
-<button class="fab" onclick="openModal()">+</button>
+<!-- ══ FAB GROUP ══ -->
+<div class="fab-group" id="fabGroup">
+  <button class="fab fab-search" onclick="openSearch()" title="Cerca prenotazione">🔍</button>
+  <button class="fab" onclick="openModal()" title="Nuova prenotazione">+</button>
+</div>
+
+<!-- ══ SEARCH OVERLAY ══ -->
+<div id="searchOverlay">
+  <div class="search-hdr">
+    <input class="search-input" id="searchInput" type="search" placeholder="Nome cliente, camera, date…"
+      oninput="runSearch()" autocomplete="off" autocorrect="off" spellcheck="false">
+    <button class="btn btn-icon" onclick="closeSearch()" style="flex-shrink:0">✕</button>
+  </div>
+  <div class="search-filters" id="searchFilters">
+    <span class="sf-chip active" data-f="all"    onclick="setFilter(this,'all')">Tutte</span>
+    <span class="sf-chip"        data-f="oggi"   onclick="setFilter(this,'oggi')">Oggi</span>
+    <span class="sf-chip"        data-f="future" onclick="setFilter(this,'future')">Future</span>
+    <span class="sf-chip"        data-f="passate"onclick="setFilter(this,'passate')">Passate</span>
+    <span class="sf-chip"        data-f="mese"   onclick="setFilter(this,'mese')">Questo mese</span>
+  </div>
+  <div class="search-results" id="searchResults"></div>
+</div>
 
 <!-- ══ CONTI SCREEN ══ -->
 <div id="contiScreen">
@@ -3613,6 +3657,156 @@ document.addEventListener('mousemove', movTT);
 document.addEventListener('touchstart', hideTT, { passive: true });
 
 // ═══════════════════════════════════════════════════════════════════
+// RICERCA PRENOTAZIONI
+// ═══════════════════════════════════════════════════════════════════
+
+let _searchFilter = 'all';
+
+function openSearch() {
+  document.getElementById('searchOverlay').classList.add('open');
+  hideTT();
+  // Reset
+  document.getElementById('searchInput').value = '';
+  _searchFilter = 'all';
+  document.querySelectorAll('.sf-chip').forEach(c => c.classList.toggle('active', c.dataset.f === 'all'));
+  runSearch();
+  setTimeout(() => document.getElementById('searchInput').focus(), 120);
+}
+
+function closeSearch() {
+  document.getElementById('searchOverlay').classList.remove('open');
+}
+
+function setFilter(el, f) {
+  _searchFilter = f;
+  document.querySelectorAll('.sf-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  runSearch();
+}
+
+function runSearch() {
+  const q     = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+  const now   = new Date(); now.setHours(0,0,0,0);
+  const mesS  = new Date(curY, curM, 1);
+  const mesE  = new Date(curY, curM+1, 0);
+
+  let risultati = [...bookings];
+
+  // Filtro temporale
+  if (_searchFilter === 'oggi') {
+    risultati = risultati.filter(b => b.s <= now && b.e > now);
+  } else if (_searchFilter === 'future') {
+    risultati = risultati.filter(b => b.s > now);
+  } else if (_searchFilter === 'passate') {
+    risultati = risultati.filter(b => b.e <= now);
+  } else if (_searchFilter === 'mese') {
+    risultati = risultati.filter(b => b.s <= mesE && b.e >= mesS);
+  }
+
+  // Filtro testo
+  if (q) {
+    risultati = risultati.filter(b => {
+      const cam = (roomName(b.r)||'').toLowerCase();
+      const grp = (ROOMS.find(r=>r.id===b.r)?.g||'').toLowerCase();
+      return b.n.toLowerCase().includes(q)
+          || cam.includes(q)
+          || grp.includes(q)
+          || (b.d||'').toLowerCase().includes(q)
+          || (b.note||'').toLowerCase().includes(q)
+          || fmt(b.s).includes(q)
+          || fmt(b.e).includes(q);
+    });
+  }
+
+  // Ordina: prima le future/in corso, poi le passate; dentro ogni gruppo per data
+  const ts = now.getTime();
+  risultati.sort((a,b) => {
+    const aPass = a.e.getTime() <= ts, bPass = b.e.getTime() <= ts;
+    if (aPass !== bPass) return aPass ? 1 : -1;
+    return a.s - b.s;
+  });
+
+  renderSearchResults(risultati, q);
+}
+
+function _highlight(text, q) {
+  if (!q) return escHtml(text);
+  const idx = text.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return escHtml(text);
+  return escHtml(text.slice(0,idx))
+    + '<mark>' + escHtml(text.slice(idx, idx+q.length)) + '</mark>'
+    + escHtml(text.slice(idx+q.length));
+}
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderSearchResults(lista, q) {
+  const el = document.getElementById('searchResults');
+  if (!lista.length) {
+    el.innerHTML = `<div class="search-empty"><div class="emptyicon">🔍</div><div>${q?'Nessun risultato per "'+escHtml(q)+'"':'Nessuna prenotazione'}</div></div>`;
+    return;
+  }
+
+  const now = new Date(); now.setHours(0,0,0,0);
+  let lastGroup = null;
+
+  el.innerHTML = lista.map(b => {
+    const room   = ROOMS.find(r=>r.id===b.r);
+    const n      = nights(b.s,b.e);
+    const inCorso= b.s <= now && b.e > now;
+    const futura = b.s > now;
+    const group  = futura ? 'future' : inCorso ? 'in corso' : 'passate';
+
+    let header = '';
+    if (group !== lastGroup) {
+      lastGroup = group;
+      const label = group==='future'?'🗓 Future':group==='in corso'?'✅ In corso':'📁 Passate';
+      header = `<div style="padding:6px 14px 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);background:var(--surface2)">${label}</div>`;
+    }
+
+    return header + `<div class="sr-item" onclick="goToBooking(${b.id})">
+      <div class="sr-dot" style="background:${b.c}"></div>
+      <div class="sr-body">
+        <div class="sr-name">${_highlight(b.n, q)}</div>
+        <div class="sr-meta">
+          <span class="sr-badge">${escHtml(room?.name||roomName(b.r))}</span>
+          <span class="sr-badge">${fmt(b.s)} → ${fmt(b.e)}</span>
+          <span class="sr-badge">${n} nott${n===1?'e':'i'}</span>
+          ${b.d?`<span class="sr-badge">${escHtml(b.d)}</span>`:''}
+          ${inCorso?'<span class="sr-badge" style="background:#d4edda;border-color:#c3e6cb;color:#155724">In corso</span>':''}
+        </div>
+        ${b.note?`<div style="font-size:10px;color:var(--text3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📝 ${escHtml(b.note)}</div>`:''}
+      </div>
+      <div style="font-size:11px;color:var(--text3);flex-shrink:0;text-align:right;padding-top:2px">${escHtml(room?.g||'')}</div>
+    </div>`;
+  }).join('');
+}
+
+function goToBooking(id) {
+  closeSearch();
+  const b = bookings.find(x=>x.id===id); if(!b) return;
+  // Naviga al mese corretto
+  const bm = b.s.getMonth(), by = b.s.getFullYear();
+  if (curM !== bm || curY !== by) { curM=bm; curY=by; render(); }
+  // Scrolla alla data nel gantt
+  setTimeout(() => {
+    const day = b.s.getDate();
+    const gs  = document.getElementById('gscroll');
+    if (gs) gs.scrollLeft = Math.max(0, (day-3)*34+90);
+    // Apri drawer
+    showBookingDetail(id);
+  }, 80);
+}
+
+// Chiudi search con Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('searchOverlay').classList.contains('open')) {
+    closeSearch();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════
@@ -5067,7 +5261,7 @@ function buildRoomSelect(){
 function checkW(){
   const w=window.innerWidth>=640;
   document.getElementById('btnAdd').style.display=w?'inline-flex':'none';
-  document.querySelector('.fab').style.display=w?'none':'flex';
+  document.getElementById('fabGroup').style.display=w?'none':'flex';
 }
 window.addEventListener('resize',checkW);
 
