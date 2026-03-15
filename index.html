@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.1</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.2</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 16.1">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 16.2">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -6239,24 +6239,70 @@ function esportaXML() {
   const cfg  = loadBillSettings();
   const conto= getContoEffettivo(bid);
   const oggi = new Date();
-  const fmtD = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  const esc  = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-  const linee = conto.righe.filter(r=>r.total!==0).map((r,i)=>`
+  // Formatta data ISO
+  const fmtD = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+
+  // Escape XML + rimuove caratteri non Latin1 (schema FatturaPA accetta solo Latin)
+  // Sostituisce caratteri speciali comuni con equivalenti ASCII
+  const toLatin = s => String(s||'')
+    .replace(/[·•]/g, '-')
+    .replace(/[→⇒►]/g, '->')
+    .replace(/[×x✕]/g, 'x')
+    .replace(/[àáâã]/g, 'a').replace(/[èéêë]/g, 'e')
+    .replace(/[ìíîï]/g, 'i').replace(/[òóôõ]/g, 'o')
+    .replace(/[ùúûü]/g, 'u').replace(/[ÀÁ]/g, 'A')
+    .replace(/[ÈÉ]/g, 'E').replace(/[ÙÚ]/g, 'U')
+    .replace(/[^\x00-\xFF]/g, '?'); // tutto il resto → ?
+  const esc = s => toLatin(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  // Pulisce un campo per uso in elementi stringa FatturaPA (no caratteri di controllo)
+  const clean = s => esc(s).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'').trim();
+
+  // P.IVA hotel: letta da impostazioni, default placeholder valido per schema
+  const pivaHotel = clean(cfg.pivaHotel || cfg.piva || '00000000000');
+  const hotelAddr = clean(cfg.hotelAddress || 'Via da definire');
+  const hotelCAP  = clean(cfg.hotelCAP    || '00000');
+  const hotelProv = clean(cfg.hotelProv   || 'XX');
+
+  // Split nome cliente in nome/cognome (primo token = nome, resto = cognome)
+  // Se è una sola parola o un'azienda usiamo Denominazione
+  const nomeParti = (b.n||'Cliente').trim().split(/\s+/);
+  const usaDenominazione = nomeParti.length === 1 || b.n.includes('srl') || b.n.includes('spa') || b.n.includes('snc') || b.n.includes('SS') || b.n.length > 30;
+  const clienteAnag = usaDenominazione
+    ? `<Denominazione>${clean(b.n)}</Denominazione>`
+    : `<Nome>${clean(nomeParti[0])}</Nome><Cognome>${clean(nomeParti.slice(1).join(' '))}</Cognome>`;
+
+  // Numero fattura progressivo (anno + timestamp per unicità)
+  const numFattura = fmtD(oggi).replace(/-/g,'') + '-' + String(bid).slice(-4);
+
+  // Causale: solo ASCII, max 200 char
+  const causale = clean('Soggiorno ' + b.n + ' cam. ' + (room?.name||roomName(b.r)) + ' ' + fmtD(b.s) + ' - ' + fmtD(b.e)).slice(0, 200);
+
+  // Linee dettaglio: Descrizione solo ASCII, max 1000 char
+  const linee = conto.righe.filter(r=>r.total!==0).map((r,i) => {
+    const desc  = clean(r.label).slice(0, 1000);
+    const qty   = r.qty   != null ? parseFloat(r.qty).toFixed(2)            : null;
+    const prezzo= r.unitPrice != null ? Math.abs(r.unitPrice).toFixed(2)    : null;
+    const tot   = r.total.toFixed(2);
+    // AliquotaIVA: 10% alloggio, 22% extra, 4% per esenzioni — usiamo 10% default
+    return `
     <DettaglioLinee>
       <NumeroLinea>${i+1}</NumeroLinea>
-      <Descrizione>${esc(r.label)}</Descrizione>
-      ${r.qty!=null?`<Quantita>${parseFloat(r.qty).toFixed(2)}</Quantita>`:''}
-      ${r.unitPrice!=null?`<PrezzoUnitario>${Math.abs(r.unitPrice).toFixed(2)}</PrezzoUnitario>`:''}
-      <PrezzoTotale>${r.total.toFixed(2)}</PrezzoTotale>
+      <Descrizione>${desc||'Servizio'}</Descrizione>
+      ${qty   ? '<Quantita>'+qty+'</Quantita>' : ''}
+      ${prezzo? '<PrezzoUnitario>'+prezzo+'</PrezzoUnitario>' : '<PrezzoUnitario>'+Math.abs(r.total).toFixed(2)+'</PrezzoUnitario>'}
+      <PrezzoTotale>${tot}</PrezzoTotale>
       <AliquotaIVA>10.00</AliquotaIVA>
-    </DettaglioLinee>`).join('');
+    </DettaglioLinee>`;
+  }).join('');
 
   const imponibile = parseFloat((conto.totale / 1.10).toFixed(2));
   const iva        = parseFloat((conto.totale - imponibile).toFixed(2));
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<!-- FatturaPA v1.2.1 - Da completare e firmare prima della trasmissione SDI -->
 <p:FatturaElettronica versione="FPR12"
   xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2"
   xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
@@ -6266,9 +6312,9 @@ function esportaXML() {
     <DatiTrasmissione>
       <IdTrasmittente>
         <IdPaese>IT</IdPaese>
-        <IdCodice><!-- P.IVA cedente --></IdCodice>
+        <IdCodice>${pivaHotel}</IdCodice>
       </IdTrasmittente>
-      <ProgressivoInvio>001</ProgressivoInvio>
+      <ProgressivoInvio>${numFattura}</ProgressivoInvio>
       <FormatoTrasmissione>FPR12</FormatoTrasmissione>
       <CodiceDestinatario>0000000</CodiceDestinatario>
     </DatiTrasmissione>
@@ -6277,28 +6323,33 @@ function esportaXML() {
       <DatiAnagrafici>
         <IdFiscaleIVA>
           <IdPaese>IT</IdPaese>
-          <IdCodice><!-- inserire P.IVA hotel --></IdCodice>
+          <IdCodice>${pivaHotel}</IdCodice>
         </IdFiscaleIVA>
         <Anagrafica>
-          <Denominazione>${esc(cfg.hotelName)}</Denominazione>
+          <Denominazione>${clean(cfg.hotelName)}</Denominazione>
         </Anagrafica>
         <RegimeFiscale>RF01</RegimeFiscale>
       </DatiAnagrafici>
       <Sede>
-        <Indirizzo>${esc(cfg.hotelAddress||'')}</Indirizzo>
+        <Indirizzo>${hotelAddr}</Indirizzo>
+        <CAP>${hotelCAP}</CAP>
+        <Comune>${clean(cfg.hotelComune||'Da definire')}</Comune>
+        <Provincia>${hotelProv}</Provincia>
         <Nazione>IT</Nazione>
       </Sede>
     </CedentePrestatore>
 
     <CessionarioCommittente>
       <DatiAnagrafici>
-        <CodiceFiscale><!-- CF o P.IVA cliente --></CodiceFiscale>
+        <CodiceFiscale>XXXXXXXXXXXXXXXXXXX</CodiceFiscale>
         <Anagrafica>
-          <Nome>${esc(b.n)}</Nome>
+          ${clienteAnag}
         </Anagrafica>
       </DatiAnagrafici>
       <Sede>
-        <Indirizzo><!-- indirizzo cliente --></Indirizzo>
+        <Indirizzo>Da definire</Indirizzo>
+        <CAP>00000</CAP>
+        <Comune>Da definire</Comune>
         <Nazione>IT</Nazione>
       </Sede>
     </CessionarioCommittente>
@@ -6310,9 +6361,9 @@ function esportaXML() {
         <TipoDocumento>TD01</TipoDocumento>
         <Divisa>EUR</Divisa>
         <Data>${fmtD(oggi)}</Data>
-        <Numero><!-- numero fattura --></Numero>
+        <Numero>${numFattura}</Numero>
         <ImportoTotaleDocumento>${conto.totale.toFixed(2)}</ImportoTotaleDocumento>
-        <Causale>Soggiorno ${esc(b.n)} · ${esc(room?.name||roomName(b.r))} · ${fmtD(b.s)} → ${fmtD(b.e)}</Causale>
+        <Causale>${causale}</Causale>
       </DatiGeneraliDocumento>
     </DatiGenerali>
 
@@ -6550,8 +6601,12 @@ function buildContiSettingsForm(cfg) {
     <div class="conti-section">
       <div class="conti-section-title">Struttura</div>
       <div class="rate-grid">
-        <div class="rate-field" style="grid-column:1/-1"><label>Nome</label><input id="cfgHotelName" value="${cfg.hotelName}"></div>
-        <div class="rate-field" style="grid-column:1/-1"><label>Indirizzo</label><input id="cfgHotelAddr" value="${cfg.hotelAddress||''}"></div>
+        <div class="rate-field" style="grid-column:1/-1"><label>Nome / Ragione sociale</label><input id="cfgHotelName" value="${cfg.hotelName}"></div>
+        <div class="rate-field" style="grid-column:1/-1"><label>Indirizzo (via e numero)</label><input id="cfgHotelAddr" value="${cfg.hotelAddress||''}"></div>
+        <div class="rate-field"><label>CAP</label><input id="cfgHotelCAP" value="${cfg.hotelCAP||''}" maxlength="5" placeholder="es. 90100"></div>
+        <div class="rate-field"><label>Comune</label><input id="cfgHotelComune" value="${cfg.hotelComune||''}" placeholder="es. Palermo"></div>
+        <div class="rate-field"><label>Provincia (sigla)</label><input id="cfgHotelProv" value="${cfg.hotelProv||''}" maxlength="2" placeholder="es. PA"></div>
+        <div class="rate-field"><label>P.IVA / Codice fiscale</label><input id="cfgHotelPiva" value="${cfg.pivaHotel||''}" placeholder="11 cifre senza IT"></div>
         <div class="rate-field"><label>Telefono</label><input id="cfgHotelTel" value="${cfg.hotelTel||''}"></div>
       </div>
     </div>
@@ -6639,9 +6694,13 @@ function removeDurRow(i) { document.getElementById(`durRow_${i}`)?.remove(); }
 
 function saveContiSettings() {
   const cfg = loadBillSettings();
-  cfg.hotelName    = document.getElementById('cfgHotelName')?.value || cfg.hotelName;
-  cfg.hotelAddress = document.getElementById('cfgHotelAddr')?.value || '';
-  cfg.hotelTel     = document.getElementById('cfgHotelTel')?.value  || '';
+  cfg.hotelName    = document.getElementById('cfgHotelName')?.value  || cfg.hotelName;
+  cfg.hotelAddress = document.getElementById('cfgHotelAddr')?.value  || '';
+  cfg.hotelCAP     = document.getElementById('cfgHotelCAP')?.value   || '';
+  cfg.hotelComune  = document.getElementById('cfgHotelComune')?.value || '';
+  cfg.hotelProv    = document.getElementById('cfgHotelProv')?.value  || '';
+  cfg.pivaHotel    = document.getElementById('cfgHotelPiva')?.value  || '';
+  cfg.hotelTel     = document.getElementById('cfgHotelTel')?.value   || '';
 
   // Tariffe disposizione
   cfg.tariffe = {
