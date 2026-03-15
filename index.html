@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.2</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.3</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 16.2">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 16.3">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -6276,7 +6276,11 @@ function esportaXML() {
     : `<Nome>${clean(nomeParti[0])}</Nome><Cognome>${clean(nomeParti.slice(1).join(' '))}</Cognome>`;
 
   // Numero fattura progressivo (anno + timestamp per unicità)
-  const numFattura = fmtD(oggi).replace(/-/g,'') + '-' + String(bid).slice(-4);
+  // ProgressivoInvio: max 10 char, solo lettere e cifre (schema FatturaPA)
+  const numFattura = String(oggi.getFullYear()).slice(-2)
+    + String(oggi.getMonth()+1).padStart(2,'0')
+    + String(oggi.getDate()).padStart(2,'0')
+    + String(bid).slice(-2); // es. "260315" + "01" = 8 char
 
   // Causale: solo ASCII, max 200 char
   const causale = clean('Soggiorno ' + b.n + ' cam. ' + (room?.name||roomName(b.r)) + ' ' + fmtD(b.s) + ' - ' + fmtD(b.e)).slice(0, 200);
@@ -6341,7 +6345,7 @@ function esportaXML() {
 
     <CessionarioCommittente>
       <DatiAnagrafici>
-        <CodiceFiscale>XXXXXXXXXXXXXXXXXXX</CodiceFiscale>
+        <CodiceFiscale>RSSMRA00A00H501U</CodiceFiscale>
         <Anagrafica>
           ${clienteAnag}
         </Anagrafica>
