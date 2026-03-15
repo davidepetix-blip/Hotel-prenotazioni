@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.5</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.6</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 16.5">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 16.6">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -6413,26 +6413,40 @@ function esportaXML() {
   </FatturaElettronicaBody>
 </p:FatturaElettronica>`;
 
-  // Download file
-  try {
-    const blob = new Blob([xml], { type: 'application/xml' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `fattura_${b.n.replace(/\s+/g,'_')}_${fmtD(oggi)}.xml`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('✓ XML scaricato', 'success');
-  } catch(e) {
-    showToast('Errore XML: ' + e.message, 'error');
-    console.error('[XML]', e);
-  }
+  // ── Download: mostra overlay con link diretto (funziona anche su mobile) ──
   } catch(outerErr) {
-    showToast('Errore generazione XML: ' + outerErr.message, 'error');
-    console.error('[XML outer]', outerErr);
+    showToast('Errore XML: ' + outerErr.message, 'error');
+    console.error('[XML]', outerErr);
+    return;
   }
+
+  // Mostra overlay con anteprima e link download diretto
+  // (a.click() programmático è bloccato dai browser mobile)
+  const nomeFile = 'fattura_' + b.n.replace(/\s+/g,'_') + '_' + fmtD(oggi) + '.xml';
+  const blob     = new Blob([xml], { type:'application/xml;charset=utf-8' });
+  const url      = URL.createObjectURL(blob);
+
+  // Overlay con link cliccabile dall'utente
+  const ov = document.createElement('div');
+  ov.id    = 'xmlDlOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML = `
+    <div style="background:var(--surface);border-radius:16px;padding:24px;max-width:360px;width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+      <div style="font-size:32px;margin-bottom:12px">📄</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px">XML FatturaPA pronto</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:18px;word-break:break-all">${nomeFile}</div>
+      <a href="${url}" download="${nomeFile}"
+         onclick="setTimeout(()=>{URL.revokeObjectURL('${url}');document.getElementById('xmlDlOverlay').remove();},500)"
+         style="display:block;background:var(--accent);color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-bottom:10px">
+        ⬇ Scarica XML
+      </a>
+      <button onclick="URL.revokeObjectURL('${url}');document.getElementById('xmlDlOverlay').remove()"
+        style="background:none;border:1px solid var(--border);padding:8px 20px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);width:100%">
+        Annulla
+      </button>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e => { if(e.target===ov) { URL.revokeObjectURL(url); ov.remove(); } });
 }
 
 // ─────────────────────────────────────────────────────────────────
