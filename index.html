@@ -6245,14 +6245,16 @@ function shareDocEmail() {
 }
 
 function esportaXML() {
+  // Tutto in un unico try — le variabili devono essere nello stesso scope del codice che le usa
   try {
-  const bid = _currentPdfBid;
+  const bid   = _currentPdfBid;
   if (!bid) { showToast('Apri prima un conto', 'error'); return; }
-  const b    = bookings.find(x=>x.id===bid); if(!b) return;
-  const room = ROOMS.find(r=>r.id===b.r);
-  const cfg  = loadBillSettings();
-  const conto= getContoEffettivo(bid);
-  const oggi = new Date();
+  const b     = bookings.find(x=>x.id===bid); if(!b) { showToast('Prenotazione non trovata','error'); return; }
+  const room  = ROOMS.find(r=>r.id===b.r);
+  const cfg   = loadBillSettings();
+  const conto = getContoEffettivo(bid);
+  if (!conto) { showToast('Impossibile calcolare il conto','error'); return; }
+  const oggi  = new Date();
 
   // Formatta data ISO
   const fmtD = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -6413,40 +6415,39 @@ function esportaXML() {
   </FatturaElettronicaBody>
 </p:FatturaElettronica>`;
 
-  // ── Download: mostra overlay con link diretto (funziona anche su mobile) ──
-  } catch(outerErr) {
-    showToast('Errore XML: ' + outerErr.message, 'error');
-    console.error('[XML]', outerErr);
-    return;
-  }
-
-  // Mostra overlay con anteprima e link download diretto
-  // (a.click() programmático è bloccato dai browser mobile)
+  // ── Mostra overlay con link download (dentro il try, stessa scope delle variabili) ──
   const nomeFile = 'fattura_' + b.n.replace(/\s+/g,'_') + '_' + fmtD(oggi) + '.xml';
   const blob     = new Blob([xml], { type:'application/xml;charset=utf-8' });
   const url      = URL.createObjectURL(blob);
 
-  // Overlay con link cliccabile dall'utente
   const ov = document.createElement('div');
   ov.id    = 'xmlDlOverlay';
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
   ov.innerHTML = `
     <div style="background:var(--surface);border-radius:16px;padding:24px;max-width:360px;width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.3)">
-      <div style="font-size:32px;margin-bottom:12px">📄</div>
-      <div style="font-weight:600;font-size:14px;margin-bottom:6px">XML FatturaPA pronto</div>
-      <div style="font-size:11px;color:var(--text3);margin-bottom:18px;word-break:break-all">${nomeFile}</div>
-      <a href="${url}" download="${nomeFile}"
-         onclick="setTimeout(()=>{URL.revokeObjectURL('${url}');document.getElementById('xmlDlOverlay').remove();},500)"
-         style="display:block;background:var(--accent);color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-bottom:10px">
+      <div style="font-size:36px;margin-bottom:10px">📄</div>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px">XML FatturaPA pronto</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:20px;word-break:break-all">${nomeFile}</div>
+      <a id="xmlDownloadLink" href="${url}" download="${nomeFile}"
+         style="display:block;background:var(--accent);color:#fff;padding:14px 20px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin-bottom:10px">
         ⬇ Scarica XML
       </a>
-      <button onclick="URL.revokeObjectURL('${url}');document.getElementById('xmlDlOverlay').remove()"
-        style="background:none;border:1px solid var(--border);padding:8px 20px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);width:100%">
-        Annulla
+      <button onclick="document.getElementById('xmlDlOverlay').remove()"
+        style="background:none;border:1px solid var(--border);padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);width:100%">
+        Chiudi
       </button>
     </div>`;
   document.body.appendChild(ov);
-  ov.addEventListener('click', e => { if(e.target===ov) { URL.revokeObjectURL(url); ov.remove(); } });
+  ov.addEventListener('click', e => { if(e.target===ov) ov.remove(); });
+  // Pulizia URL al click del link
+  document.getElementById('xmlDownloadLink').addEventListener('click', () => {
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
+  } catch(err) {
+    showToast('Errore XML: ' + err.message, 'error');
+    console.error('[esportaXML]', err);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────
