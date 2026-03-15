@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.3</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 16.5</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 16.3">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 16.5">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -5334,6 +5334,9 @@ function billSettingsDefault() {
       { nome:'Sicily Divide', sconto:15 },
     ],
 
+    // ── IVA ──
+    aliquotaIVA: 10,   // % IVA applicata al conto (default 10% alloggio)
+
     // ── Sconti durata ──
     scontiDurata: [
       { soglia:30, sconto:20 },
@@ -5659,7 +5662,7 @@ function loadBillSettingsLocal() {
 }
 function mergeSettings(saved) {
   const def = billSettingsDefault();
-  return { ...def, ...saved, tariffe:{ ...def.tariffe,...(saved.tariffe||{}) }, tariffeCamere:{...(saved.tariffeCamere||{})} };
+  return { ...def, ...saved, tariffe:{ ...def.tariffe,...(saved.tariffe||{}) }, tariffeCamere:{...(saved.tariffeCamere||{})}, aliquotaIVA: saved.aliquotaIVA ?? def.aliquotaIVA };
 }
 function saveBillSettings(s) {
   localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s)); // sincrono immediato
@@ -5820,7 +5823,7 @@ function calcolaConto(booking, extraRows = []) {
     subtotale += tot;
   }
 
-  return { righe, totale:parseFloat(subtotale.toFixed(2)), notti, molt, convenzione, scontoDurata, tariffaNotte, letti, cfg };
+  return { righe, totale:parseFloat(subtotale.toFixed(2)), notti, molt, convenzione, scontoDurata, tariffaNotte, letti, cfg, aliquotaIVA: cfg.aliquotaIVA||10 };
 }
 
 /**
@@ -5848,7 +5851,7 @@ function calcolaContoAppart(b, room, extras) {
     righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:t, tipo:'extra' });
     totale += t;
   }
-  return { righe, totale:parseFloat(totale.toFixed(2)) };
+  return { righe, totale:parseFloat(totale.toFixed(2)), aliquotaIVA: loadBillSettings().aliquotaIVA||10 };
 }
 
 // getAppartMode + toggleAppartMode → vedi billing DB layer
@@ -6015,9 +6018,12 @@ function renderDrawerBill(b) {
     <button class="btn" style="width:100%;justify-content:center;font-size:11px" onclick="aggiungiConsumi(${b.id})">⚡💧 Aggiungi consumi al conto</button>`;
 
   return `
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px">
       <span style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase">Conto preventivo${hasOv?' <span style="font-size:9px;color:var(--accent);margin-left:4px">● modificato</span>':''}</span>
       <span style="font-size:20px;font-weight:700;color:var(--accent);font-family:'Playfair Display',serif">${totale.toFixed(2)}€</span>
+    </div>
+    <div style="font-size:10px;color:var(--text3);text-align:right;margin-bottom:10px">
+      IVA ${base.aliquotaIVA||10}% inclusa · imponibile ${(totale/(1+(base.aliquotaIVA||10)/100)).toFixed(2)}€
     </div>
     ${toggleHtml}
     ${righe.map((r,i)=>rigaHtml(r,i)).join('')}
@@ -6183,6 +6189,9 @@ function apriPdf(bid) {
 function buildPdfDoc(b, room, conto, cfg, isAppart) {
   const oggi = new Date().toLocaleDateString('it-IT');
   const tipo = isAppart ? 'Rendiconto Affitto' : 'Conto Soggiorno';
+  const aliqIVA     = conto.aliquotaIVA || cfg.aliquotaIVA || 10;
+  const imponibilePdf = parseFloat((conto.totale / (1 + aliqIVA/100)).toFixed(2));
+  const ivaPdf        = parseFloat((conto.totale - imponibilePdf).toFixed(2));
   const righeHtml = conto.righe.filter(r=>r.total!==0).map(r=>`
     <tr>
       <td>${r.label}</td>
@@ -6213,7 +6222,11 @@ function buildPdfDoc(b, room, conto, cfg, isAppart) {
       <table class="doc-table">
         <thead><tr><th>Descrizione</th><th style="text-align:center">Qtà</th><th style="text-align:right">Prezzo</th><th style="text-align:right">Importo</th></tr></thead>
         <tbody>${righeHtml}</tbody>
-        <tfoot><tr class="doc-total-row"><td colspan="3"><strong>TOTALE</strong></td><td><strong>${conto.totale.toFixed(2)} €</strong></td></tr></tfoot>
+        <tfoot>
+          <tr style="font-size:11px;color:#666"><td colspan="3">Imponibile (IVA ${aliqIVA}% esclusa)</td><td style="text-align:right">${imponibilePdf.toFixed(2)} €</td></tr>
+          <tr style="font-size:11px;color:#666"><td colspan="3">IVA ${aliqIVA}%</td><td style="text-align:right">${ivaPdf.toFixed(2)} €</td></tr>
+          <tr class="doc-total-row"><td colspan="3"><strong>TOTALE IVA inclusa</strong></td><td><strong>${conto.totale.toFixed(2)} €</strong></td></tr>
+        </tfoot>
       </table>
     </div>
     <div class="doc-footer">${cfg.hotelName} · Documento del ${oggi}${cfg.hotelTel?' · Tel: '+cfg.hotelTel:''}</div>`;
@@ -6286,25 +6299,38 @@ function esportaXML() {
   const causale = clean('Soggiorno ' + b.n + ' cam. ' + (room?.name||roomName(b.r)) + ' ' + fmtD(b.s) + ' - ' + fmtD(b.e)).slice(0, 200);
 
   // Linee dettaglio: Descrizione solo ASCII, max 1000 char
-  const linee = conto.righe.filter(r=>r.total!==0).map((r,i) => {
+  // I prezzi del conto sono IMPONIBILI (IVA esclusa).
+  // ImponibileImporto = somma esatta dei PrezzoTotale delle righe (regola SDI 00422).
+  // Imposta = arrotondamento cent per cent di ImponibileImporto × aliquota%.
+  const righeXml = conto.righe.filter(r=>r.total!==0);
+  let   imponibile = 0;
+
+  const linee = righeXml.map((r,i) => {
     const desc  = clean(r.label).slice(0, 1000);
-    const qty   = r.qty   != null ? parseFloat(r.qty).toFixed(2)            : null;
-    const prezzo= r.unitPrice != null ? Math.abs(r.unitPrice).toFixed(2)    : null;
-    const tot   = r.total.toFixed(2);
-    // AliquotaIVA: 10% alloggio, 22% extra, 4% per esenzioni — usiamo 10% default
+    const qty   = r.qty   != null ? parseFloat(r.qty).toFixed(2)         : null;
+    const prezzo= r.unitPrice != null ? Math.abs(r.unitPrice).toFixed(2) : null;
+    const tot   = parseFloat(r.total.toFixed(2));
+    imponibile += tot;
     return `
     <DettaglioLinee>
       <NumeroLinea>${i+1}</NumeroLinea>
       <Descrizione>${desc||'Servizio'}</Descrizione>
       ${qty   ? '<Quantita>'+qty+'</Quantita>' : ''}
       ${prezzo? '<PrezzoUnitario>'+prezzo+'</PrezzoUnitario>' : '<PrezzoUnitario>'+Math.abs(r.total).toFixed(2)+'</PrezzoUnitario>'}
-      <PrezzoTotale>${tot}</PrezzoTotale>
-      <AliquotaIVA>10.00</AliquotaIVA>
+      <PrezzoTotale>${tot.toFixed(2)}</PrezzoTotale>
+      <AliquotaIVA>${aliqXML.toFixed(2)}</AliquotaIVA>
     </DettaglioLinee>`;
   }).join('');
 
-  const imponibile = parseFloat((conto.totale / 1.10).toFixed(2));
-  const iva        = parseFloat((conto.totale - imponibile).toFixed(2));
+  // I totali delle righe sono IVA INCLUSA → scorporiamo per l'XML
+  // ImponibileImporto = totale_riga / (1 + aliquota/100)  per ogni riga
+  // La somma deve quadrare con Imposta = ImponibileImporto × aliquota%
+  const aliqXML      = parseFloat(conto.aliquotaIVA || cfg.aliquotaIVA || 10);
+  const aliqFactor   = 1 + aliqXML / 100;
+  // Ricalcola l'imponibile come somma degli imponibili riga per riga
+  imponibile = parseFloat(righeXml.reduce((s,r) => s + r.total / aliqFactor, 0).toFixed(2));
+  const iva          = parseFloat((imponibile * aliqXML / 100).toFixed(2));
+  const totDocumento = parseFloat((imponibile + iva).toFixed(2));
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <p:FatturaElettronica versione="FPR12"
@@ -6366,7 +6392,7 @@ function esportaXML() {
         <Divisa>EUR</Divisa>
         <Data>${fmtD(oggi)}</Data>
         <Numero>${numFattura}</Numero>
-        <ImportoTotaleDocumento>${conto.totale.toFixed(2)}</ImportoTotaleDocumento>
+        <ImportoTotaleDocumento>${totDocumento.toFixed(2)}</ImportoTotaleDocumento>
         <Causale>${causale}</Causale>
       </DatiGeneraliDocumento>
     </DatiGenerali>
@@ -6374,7 +6400,7 @@ function esportaXML() {
     <DatiBeniServizi>
       ${linee}
       <DatiRiepilogo>
-        <AliquotaIVA>10.00</AliquotaIVA>
+        <AliquotaIVA>${aliqXML.toFixed(2)}</AliquotaIVA>
         <ImponibileImporto>${imponibile.toFixed(2)}</ImponibileImporto>
         <Imposta>${iva.toFixed(2)}</Imposta>
         <EsigibilitaIVA>I</EsigibilitaIVA>
@@ -6385,7 +6411,7 @@ function esportaXML() {
       <CondizioniPagamento>TP02</CondizioniPagamento>
       <DettaglioPagamento>
         <ModalitaPagamento>MP01</ModalitaPagamento>
-        <ImportoPagamento>${conto.totale.toFixed(2)}</ImportoPagamento>
+        <ImportoPagamento>${totDocumento.toFixed(2)}</ImportoPagamento>
       </DettaglioPagamento>
     </DatiPagamento>
   </FatturaElettronicaBody>
@@ -6617,6 +6643,10 @@ function buildContiSettingsForm(cfg) {
     <div class="conti-section">
       <div class="conti-section-title">Tariffe base per disposizione letti</div>
       <div class="rate-grid">
+        <div class="rate-field" style="grid-column:1/-1">
+          <label>Aliquota IVA % (default 10% per alloggio, 22% extra, 4% agriturismo)</label>
+          <input type="number" id="cfgAliquotaIVA" value="${cfg.aliquotaIVA||10}" min="0" max="100" step="1" style="max-width:120px">
+        </div>
         <div class="rate-field"><label>Singola (1 letto singolo) €/notte</label><input type="number" id="tarS"  value="${t.s||35}"  step="0.5"></div>
         <div class="rate-field"><label>Matrimoniale uso singolo €/notte</label><input type="number" id="tarMS" value="${t.ms||38}" step="0.5"></div>
         <div class="rate-field"><label>Matrimoniale (2 pers.) €/notte</label><input type="number"   id="tarM"  value="${t.m||45}"  step="0.5"></div>
@@ -6698,6 +6728,7 @@ function removeDurRow(i) { document.getElementById(`durRow_${i}`)?.remove(); }
 
 function saveContiSettings() {
   const cfg = loadBillSettings();
+  cfg.aliquotaIVA  = parseFloat(document.getElementById('cfgAliquotaIVA')?.value || 10);
   cfg.hotelName    = document.getElementById('cfgHotelName')?.value  || cfg.hotelName;
   cfg.hotelAddress = document.getElementById('cfgHotelAddr')?.value  || '';
   cfg.hotelCAP     = document.getElementById('cfgHotelCAP')?.value   || '';
