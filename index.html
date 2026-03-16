@@ -136,6 +136,17 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .bbar:hover { filter: brightness(.94); box-shadow: 0 3px 8px rgba(0,0,0,.15); transform: translateY(-1px); z-index: 5; }
 .bbar.adj { outline: 2px dashed #e74c3c; outline-offset: 1px; }
 .bbar.pending { opacity: .65; border-style: dashed; }
+/* Striscia checkout: pseudo-elemento sull'ultima cella della barra */
+.bbar::after { content:''; position:absolute; top:0; right:0; bottom:0;
+  width:var(--CW); border-radius:0 4px 4px 0; pointer-events:none;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent, transparent 3px,
+    rgba(255,255,255,.35) 3px, rgba(255,255,255,.35) 5px
+  );
+}
+/* Se la prenotazione continua nel mese successivo non mostrare la striscia */
+.bbar.continues::after { display:none; }
 .bdisp { opacity: .6; font-size: 9px; margin-left: 4px; font-weight: 400; }
 .tvline { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--today); opacity: .5; pointer-events: none; z-index: 4; }
 
@@ -683,7 +694,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.4</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.5</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +715,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 17.4">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 17.5">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -3179,6 +3190,8 @@ function render() {
   h+=`<span class="lsep"></span>
     <span class="leg"><span style="display:inline-block;width:2px;height:9px;background:var(--accent);margin-right:4px;"></span>Oggi</span>
     <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;outline:2px dashed #ff6b6b;margin-right:4px;"></span>Col. adiacente</span>
+    <span class="lsep"></span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:repeating-linear-gradient(-45deg,#9b9,#9b9 2px,#fff 2px,#fff 4px);border:1px solid rgba(0,0,0,.1);margin-right:4px;"></span>Ultima notte</span>
   </div>`;
 
   h+=`<div class="dheader">`;
@@ -3213,7 +3226,9 @@ function render() {
         const lx=(sd-1)*CW+1, w=(ed-sd+1)*CW-2;
         const tc=light(b.c)?'#1a1916':'#e8e4dc';
         const adj=adjConflict(b).length>0;
-        bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}"
+        // 'continues' = prenotazione continua nel mese successivo → no striscia checkout
+        const continues = b.e > me;
+        bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
           style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};"
           onclick="selBook(${b.id},event)"
           onmouseenter="showTT(event,${b.id})" onmouseleave="hideTT()">
