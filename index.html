@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.3</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.4</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 17.3">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 17.4">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -3646,6 +3646,322 @@ function movTT(e){
 function hideTT(){ document.getElementById('tt').style.display='none'; }
 document.addEventListener('mousemove', movTT);
 document.addEventListener('touchstart', hideTT, { passive: true });
+
+
+// ═══════════════════════════════════════════════════════════════════
+// REPORT PRESENZE GIORNALIERE — stile "preconto mammana"
+//
+// Per ogni giorno del periodo mostra:
+//   - Camere standard occupate (n. posti letto)
+//   - Camere Duplex occupate (n. posti letto)
+//   - Cene servite
+//   - Supplemento cambio lenzuola
+// Con totali mensili, prezzo unitario e importo per categoria.
+// ═══════════════════════════════════════════════════════════════════
+
+// Categorizzazione camere per report presenze
+// Le categorie sono configurabili in cfg.reportCategorie:
+//   { [roomId]: 'standard'|'duplex'|'appartamento'|'ignora' }
+// Se non configurata usa i default in base al gruppo
+function categorizzaCamera(roomId, clienteNome) {
+  const cfg = loadBillSettings();
+  // Override per cliente specifico: cfg.reportCategorieCliente[clienteNome][roomId]
+  const clKey = (clienteNome||'').toLowerCase().trim();
+  const ovClient = cfg.reportCategorieCliente?.[clKey]?.[roomId];
+  if (ovClient) return ovClient;
+  // Override globale per camera
+  const ovGlobal = cfg.reportCategorie?.[roomId];
+  if (ovGlobal) return ovGlobal;
+  // Default per gruppo
+  const r = ROOMS.find(x=>x.id===roomId);
+  if (!r) return 'standard';
+  if (r.g === 'Appartamenti') return 'appartamento';
+  if (['r100','r101','r102','r103','r104','r21','r22','r23','r24','r25','r31'].includes(roomId)) return 'duplex';
+  return 'standard';
+}
+
+// Conta posti letto dalla disposizione
+function postiLetto(disp) {
+  if (!disp) return 1;
+  const d = disp.toLowerCase();
+  let n = 0;
+  const m  = d.match(/(\d+)m/); if (m) n += parseInt(m[1])*2;
+  const ms = d.match(/(\d+)m\/s|(\d+)ms/); if (ms) n += parseInt(ms[1]||ms[2]||1);
+  const s  = d.match(/(\d+)s/); if (s) n += parseInt(s[1]);
+  return n || 1;
+}
+
+function apriReportPresenze() {
+  const g = window._gruppoCorrente;
+  if (!g || !g.bookings.length) { showToast('Cerca prima le prenotazioni', 'error'); return; }
+
+  // Determina il periodo
+  const dalD = g.dalD || g.bookings.reduce((m,b)=>b.s<m?b.s:m, g.bookings[0].s);
+  const alD  = g.alD  || g.bookings.reduce((m,b)=>b.e>m?b.e:m, g.bookings[0].e);
+
+  // Costruisci array giorni del periodo
+  const giorni = [];
+  let cur = new Date(dalD); cur.setHours(12,0,0,0);
+  const fine = new Date(alD); fine.setHours(12,0,0,0);
+  while (cur <= fine) { giorni.push(new Date(cur)); cur.setDate(cur.getDate()+1); }
+
+  const cfg = loadBillSettings();
+
+  // Per ogni giorno calcola presenze per categoria
+  const righe = giorni.map(giorno => {
+    const dg = giorno.getTime();
+    let std=0, dup=0, cene=0, cambi=0;
+
+    g.bookings.forEach(b => {
+      const bs = new Date(b.s); bs.setHours(12,0,0,0);
+      const be = new Date(b.e); be.setHours(12,0,0,0);
+      // Presente = check-in <= giorno < check-out
+      if (bs.getTime() <= dg && dg < be.getTime()) {
+        const cat = categorizzaCamera(b.r, g.nome);
+        const posti = postiLetto(b.d);
+        if (cat === 'duplex') dup += posti;
+        else if (cat === 'standard') std += posti;
+        // Extra dal conto: cene e cambi lenzuola
+        const extra = getExtraForBooking(b.id);
+        extra.forEach(ex => {
+          if (ex.label && ex.label.toLowerCase().includes('cena')) cene += ex.qty||1;
+          if (ex.label && (ex.label.toLowerCase().includes('lenzuola')||ex.label.toLowerCase().includes('cambio'))) cambi += ex.qty||1;
+        });
+        // Note della prenotazione (es. "2 cambi")
+        if (b.note) {
+          const nc = b.note.match(/(\d+)\s*cambi?/i);
+          if (nc) cambi += parseInt(nc[1]);
+        }
+      }
+    });
+
+    return { giorno, std, dup, cene, cambi };
+  });
+
+  // Recupera tariffe per categoria dalle impostazioni
+  const tarStd = cfg.tariffeCamere?.['prezzoStd'] || cfg.tariffe?.s || 40;
+  const tarDup = cfg.tariffeCamere?.['prezzoDup'] || cfg.tariffe?.m || 50;
+  const tarCena= (cfg.extra||[]).find(e=>e.id==='cena')?.prezzo || 0;
+  const tarCamb= (cfg.extra||[]).find(e=>e.id==='cambioLenzuola')?.prezzo || 0;
+
+  // Totali colonna
+  const totStd  = righe.reduce((s,r)=>s+r.std, 0);
+  const totDup  = righe.reduce((s,r)=>s+r.dup, 0);
+  const totCene = righe.reduce((s,r)=>s+r.cene, 0);
+  const totCamb = righe.reduce((s,r)=>s+r.cambi, 0);
+
+  const impStd  = parseFloat((totStd  * tarStd ).toFixed(2));
+  const impDup  = parseFloat((totDup  * tarDup ).toFixed(2));
+  const impCene = parseFloat((totCene * tarCena).toFixed(2));
+  const impCamb = parseFloat((totCamb * tarCamb).toFixed(2));
+  const totFatt = parseFloat((impStd+impDup+impCene+impCamb).toFixed(2));
+
+  const periodoLabel = `${fmt(dalD)} — ${fmt(alD)}`;
+  const meseLabel    = dalD.toLocaleDateString('it-IT',{month:'long',year:'numeric'});
+
+  // ── Genera HTML del report ──
+  const righeTabella = righe.map(r => {
+    const hasData = r.std||r.dup||r.cene||r.cambi;
+    return `<tr style="${hasData?'':'color:#bbb'}">
+      <td style="padding:3px 6px;font-size:11px;white-space:nowrap">${fmt(r.giorno)}</td>
+      <td style="padding:3px 6px;text-align:center;font-size:11px">${r.std||''}</td>
+      <td style="padding:3px 6px;text-align:center;font-size:11px">${r.dup||''}</td>
+      <td style="padding:3px 6px;text-align:center;font-size:11px">${r.cene||''}</td>
+      <td style="padding:3px 6px;text-align:center;font-size:11px">${r.cambi||''}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `
+    <div class="doc-header">
+      <div class="doc-hotel-name">${cfg.hotelName}</div>
+      ${cfg.hotelAddress?`<div class="doc-hotel-sub">${cfg.hotelAddress}</div>`:''}
+      <div class="doc-type">Report Presenze — ${g.nome}</div>
+    </div>
+    <div class="doc-section">
+      <div class="doc-section-title">Periodo: ${periodoLabel}</div>
+      <table class="doc-table" style="width:100%;font-size:12px">
+        <thead>
+          <tr style="background:#f5f5f5">
+            <th style="padding:5px 6px;text-align:left">Data</th>
+            <th style="padding:5px 6px;text-align:center">Cam. Standard<br><span style="font-weight:400;font-size:10px">(posti)</span></th>
+            <th style="padding:5px 6px;text-align:center">Cam. Duplex<br><span style="font-weight:400;font-size:10px">(posti)</span></th>
+            <th style="padding:5px 6px;text-align:center">Cene<br><span style="font-weight:400;font-size:10px">(n.)</span></th>
+            <th style="padding:5px 6px;text-align:center">Cambi<br><span style="font-weight:400;font-size:10px">(lenzuola)</span></th>
+          </tr>
+        </thead>
+        <tbody>${righeTabella}</tbody>
+        <tfoot>
+          <tr style="border-top:2px solid #333">
+            <td style="padding:5px 6px;font-weight:700;font-size:12px">Totale ${meseLabel}</td>
+            <td style="padding:5px 6px;text-align:center;font-weight:700;color:#c0392b;font-size:13px">${totStd}</td>
+            <td style="padding:5px 6px;text-align:center;font-weight:700;color:#c0392b;font-size:13px">${totDup}</td>
+            <td style="padding:5px 6px;text-align:center;font-weight:700;color:#c0392b;font-size:13px">${totCene||'—'}</td>
+            <td style="padding:5px 6px;text-align:center;font-weight:700;color:#c0392b;font-size:13px">${totCamb||'—'}</td>
+          </tr>
+          <tr>
+            <td style="padding:4px 6px;font-size:11px;color:#666">Prezzo unitario</td>
+            <td style="padding:4px 6px;text-align:center;font-size:11px;color:#666">€ ${tarStd.toFixed(2)}</td>
+            <td style="padding:4px 6px;text-align:center;font-size:11px;color:#666">€ ${tarDup.toFixed(2)}</td>
+            <td style="padding:4px 6px;text-align:center;font-size:11px;color:#666">${tarCena>0?'€ '+tarCena.toFixed(2):'—'}</td>
+            <td style="padding:4px 6px;text-align:center;font-size:11px;color:#666">${tarCamb>0?'€ '+tarCamb.toFixed(2):'—'}</td>
+          </tr>
+          <tr>
+            <td style="padding:4px 6px;font-size:11px;color:#666">Importo</td>
+            <td style="padding:4px 6px;text-align:center;font-size:11px;color:#666">€ ${impStd.toFixed(2)}</td>
+            <td style="padding:4px 6px;text-align:center;font-size:11px;color:#666">€ ${impDup.toFixed(2)}</td>
+            <td style="padding:4px 6px;text-align:center;font-size:11px;color:#666">${impCene>0?'€ '+impCene.toFixed(2):'—'}</td>
+            <td style="padding:4px 6px;text-align:center;font-size:11px;color:#666">${impCamb>0?'€ '+impCamb.toFixed(2):'—'}</td>
+          </tr>
+          <tr style="border-top:2px solid #333;background:#f9f9f9">
+            <td colspan="3" style="padding:8px 6px;font-weight:700;font-size:14px">Totale fattura</td>
+            <td colspan="2" style="padding:8px 6px;text-align:right;font-weight:700;font-size:14px;color:#2d6a4f">€ ${totFatt.toFixed(2)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="doc-section" style="font-size:11px;color:#666">
+      <b>Dettaglio soggiorni (${g.bookings.length} prenotazioni)</b><br>
+      ${g.bookings.map(b=>{
+        const room=ROOMS.find(r=>r.id===b.r);
+        return `${room?.name||roomName(b.r)} · ${fmt(b.s)}→${fmt(b.e)} · ${b.d||''}`;
+      }).join('<br>')}
+    </div>
+    <div class="doc-footer">${cfg.hotelName} · Preconto ${meseLabel} · ${new Date().toLocaleDateString('it-IT')}</div>`;
+
+  // Apri nel PDF overlay
+  document.getElementById('pdfTitle').textContent = `Report presenze — ${g.nome} · ${meseLabel}`;
+  document.getElementById('printDoc').innerHTML = html;
+  document.getElementById('pdfOverlay').classList.add('open');
+  _currentPdfBid = '__report__';
+}
+
+function esportaReportCSV() {
+  const g = window._gruppoCorrente;
+  if (!g || !g.bookings.length) { showToast('Cerca prima le prenotazioni','error'); return; }
+
+  const dalD = g.dalD || g.bookings.reduce((m,b)=>b.s<m?b.s:m, g.bookings[0].s);
+  const alD  = g.alD  || g.bookings.reduce((m,b)=>b.e>m?b.e:m, g.bookings[0].e);
+  const cfg  = loadBillSettings();
+
+  // Giorni del periodo
+  const giorni = [];
+  let cur = new Date(dalD); cur.setHours(12,0,0,0);
+  const fine = new Date(alD); fine.setHours(12,0,0,0);
+  while (cur <= fine) { giorni.push(new Date(cur)); cur.setDate(cur.getDate()+1); }
+
+  // Calcola presenze per giorno
+  const righe = giorni.map(giorno => {
+    const dg = giorno.getTime();
+    let std=0, dup=0, cene=0, cambi=0;
+    const camOccupate = [];
+    g.bookings.forEach(b => {
+      const bs = new Date(b.s); bs.setHours(12,0,0,0);
+      const be = new Date(b.e); be.setHours(12,0,0,0);
+      if (bs.getTime() <= dg && dg < be.getTime()) {
+        const cat   = categorizzaCamera(b.r, g.nome);
+        const posti = postiLetto(b.d);
+        const room  = ROOMS.find(r=>r.id===b.r);
+        camOccupate.push(room?.name||roomName(b.r));
+        if (cat==='duplex') dup+=posti;
+        else if (cat==='standard') std+=posti;
+        const extra = getExtraForBooking(b.id);
+        extra.forEach(ex=>{
+          if (ex.label?.toLowerCase().includes('cena')) cene+=ex.qty||1;
+          if (ex.label?.toLowerCase().includes('lenzuola')||ex.label?.toLowerCase().includes('cambio')) cambi+=ex.qty||1;
+        });
+        if (b.note) { const nc=b.note.match(/(\d+)\s*cambi?/i); if(nc) cambi+=parseInt(nc[1]); }
+      }
+    });
+    return { giorno, std, dup, cene, cambi, camere: camOccupate.join(';') };
+  });
+
+  const tarStd  = cfg.tariffe?.s || 40;
+  const tarDup  = cfg.tariffe?.m || 50;
+  const tarCena = (cfg.extra||[]).find(e=>e.id==='cena')?.prezzo || 0;
+  const tarCamb = (cfg.extra||[]).find(e=>e.id==='cambioLenzuola')?.prezzo || 0;
+
+  const totStd  = righe.reduce((s,r)=>s+r.std,0);
+  const totDup  = righe.reduce((s,r)=>s+r.dup,0);
+  const totCene = righe.reduce((s,r)=>s+r.cene,0);
+  const totCamb = righe.reduce((s,r)=>s+r.cambi,0);
+
+  // Costruisci CSV
+  const sep = '\t'; // TSV — Google Sheets lo importa direttamente con copia-incolla
+  const lines = [];
+
+  // Intestazione
+  lines.push(['Preconto', g.nome, fmt(dalD) + ' - ' + fmt(alD)].join(sep));
+  lines.push('');
+  lines.push(['Data','Camere standard (posti)','Camere Duplex (posti)','Cene servite','Cambio lenzuola','Camere occupate'].join(sep));
+
+  // Righe dati
+  righe.forEach(r => {
+    lines.push([
+      fmt(r.giorno),
+      r.std || '',
+      r.dup || '',
+      r.cene || '',
+      r.cambi || '',
+      r.camere
+    ].join(sep));
+  });
+
+  // Riga vuota + totali
+  lines.push('');
+  lines.push(['Totale mese', totStd, totDup, totCene||'', totCamb||'', ''].join(sep));
+  lines.push(['Prezzo unitario', '€'+tarStd, '€'+tarDup, tarCena?'€'+tarCena:'', tarCamb?'€'+tarCamb:'', ''].join(sep));
+  lines.push(['Importo',
+    '€'+(totStd*tarStd).toFixed(2),
+    '€'+(totDup*tarDup).toFixed(2),
+    tarCena?'€'+(totCene*tarCena).toFixed(2):'',
+    tarCamb?'€'+(totCamb*tarCamb).toFixed(2):'',
+    ''
+  ].join(sep));
+  lines.push('');
+  const tot = (totStd*tarStd)+(totDup*tarDup)+(totCene*tarCena)+(totCamb*tarCamb);
+  lines.push(['Totale fattura','','','','€'+tot.toFixed(2),''].join(sep));
+  lines.push('');
+  lines.push('');
+  lines.push(['Dettaglio soggiorni','','','','',''].join(sep));
+  lines.push(['Camera','Nome','Check-in','Check-out','Notti','Disposizione'].join(sep));
+  g.bookings.forEach(b => {
+    const room = ROOMS.find(r=>r.id===b.r);
+    lines.push([
+      room?.name||roomName(b.r), b.n, fmt(b.s), fmt(b.e), nights(b.s,b.e), b.d||''
+    ].join(sep));
+  });
+
+  const tsv   = lines.join('\n');
+  const meseL = dalD.toLocaleDateString('it-IT',{month:'long',year:'numeric'});
+  const nome  = 'preconto_'+g.nome.replace(/\s+/g,'_')+'_'+meseL.replace(/\s+/g,'_')+'.tsv';
+
+  // Mostra overlay con download + istruzioni
+  const blob = new Blob([tsv], {type:'text/tab-separated-values;charset=utf-8'});
+  const url  = URL.createObjectURL(blob);
+  const ov   = document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+  ov.innerHTML=`<div style="background:var(--surface);border-radius:16px;padding:24px;max-width:380px;width:100%;text-align:center">
+    <div style="font-size:32px;margin-bottom:10px">📋</div>
+    <div style="font-weight:700;font-size:15px;margin-bottom:6px">Report TSV pronto</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:6px;word-break:break-all">${nome}</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:18px;text-align:left;background:var(--surface2);padding:10px;border-radius:8px;line-height:1.6">
+      💡 <b>Come aprire in Google Sheets:</b><br>
+      1. Scarica il file<br>
+      2. Vai su Google Sheets → File → Importa<br>
+      3. Carica il file, separatore: <b>Tabulazione</b><br>
+      oppure apri con Excel e copia-incolla
+    </div>
+    <a href="${url}" download="${nome}" id="_csvLink"
+      style="display:block;background:#2d6a4f;color:#fff;padding:12px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin-bottom:10px">
+      ⬇ Scarica TSV
+    </a>
+    <button onclick="this.closest('div[style*=fixed]').remove()"
+      style="background:none;border:1px solid var(--border);padding:10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);width:100%">Chiudi</button>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#_csvLink').addEventListener('click',()=>setTimeout(()=>{URL.revokeObjectURL(url);ov.remove();},1000));
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // RICERCA PRENOTAZIONI
@@ -6736,10 +7052,12 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
         <span class="bill-row-label"><b>TOTALE IVA inclusa</b></span>
         <span style="font-size:18px;font-weight:700;color:var(--accent)">${totaleGruppo.toFixed(2)}€</span>
       </div>
-      <div style="display:flex;gap:8px;margin-top:14px">
-        <button class="btn primary" onclick="emettiContoGruppo()" style="flex:1;justify-content:center">📄 Emetti conto</button>
-        <button class="btn" onclick="apriPdfGruppo()" style="flex:1;justify-content:center">👁 PDF</button>
-        <button class="btn" onclick="esportaXMLGruppo()" style="flex:1;justify-content:center">📄 XML</button>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn primary" onclick="emettiContoGruppo()" style="flex:1;justify-content:center;min-width:80px">📄 Conto</button>
+        <button class="btn" onclick="apriPdfGruppo()" style="flex:1;justify-content:center;min-width:80px">👁 PDF</button>
+        <button class="btn" onclick="esportaXMLGruppo()" style="flex:1;justify-content:center;min-width:80px">📄 XML</button>
+        <button class="btn" onclick="apriReportPresenze()" style="flex:1;justify-content:center;min-width:80px;background:var(--surface2)">📊 Report</button>
+        <button class="btn" onclick="esportaReportCSV()" style="flex:1;justify-content:center;min-width:80px;background:#e8f5e9;color:#2d6a4f">📋 CSV</button>
       </div>
     </div>`;
 
