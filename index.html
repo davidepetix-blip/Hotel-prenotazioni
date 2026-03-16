@@ -683,7 +683,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.2</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.3</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -704,7 +704,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 17.2">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 17.3">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -2269,24 +2269,20 @@ function invalidateDbCache() { localStorage.removeItem(DB_CACHE_KEY); }
 //  REGOLE FONDAMENTALI:
 //
 //  fonte = 'manuale'  →  prenotazione nata dal foglio Google Gantt
-//  fonte = 'app'      →  prenotazione nata dall'app (check-in, nuova dal form)
+//  REGOLA UNICA: Il foglio Google è fonte di verità ASSOLUTA per tutte
+//  le prenotazioni, incluse quelle inserite dall'app.
 //
-//  1. Foglio Google = fonte di verità ASSOLUTA per le prenotazioni manuali.
-//     Il foglio non ha timestamp → vince sempre sul DB per fonte='manuale'.
+//  Questo è corretto perché:
+//  - Quando l'app inserisce una prenotazione, la scrive immediatamente sul foglio
+//  - Il foglio contiene quindi sempre lo stato aggiornato
+//  - Se un operatore sposta/modifica una prenotazione sul foglio, quella
+//    modifica deve prevalere sul DB (che sarà aggiornato al prossimo sync)
 //
-//  2. DB Google (scheda PRENOTAZIONI) = fonte di verità per fonte='app'.
-//     Le prenotazioni inserite dall'app NON vengono mai sovrascritte
-//     dal foglio e NON vengono mai cancellate automaticamente.
+//  fonte='app' vs fonte='manuale' distingue solo l'ORIGINE, non la priorità:
+//  - 'app'     = inserita tramite interfaccia app (ma già sul foglio)
+//  - 'manuale' = inserita direttamente sul foglio Google
 //
-//  3. Se una prenotazione manuale è nel DB ma NON nel foglio → CESTINO.
-//     (è stata cancellata dal foglio, che è la fonte di verità)
-//
-//  4. Il localStorage è solo una cache per velocizzare il caricamento.
-//     Non è una fonte di verità. Viene invalidata ad ogni sync completo.
-//
-//  5. Conflitti multi-dispositivo: non esistono per fonte='manuale'
-//     perché il foglio è sempre la fonte di verità e tutti i dispositivi
-//     leggono la stessa cosa. Per fonte='app' l'ultimo che scrive sul DB vince.
+//  Entrambe seguono la stessa regola: foglio vince sempre.
 //
 // ═══════════════════════════════════════════════════════════════════
 
@@ -2383,29 +2379,27 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
     } else {
       seenDbIds.add(match.dbId);
 
-      if (match.fonte === 'app') {
-        // Prenotazione nata dall'app: il foglio non la sovrascrive MAI
-        result.push(match);
-      } else {
-        // fonte='manuale': il foglio è la fonte di verità → aggiorna se cambiato
-        const changed =
-          match.d !== sheet.d ||
-          match.c !== sheet.c ||
-          match.note !== sheet.note ||
-          Math.abs(match.e.getTime() - sheet.e.getTime()) > DAY_MS / 2 ||
-          Math.abs(match.s.getTime() - sheet.s.getTime()) > DAY_MS / 2;
+      // Il foglio è fonte di verità assoluta per TUTTE le prenotazioni,
+      // incluse quelle inserite dall'app (che vengono scritte sul foglio immediatamente).
+      // Se una prenotazione è stata spostata/modificata sul foglio → aggiorna il DB.
+      const changed =
+        match.d !== sheet.d ||
+        match.c !== sheet.c ||
+        match.note !== sheet.note ||
+        Math.abs(match.e.getTime() - sheet.e.getTime()) > DAY_MS / 2 ||
+        Math.abs(match.s.getTime() - sheet.s.getTime()) > DAY_MS / 2;
 
-        if (changed) {
-          match.d    = sheet.d;
-          match.c    = sheet.c;
-          match.note = sheet.note;
-          match.s    = sheet.s;
-          match.e    = sheet.e;
-          match.ts   = nowISO();
-          toUpdateInDB.push(match);
-        }
-        result.push(match);
+      if (changed) {
+        match.d     = sheet.d;
+        match.c     = sheet.c;
+        match.note  = sheet.note;
+        match.s     = sheet.s;
+        match.e     = sheet.e;
+        match.ts    = nowISO();
+        match.fonte = 'manuale'; // ora il foglio è la fonte di verità
+        toUpdateInDB.push(match);
       }
+      result.push(match);
     }
   }
 
@@ -2419,19 +2413,15 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   for (const db of dbActive) {
     if (seenDbIds.has(db.dbId)) continue; // già gestita nella fase 1
 
-    if (db.fonte === 'app') {
-      // Inserita dall'app: rimane in app indipendentemente dal foglio
-      result.push(db);
-      continue;
-    }
-
     if (!db.n || db.n === '???' || db.n.trim() === '') {
       // Nome non valido: probabile errore di parsing, non una vera cancellazione
       result.push(db);
       continue;
     }
 
-    // fonte='manuale' e non trovata nel foglio → cancellata dal foglio → CESTINO
+    // Non trovata nel foglio → cancellata/spostata dal foglio → CESTINO
+    // Questo vale per TUTTE le prenotazioni (sia fonte='app' che 'manuale'):
+    // se non è più nel foglio, il foglio l'ha rimossa o spostata.
     const reason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
     db.deleted       = true;
     db.deleteReason  = reason;
