@@ -694,7 +694,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.7</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.8</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -715,7 +715,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 17.7">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 17.8">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -2310,9 +2310,10 @@ function invalidateDbCache() { localStorage.removeItem(DB_CACHE_KEY); }
  * Tolleranza ±1gg sulla data inizio per gestire convenzioni foglio/app.
  */
 function findMatch(target, list) {
-  const camT = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
-  const nomT = (target.n || '').toLowerCase().trim();
-  const dayT = Math.round((target.s?.getTime?.() || 0) / DAY_MS);
+  const camT  = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
+  const nomT  = (target.n || '').toLowerCase().trim();
+  const dayT  = Math.round((target.s?.getTime?.() || 0) / DAY_MS);
+  const dispT = (target.d || '').trim().toLowerCase();
 
   // Pass 1: camera + nome + giorno esatto
   let m = list.find(b => {
@@ -2323,9 +2324,11 @@ function findMatch(target, list) {
   if (m) return m;
 
   // Pass 2: camera + nome + giorno ±1 (off-by-one tra foglio e app)
+  // MA solo se la disposizione coincide — evita di fondere MWT 2s con MWT 1s
   m = list.find(b => {
     if ((b.n||'').toLowerCase().trim() !== nomT) return false;
     if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
+    if (dispT && (b.d||'').trim().toLowerCase() !== dispT) return false;
     return Math.abs(Math.round((b.s?.getTime?.() || 0) / DAY_MS) - dayT) <= 1;
   });
   return m || null;
