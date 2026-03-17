@@ -6031,11 +6031,22 @@ function tariffaDaDisposizione(letti, tariffe) {
   const ms = letti.ms || 0;
   const s  = letti.s  || 0;
 
+  // Matrimoniale uso singolo
   if (ms > 0 && m === 0 && s === 0) return tariffe.ms * ms;
-  if (m  > 0 && s === 0)            return tariffe.m  * m  + (ms > 0 ? tariffe.ms * ms : 0);
-  if (m  > 0 && s > 0)              return tariffe.m  * m  + s * tariffe.ag;
-  if (s  > 0)                       return tariffe.s  * s;
-  // fallback: usa singolo
+
+  // Matrimoniale (con o senza singoli aggiuntivi)
+  if (m > 0 && s === 0) return tariffe.m * m + (ms > 0 ? tariffe.ms * ms : 0);
+  if (m > 0 && s >  0)  return tariffe.m * m + s * tariffe.ag;
+
+  // Solo singoli:
+  //   1 singolo → tariffa singola (35€)
+  //   2+ singoli nella stessa stanza → equivale a matrimoniale (45€)
+  //   ogni singolo ulteriore oltre i 2 → aggiunta (tariffe.ag per persona)
+  if (s === 1) return tariffe.s;
+  if (s === 2) return tariffe.m;                         // 2s = tariffa matrimoniale
+  if (s >  2)  return tariffe.m + (s - 2) * tariffe.ag; // 3s+ = matrimoniale + aggiunte
+
+  // fallback
   return tariffe.s;
 }
 
@@ -6052,8 +6063,10 @@ function descrizioneTariffa(letti, tariffe, cfg, roomId) {
   const parts = [];
   if (m  > 0) parts.push(`${m} matrim. ×${tariffe.m}€`);
   if (ms > 0) parts.push(`${ms} m/s ×${tariffe.ms}€`);
-  if (s  > 0 && m > 0) parts.push(`${s} sing. ×${tariffe.ag}€`);
-  else if (s > 0)      parts.push(`${s} sing. ×${tariffe.s}€`);
+  if (m  > 0 && s > 0) parts.push(`${s} sing. ×${tariffe.ag}€`);
+  else if (s === 1) parts.push(`1 sing. ×${tariffe.s}€`);
+  else if (s === 2) parts.push(`2 sing. = matrimoniale ×${tariffe.m}€`);
+  else if (s >  2)  parts.push(`2 sing.=matrim. ×${tariffe.m}€ + ${s-2} ×${tariffe.ag}€`);
   return parts.join(' + ') || `${tariffe.s}€`;
 }
 
