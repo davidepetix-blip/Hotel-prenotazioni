@@ -42,7 +42,7 @@ const JS_FIRST_CAM_COL   = 2;
 const JS_FIRST_DATA_ROW  = 3;
 const JS_HEADER_ROW      = 2;
 const JS_DEBOUNCE_SEC    = 10;
-const JS_SFONDO_NEUTRI   = ["#ffffff","#fffffe","#fce5cd"];
+const JS_SFONDO_NEUTRI   = ["#ffffff","#fffffe"]; // #fce5cd rimosso: è il colore degli affitti
 const JS_MESI = {
   "gennaio":0,"febbraio":1,"marzo":2,"aprile":3,"maggio":4,"giugno":5,
   "luglio":6,"agosto":7,"settembre":8,"ottobre":9,"novembre":10,"dicembre":11
