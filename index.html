@@ -702,7 +702,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.0</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.2</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -723,7 +723,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 18.0">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 18.2">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -2832,6 +2832,12 @@ async function writeBookingToSheet(b) {
     await triggerAppsScriptUpdate(frag.sName, b.cameraName, annEntry.sheetId);
   }
 
+  // Segnala modifica allo script Apps Script → rigenera JSON_ANNUALE immediatamente
+  // Funziona sia per prenotazioni singolo mese che multi-mese
+  segnalaModificaAdAppsScript(annualSheets[0]?.sheetId).catch(e =>
+    console.warn('[segnaModifica] non critico:', e.message)
+  );
+
   // 2. Scrivi/aggiorna nel DATABASE
   // fonte='app' finché la prenotazione non viene confermata dal foglio.
   // Al prossimo sync il foglio la sovrascriverà e diventerà 'manuale',
@@ -2861,6 +2867,31 @@ async function triggerAppsScriptUpdate(sName, cameraName, spreadsheetId) {
     console.log(`✓ JSON riga 45: "${sName}" col ${colIdx}`);
   } catch(err) {
     console.warn('updateJson fallito (non critico):', err.message);
+  }
+}
+
+/**
+ * Segnala allo script Apps Script che il foglio è stato modificato dall'app.
+ * Scrive il timestamp corrente nella cella JSON_ANNUALE!B1 come flag.
+ * Il trigger time-based controlla questa cella e rigenera se necessario.
+ * Alternativa: scrivere direttamente in PropertiesService via web app.
+ */
+async function segnalaModificaAdAppsScript(sheetId) {
+  const cfg = loadBillSettings();
+  const webAppUrl = cfg.webAppUrl || '';
+  if (!webAppUrl) {
+    console.log('[WebApp] URL non configurato — usa trigger 5min o rigenera manualmente');
+    return;
+  }
+  try {
+    // Chiama la Web App Apps Script che rigenera JSON_ANNUALE immediatamente
+    const anno = new Date().getFullYear();
+    const url  = `${webAppUrl}?anno=${anno}&ts=${Date.now()}`;
+    // Usa no-cors perché Apps Script Web App non supporta CORS con credenziali
+    const resp = await fetch(url, { method:'GET', mode:'no-cors' });
+    console.log('[WebApp] Chiamata inviata — JSON_ANNUALE si rigenera in pochi secondi');
+  } catch(e) {
+    console.warn('[WebApp] chiamata fallita (non critico):', e.message);
   }
 }
 
@@ -7874,6 +7905,11 @@ function buildContiSettingsForm(cfg) {
         <div class="rate-field"><label>Provincia (sigla)</label><input id="cfgHotelProv" value="${cfg.hotelProv||''}" maxlength="2" placeholder="es. PA"></div>
         <div class="rate-field"><label>P.IVA / Codice fiscale</label><input id="cfgHotelPiva" value="${cfg.pivaHotel||''}" placeholder="11 cifre senza IT"></div>
         <div class="rate-field"><label>Telefono</label><input id="cfgHotelTel" value="${cfg.hotelTel||''}"></div>
+        <div class="rate-field" style="grid-column:1/-1">
+          <label>URL Web App Apps Script (per aggiornamento immediato JSON)</label>
+          <input id="cfgWebAppUrl" value="${cfg.webAppUrl||''}" placeholder="https://script.google.com/macros/s/xxx/exec" style="font-size:11px">
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">Apps Script → Distribuisci → App web → copia URL</div>
+        </div>
       </div>
     </div>
     <div class="conti-section">
@@ -7972,6 +8008,7 @@ function saveContiSettings() {
   cfg.hotelProv    = document.getElementById('cfgHotelProv')?.value  || '';
   cfg.pivaHotel    = document.getElementById('cfgHotelPiva')?.value  || '';
   cfg.hotelTel     = document.getElementById('cfgHotelTel')?.value   || '';
+  cfg.webAppUrl    = document.getElementById('cfgWebAppUrl')?.value  || '';
 
   // Tariffe disposizione
   cfg.tariffe = {
