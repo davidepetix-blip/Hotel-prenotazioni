@@ -5341,30 +5341,50 @@ function exportAlloggiati(scope='today') {
   const codStruttura = localStorage.getItem('hotelCodiceStruttura') || '00000000';
 
   let lines = [];
+  // Converte data ISO YYYY-MM-DD o YYYYMMDD → GGMMAAAA (formato Alloggiati Web)
+  const toGGMMAAAA = s => {
+    if (!s) return '        ';
+    const clean8 = s.replace(/-/g,'').replace(/\//g,'');
+    if (clean8.length !== 8) return '        ';
+    // Rileva formato: se inizia con 19xx o 20xx è AAAAMMGG → inverti
+    if (/^(19|20)\d{6}$/.test(clean8)) {
+      return clean8.slice(6,8) + clean8.slice(4,6) + clean8.slice(0,4); // GGMMAAAA
+    }
+    return clean8; // già GGMMAAAA
+  };
+
   items.forEach(ci => {
     const b = bookings.find(bk => bk.dbId === ci.preId);
-    const dataArr  = ci.data.replace(/-/g,'');       // YYYYMMDD
-    const dataFine = b ? new Date(b.e).toISOString().slice(0,10).replace(/-/g,'') : dataArr;
+    // Date in formato GGMMAAAA (richiesto da Alloggiati Web)
+    const dataArr  = toGGMMAAAA(ci.data);
+    const dataFine = b ? toGGMMAAAA(new Date(b.e).toISOString().slice(0,10)) : dataArr;
 
     ci.guests.forEach((g, gIdx) => {
-      // Tipo record: 20=arrivo, campo fisso
+      // Schema fisso 183 caratteri per record (spec. Alloggiati Web PS)
+      // Tipo(2)+DataArr(8)+DataPart(8)+Cognome(50)+Nome(30)+Sesso(1)+
+      // DataNasc(8)+ComuneNasc(26)+ProvNasc(2)+Cittadinanza(9)+
+      // TipoDoc(5)+NumDoc(20)+LuogoRilDoc(14) = 183
       const tipoRec  = '20';
-      const dataCin  = pad(dataArr, 8);
-      const dataFineP= pad(dataFine, 8);
-      const cognome  = padR(clean(g.cognome), 50);
-      const nome     = padR(clean(g.nome), 30);
-      const sesso    = (g.sesso||'M').charAt(0).toUpperCase();
-      const dataN    = (g.dataNascita||'').replace(/-/g,'');  // YYYYMMDD
-      const comuneN  = padR(clean(g.luogoNascita), 30);
-      const provN    = padR(g.provNascita||'EE', 2);  // EE = estero
-      const nazN     = padR(g.cittadinanza||'IT', 3);
-      const tipoDoc  = gIdx===0 ? padR(g.tipoDoc||'ALTRO',5) : padR('',5);
-      const numDoc   = gIdx===0 ? padR(clean(g.numDoc||''),20) : padR('',20);
-      const luogRil  = gIdx===0 ? padR(clean(g.luogoRilascio||''),30) : padR('',30);
-      const codStr   = padR(codStruttura, 9);
+      const dataCin  = dataArr;                                // 8 GGMMAAAA
+      const dataFineP= dataFine;                               // 8 GGMMAAAA
+      const cognome  = padR(cleanAl(g.cognome), 50);          // 50
+      const nome     = padR(cleanAl(g.nome), 30);             // 30
+      const sesso    = (g.sesso||'M').charAt(0).toUpperCase();// 1
+      const dataN    = toGGMMAAAA(g.dataNascita||'');         // 8 GGMMAAAA
+      const comuneN  = padR(cleanAl(g.luogoNascita), 26);    // 26
+      const provN    = padR((g.provNascita||'EE').toUpperCase(), 2); // 2
+      const nazN     = padR((g.cittadinanza||'ITA').toUpperCase(), 9); // 9
+      const tipoDoc  = gIdx===0 ? padR((g.tipoDoc||'IDENT').toUpperCase(),5) : padR('',5); // 5
+      const numDoc   = gIdx===0 ? padR(cleanAl(g.numDoc||''),20) : padR('',20);            // 20
+      const luogRil  = gIdx===0 ? padR(cleanAl(g.luogoRilascio||''),14) : padR('',14);    // 14
 
       const record = tipoRec + dataCin + dataFineP + cognome + nome + sesso +
-                     dataN + comuneN + provN + nazN + tipoDoc + numDoc + luogRil + codStr;
+                     dataN + comuneN + provN + nazN + tipoDoc + numDoc + luogRil;
+
+      // Verifica lunghezza (deve essere esattamente 183)
+      if (record.length !== 183) {
+        console.warn('[Alloggiati] Record lunghezza errata:', record.length, 'per', g.cognome);
+      }
       lines.push(record);
     });
   });
@@ -5380,8 +5400,8 @@ function exportAlloggiati(scope='today') {
   showToast(`✓ File generato · ${lines.length} record`, 'success');
 }
 
-// Helper testo Alloggiati
-function clean(s) { return (s||'').toUpperCase().replace(/[^A-Z0-9 '.,-]/g,''); }
+// Helper testo Alloggiati Web
+function cleanAl(s) { return (s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 '.,\-]/g,''); }
 function padR(s, n) { const t=(s||'').substring(0,n); return t+' '.repeat(Math.max(0,n-t.length)); }
 function pad(s, n)  { const t=(s||'').substring(0,n); return '0'.repeat(Math.max(0,n-t.length))+t; }
 
