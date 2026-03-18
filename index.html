@@ -7077,15 +7077,18 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
   const righeHtml = trovate.map(b => {
     const room   = ROOMS.find(r=>r.id===b.r);
     const n      = nights(b.s, b.e);
-    const conto  = getContoEffettivo(b.id);
-    const totB   = conto?.totale || 0;
+    // Ricalcola il conto usando i dati ATTUALI del booking (disposizione dal foglio)
+    // invece di getContoEffettivo che potrebbe avere dati obsoleti dal DB
+    const contoFresco = calcolaConto(b, getExtraForBooking(b.id));
+    const totB   = contoFresco?.totale || 0;
+    const prezzoN= n > 0 ? parseFloat((totB/n).toFixed(2)) : totB;
     totaleGruppo += totB;
 
     // Aggiungi riga per il conto di gruppo
     righeGruppo.push({
       label:     `${room?.name||roomName(b.r)} · ${fmt(b.s)} → ${fmt(b.e)} (${n} notti) · ${b.d||''}`,
       qty:       n,
-      unitPrice: n > 0 ? parseFloat((totB/n).toFixed(2)) : totB,
+      unitPrice: prezzoN,
       total:     totB,
       tipo:      'base',
       bookingId: b.id
@@ -7099,6 +7102,7 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
           <span class="sr-badge">${fmt(b.s)} → ${fmt(b.e)}</span>
           <span class="sr-badge">${n} notti</span>
           ${b.d?`<span class="sr-badge">${b.d}</span>`:''}
+          <span class="sr-badge" style="background:var(--accent);color:#fff">${prezzoN.toFixed(2)}€/n</span>
         </div>
       </div>
       <div style="font-weight:700;font-size:13px;color:var(--accent);padding-top:2px;flex-shrink:0">${totB.toFixed(2)}€</div>
