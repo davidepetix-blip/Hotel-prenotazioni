@@ -694,7 +694,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.8</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.9</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -715,7 +715,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 17.8">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 17.9">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -1238,9 +1238,10 @@ function parseBedString(str) {
   // Gestisce prima "ms" (matrimoniale uso singolo) prima di splittare su "m"
   // es: "1ms + 2m + 1s" oppure legacy "1m/s"
   const norm = str.replace(/\s*\+\s*/g, '+').replace(/\s*,\s*/g, '+').trim();
-  // Legacy "1m/s" o "m/s" → ms
-  if (/^(\d*)m\/s$/i.test(norm)) {
-    const n = parseInt(norm) || 1;
+  // Legacy "1m/s" o "m/s" → ms (normalizza spazi e maiuscole)
+  const normMS = norm.replace(/\s/g,'').toLowerCase();
+  if (/^(\d*)m\/s$/.test(normMS)) {
+    const n = parseInt(normMS) || 1;
     counts.ms = n;
     return counts;
   }
@@ -6123,7 +6124,14 @@ function inStagione(key, dal, al) {
 function calcolaConto(booking, extraRows = []) {
   const cfg         = loadBillSettings();
   const notti       = nights(booking.s, booking.e);
-  const letti       = parseBedString(booking.d);
+  let letti       = parseBedString(booking.d);
+  // Fallback: usa i campi numerici del booking se parseBedString non trova nulla
+  if (!letti.m && !letti.ms && !letti.s && !letti.c) {
+    if (booking.matrimonialiUS > 0) letti.ms = booking.matrimonialiUS;
+    else if (booking.matrimoniali > 0) letti.m = booking.matrimoniali;
+    if (booking.singoli > 0 && letti.m > 0) letti.s = booking.singoli;
+    else if (booking.singoli > 0) letti.s = booking.singoli;
+  }
   const nomeCliente = booking.n.toLowerCase();
 
   // 1. Tariffa/notte: override camera > disposizione letti
@@ -7126,17 +7134,31 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
       ${righeHtml}
     </div>
     <div class="conti-section">
+      <div class="conti-section-title">Extra di gruppo</div>
+      <div id="grpExtraList" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <input id="grpExtraLabel" placeholder="Descrizione (es. Cene)" 
+          style="flex:2;min-width:100px;border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px;background:var(--surface2);color:var(--text)">
+        <input id="grpExtraQty" type="number" placeholder="Qtà" min="1" value="1"
+          style="width:54px;border:1px solid var(--border);border-radius:6px;padding:7px 8px;font-size:13px;background:var(--surface2);color:var(--text)">
+        <input id="grpExtraPrezzo" type="number" placeholder="€" min="0" step="0.01"
+          style="width:64px;border:1px solid var(--border);border-radius:6px;padding:7px 8px;font-size:13px;background:var(--surface2);color:var(--text)">
+        <button class="btn" onclick="aggiungiExtraGruppo()" style="padding:7px 12px;font-size:12px">+ Aggiungi</button>
+      </div>
+    </div>
+    <div class="conti-section" id="grpRiepilogoSection">
       <div class="conti-section-title">Riepilogo conto di gruppo</div>
       ${scontoHtml}
-      <div class="bill-row" style="font-size:12px">
+      <div id="grpRigheExtra"></div>
+      <div class="bill-row" id="grpRowImponibile" style="font-size:12px">
         <span class="bill-row-label">Imponibile (IVA ${aliqIVA}% esclusa)</span>
         <span style="font-weight:600">${imponibile.toFixed(2)}€</span>
       </div>
-      <div class="bill-row" style="font-size:12px">
+      <div class="bill-row" id="grpRowIva" style="font-size:12px">
         <span class="bill-row-label">IVA ${aliqIVA}%</span>
         <span style="font-weight:600">${iva.toFixed(2)}€</span>
       </div>
-      <div class="bill-row total-row">
+      <div class="bill-row total-row" id="grpRowTotale">
         <span class="bill-row-label"><b>TOTALE IVA inclusa</b></span>
         <span style="font-size:18px;font-weight:700;color:var(--accent)">${totaleGruppo.toFixed(2)}€</span>
       </div>
@@ -7151,13 +7173,76 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
 
   // Salva in variabile globale per PDF/XML
   window._gruppoCorrente = {
-    nome:    trovate[0]?.n || nome,
-    righe:   righeGruppo,
-    totale:  parseFloat(totaleGruppo.toFixed(2)),
+    nome:      trovate[0]?.n || nome,
+    righe:     righeGruppo,
+    totaleBase:parseFloat(totaleGruppo.toFixed(2)),
+    totale:    parseFloat(totaleGruppo.toFixed(2)),
     aliquotaIVA: aliqIVA,
-    bookings: trovate,
+    bookings:  trovate,
+    extraGruppo: [],
     dalD, alD
   };
+}
+
+function aggiungiExtraGruppo() {
+  const label  = document.getElementById('grpExtraLabel')?.value.trim();
+  const qty    = parseFloat(document.getElementById('grpExtraQty')?.value)  || 1;
+  const prezzo = parseFloat(document.getElementById('grpExtraPrezzo')?.value)|| 0;
+  if (!label || prezzo <= 0) { showToast('Inserisci descrizione e prezzo','error'); return; }
+
+  const tot = parseFloat((qty * prezzo).toFixed(2));
+  const g   = window._gruppoCorrente;
+  if (!g) return;
+
+  // Aggiungi alle righe
+  g.extraGruppo.push({ label, qty, unitPrice: prezzo, total: tot, tipo:'extra' });
+  g.righe.push({ label, qty, unitPrice: prezzo, total: tot, tipo:'extra' });
+  g.totale = parseFloat((g.totale + tot).toFixed(2));
+
+  // Aggiorna UI
+  const listEl = document.getElementById('grpExtraList');
+  if (listEl) {
+    const div = document.createElement('div');
+    div.style.cssText='display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)';
+    div.innerHTML=`<span>${label} × ${qty}</span><span style="font-weight:600">${tot.toFixed(2)}€
+      <button onclick="rimuoviExtraGruppo(this,${tot},'${label.replace(/'/g,"\'")}',${qty},${prezzo})"
+        style="margin-left:8px;background:none;border:none;color:var(--danger);cursor:pointer;font-size:13px">✕</button>
+    </span>`;
+    listEl.appendChild(div);
+  }
+
+  // Ricalcola riepilogo
+  aggiornaRiepilogoGruppo();
+
+  // Pulisci campi
+  document.getElementById('grpExtraLabel').value='';
+  document.getElementById('grpExtraQty').value='1';
+  document.getElementById('grpExtraPrezzo').value='';
+}
+
+function rimuoviExtraGruppo(btn, tot, label, qty, prezzo) {
+  const g = window._gruppoCorrente;
+  if (!g) return;
+  g.righe = g.righe.filter(r => !(r.tipo==='extra' && r.label===label && r.qty===qty && r.unitPrice===prezzo));
+  g.extraGruppo = g.extraGruppo.filter(r => !(r.label===label && r.qty===qty && r.unitPrice===prezzo));
+  g.totale = parseFloat((g.totale - tot).toFixed(2));
+  btn.closest('div').remove();
+  aggiornaRiepilogoGruppo();
+}
+
+function aggiornaRiepilogoGruppo() {
+  const g = window._gruppoCorrente;
+  if (!g) return;
+  const aliq = g.aliquotaIVA || 10;
+  const imp  = parseFloat((g.totale / (1+aliq/100)).toFixed(2));
+  const iva  = parseFloat((g.totale - imp).toFixed(2));
+
+  const riEl = document.getElementById('grpRowImponibile');
+  const ivEl = document.getElementById('grpRowIva');
+  const toEl = document.getElementById('grpRowTotale');
+  if (riEl) riEl.querySelector('span:last-child').textContent = imp.toFixed(2)+'€';
+  if (ivEl) ivEl.querySelector('span:last-child').textContent = iva.toFixed(2)+'€';
+  if (toEl) toEl.querySelector('span:last-child').textContent = g.totale.toFixed(2)+'€';
 }
 
 function emettiContoGruppo() {
