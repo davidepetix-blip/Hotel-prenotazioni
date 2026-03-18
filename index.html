@@ -640,8 +640,16 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
   padding:2px 7px; border-radius:8px;
 }
-.bill-list-status.bozza { background:#f5f5f5; color:#888; }
-.bill-list-status.emesso { background:#e8f4fd; color:#1a6fa8; }
+.bill-list-status.bozza     { background:#f5f5f5; color:#888; }
+.bill-list-status.emesso    { background:#e8f4fd; color:#1a6fa8; }
+.bill-list-status.fatturato { background:#fef9e7; color:#b7770d; }
+.bill-list-status.pagato    { background:#eafaf1; color:#1e8449; }
+.stato-pill { display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:3px 8px;border-radius:20px;cursor:pointer;transition:opacity .15s; }
+.stato-pill:hover { opacity:.8; }
+.stato-pill.bozza     { background:#f5f5f5; color:#888; border:1px solid #ddd; }
+.stato-pill.emesso    { background:#e8f4fd; color:#1a6fa8; border:1px solid #b3d7f5; }
+.stato-pill.fatturato { background:#fef9e7; color:#b7770d; border:1px solid #f5d67e; }
+.stato-pill.pagato    { background:#eafaf1; color:#1e8449; border:1px solid #82e0aa; }
 .bill-list-status.pagato { background:var(--accent-light); color:var(--accent); }
 
 /* ── PDF Preview ── */
@@ -694,7 +702,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 17.9</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.0</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -715,7 +723,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 17.9">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 18.0">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -6396,7 +6404,17 @@ function renderDrawerBill(b) {
     <div class="conti-section-title" style="margin-top:14px">Aggiungi voce</div>
     ${extraAdder}
     ${consumiHtml}
-    <div style="display:flex;gap:8px;margin-top:14px">
+    ${(()=>{
+      const _contiList = loadConti();
+      const _ce = _contiList.find(x=>x.bookingId===b.id);
+      const _si = _ce ? (STATO_CFG[_ce.status]||STATO_CFG.bozza) : null;
+      return _si ? `<div style="display:flex;align-items:center;gap:6px;margin:10px 0 6px;padding:8px 10px;background:var(--surface2);border-radius:8px;font-size:12px">
+        <span class="stato-pill ${_ce.status}">${_si.icon} ${_si.label}</span>
+        <span style="color:var(--text3);flex:1">Salvato · ${_ce.totale?.toFixed(2)}€</span>
+        ${_ce.numDoc?`<span style="font-size:10px;color:var(--text3)">📄 ${_ce.numDoc}</span>`:''}
+      </div>` : '';
+    })()}
+    <div style="display:flex;gap:8px;margin-top:10px">
       <button class="btn primary" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;">📄 Emetti conto</button>
       <button class="btn" onclick="apriPdf(${b.id})" style="flex:1;justify-content:center;">👁 PDF</button>
     </div>`;
@@ -6525,17 +6543,32 @@ function emettiConto(bid) {
   const conto= getContoEffettivo(bid);
   const conti= loadConti();
   const idx  = conti.findIndex(c=>c.bookingId===bid);
+  const ora  = new Date().toISOString();
+  const esistente = idx >= 0 ? conti[idx] : null;
   const doc  = {
-    id: idx>=0 ? conti[idx].id : `C${Date.now()}`,
-    bookingId:bid, nome:b.n, camera:room?.name||roomName(b.r),
-    checkin:b.s.toISOString(), checkout:b.e.toISOString(),
-    righe:conto.righe, totale:conto.totale, extras:ext,
-    status:'emesso', emessoIl:new Date().toISOString(), isAppart:isA
+    id:         esistente?.id || ('C'+Date.now()),
+    bookingId:  bid,
+    groupId:    esistente?.groupId || null,
+    nome:       b.n,
+    camera:     room?.name||roomName(b.r),
+    checkin:    b.s.toISOString(),
+    checkout:   b.e.toISOString(),
+    righe:      conto.righe,
+    totale:     conto.totale,
+    status:     esistente?.status || 'emesso',
+    emessoIl:   esistente?.emessoIl || ora,
+    fatturatoIl:  esistente?.fatturatoIl  || null,
+    tipoDoc:      esistente?.tipoDoc      || null,
+    numDoc:       esistente?.numDoc       || null,
+    pagatoIl:     esistente?.pagatoIl     || null,
+    modalitaPag:  esistente?.modalitaPag  || null,
+    isAppart:   isA,
+    ts:         ora
   };
   if(idx>=0) conti[idx]=doc; else conti.unshift(doc);
   saveConti(conti);
   apriPdf(bid);
-  showToast('✓ Conto emesso','success');
+  showToast('✓ Conto salvato e emesso','success');
 }
 
 let _currentPdfBid = null;
@@ -6914,31 +6947,192 @@ function renderContiTab(tab) {
   if (tab==='tariffe') body.innerHTML = renderListino();
 }
 
+// Labels e icone stati
+const STATO_CFG = {
+  bozza:     { icon:'📝', label:'Bozza',     next:'emesso',    nextLabel:'Segna Emesso' },
+  emesso:    { icon:'📤', label:'Emesso',    next:'fatturato', nextLabel:'Segna Fatturato/Scontrino' },
+  fatturato: { icon:'🧾', label:'Fatturato', next:'pagato',    nextLabel:'Segna Pagato' },
+  pagato:    { icon:'✅', label:'Pagato',    next:null,        nextLabel:null }
+};
+
 function renderContiLista() {
   const conti = loadConti();
-  if (!conti.length) return `<div class="empty" style="padding:40px 0"><div class="emptyicon">📋</div><div style="font-size:12px;color:var(--text3)">Nessun conto emesso.<br>Apri una prenotazione → tab 💶 Conto.</div></div>`;
-  const byS = { emesso:[], pagato:[], bozza:[] };
-  conti.forEach(c=>(byS[c.status]||byS.bozza).push(c));
-  const sec = (titolo, lista) => {
+  if (!conti.length) return `<div class="empty" style="padding:40px 0">
+    <div class="emptyicon">📋</div>
+    <div style="font-size:12px;color:var(--text3)">Nessun conto emesso.<br>Apri una prenotazione → tab 💶 Conto.</div>
+  </div>`;
+
+  const ordine = ['pagato','fatturato','emesso','bozza'];
+  const titoli = { pagato:'✅ Pagati', fatturato:'🧾 Fatturati', emesso:'📤 Emessi', bozza:'📝 Bozze' };
+  const byS = { emesso:[], pagato:[], bozza:[], fatturato:[] };
+  conti.forEach(c => (byS[c.status] || byS.bozza).push(c));
+
+  return ordine.map(stato => {
+    const lista = byS[stato];
     if (!lista.length) return '';
-    return `<div class="conti-section"><div class="conti-section-title">${titolo} (${lista.length})</div>
-      ${lista.map(c=>{
-        const ci=new Date(c.checkin), co=new Date(c.checkout);
-        const dot=bookings.find(b=>b.id===c.bookingId)?.c||'#ccc';
-        return `<div class="bill-list-item" onclick="riapriFoglio(${c.bookingId})">
+    const totSez = lista.reduce((s,c)=>s+(c.totale||0),0);
+    return `<div class="conti-section">
+      <div class="conti-section-title" style="display:flex;justify-content:space-between">
+        <span>${titoli[stato]} (${lista.length})</span>
+        <span style="font-weight:600;color:var(--accent)">${totSez.toFixed(2)}€</span>
+      </div>
+      ${lista.map(c => {
+        const ci  = new Date(c.checkin), co = new Date(c.checkout);
+        const dot = bookings.find(b=>b.id===c.bookingId)?.c || '#ccc';
+        const cfg = STATO_CFG[c.status] || STATO_CFG.bozza;
+        const isGruppo = c.groupId != null;
+        const metaExtra = [
+          c.numDoc  ? `📄 ${c.numDoc}` : '',
+          c.tipoDoc ? c.tipoDoc : '',
+          c.pagatoIl ? `💶 ${new Date(c.pagatoIl).toLocaleDateString('it-IT')}` : '',
+          c.modalitaPag ? c.modalitaPag : '',
+        ].filter(Boolean).join(' · ');
+        return `<div class="bill-list-item">
           <div class="bill-list-dot" style="background:${dot}"></div>
-          <div class="bill-list-info">
-            <div class="bill-list-name">${c.nome}</div>
+          <div class="bill-list-info" onclick="riapriFoglio(${c.bookingId})" style="cursor:pointer;flex:1">
+            <div class="bill-list-name">${c.nome} ${isGruppo?'<span style="font-size:9px;background:#e8f4fd;color:#1a6fa8;padding:1px 5px;border-radius:8px;margin-left:4px">GRUPPO</span>':''}</div>
             <div class="bill-list-sub">Cam. ${c.camera} · ${fmt(ci)} → ${fmt(co)}</div>
+            ${metaExtra?`<div style="font-size:10px;color:var(--text3);margin-top:2px">${metaExtra}</div>`:''}
           </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-            <div class="bill-list-total">${c.totale.toFixed(2)}€</div>
-            <div class="bill-list-status ${c.status}">${c.status}</div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;min-width:80px">
+            <div class="bill-list-total">${(c.totale||0).toFixed(2)}€</div>
+            <div class="stato-pill ${c.status}" onclick="avanzaStatoConto('${c.id}',event)">
+              ${cfg.icon} ${cfg.label} ▸
+            </div>
           </div>
         </div>`;
-      }).join('')}</div>`;
-  };
-  return sec('✅ Pagati',byS.pagato)+sec('📤 Emessi',byS.emesso)+sec('📝 Bozze',byS.bozza);
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+function avanzaStatoConto(contoId, e) {
+  e && e.stopPropagation();
+  const conti = loadConti();
+  const idx = conti.findIndex(c => c.id === contoId);
+  if (idx < 0) return;
+  const c   = conti[idx];
+  const cfg = STATO_CFG[c.status] || STATO_CFG.bozza;
+  if (!cfg.next) { showToast('Conto già pagato','info'); return; }
+
+  // Se avanza a fatturato: chiede tipo doc e numero
+  if (cfg.next === 'fatturato') {
+    apriDialogFatturazione(contoId);
+    return;
+  }
+  // Se avanza a pagato: chiede modalità pagamento
+  if (cfg.next === 'pagato') {
+    apriDialogPagamento(contoId);
+    return;
+  }
+  // emesso: avanza direttamente
+  conti[idx] = { ...c, status: cfg.next, emessoIl: c.emessoIl || new Date().toISOString(), ts: new Date().toISOString() };
+  saveConti(conti);
+  showToast(`✓ Stato aggiornato: ${STATO_CFG[cfg.next].label}`, 'success');
+  renderContiTab('lista');
+}
+
+function apriDialogFatturazione(contoId) {
+  const conti = loadConti();
+  const c = conti.find(x => x.id === contoId);
+  if (!c) return;
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+  ov.innerHTML = `<div style="background:var(--surface);border-radius:16px;padding:24px;max-width:340px;width:100%">
+    <div style="font-weight:700;font-size:15px;margin-bottom:16px">🧾 Registra documento fiscale</div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Tipo documento</label>
+      <select id="_dTipo" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
+        <option value="Fattura">Fattura</option>
+        <option value="Scontrino">Scontrino</option>
+        <option value="Ricevuta">Ricevuta</option>
+        <option value="Fattura PA">Fattura PA</option>
+      </select>
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Numero / riferimento</label>
+      <input id="_dNum" placeholder="es. 2026/042" style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
+    </div>
+    <div style="display:flex;gap:8px">
+      <button onclick="
+        const tipo=document.getElementById('_dTipo').value;
+        const num=document.getElementById('_dNum').value.trim();
+        confermaFatturazione('${contoId}',tipo,num);
+        this.closest('div[style*=fixed]').remove()
+      " style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-weight:600;cursor:pointer;font-size:13px">
+        ✓ Conferma
+      </button>
+      <button onclick="this.closest('div[style*=fixed]').remove()"
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;font-size:13px;color:var(--text2)">
+        Annulla
+      </button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e => { if(e.target===ov) ov.remove(); });
+  setTimeout(() => document.getElementById('_dNum')?.focus(), 100);
+}
+
+function confermaFatturazione(contoId, tipoDoc, numDoc) {
+  const conti = loadConti();
+  const idx = conti.findIndex(c => c.id === contoId);
+  if (idx < 0) return;
+  conti[idx] = { ...conti[idx], status:'fatturato', tipoDoc, numDoc: numDoc||'—',
+    fatturatoIl: new Date().toISOString(), ts: new Date().toISOString() };
+  saveConti(conti);
+  showToast(`✓ ${tipoDoc} registrata`, 'success');
+  renderContiTab('lista');
+}
+
+function apriDialogPagamento(contoId) {
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+  ov.innerHTML = `<div style="background:var(--surface);border-radius:16px;padding:24px;max-width:340px;width:100%">
+    <div style="font-weight:700;font-size:15px;margin-bottom:16px">💶 Registra pagamento</div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Modalità pagamento</label>
+      <select id="_pMod" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
+        <option value="Contanti">Contanti</option>
+        <option value="Carta di credito">Carta di credito</option>
+        <option value="Bancomat">Bancomat</option>
+        <option value="Bonifico">Bonifico</option>
+        <option value="Assegno">Assegno</option>
+      </select>
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Data pagamento</label>
+      <input id="_pData" type="date" value="${new Date().toISOString().slice(0,10)}"
+        style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
+    </div>
+    <div style="display:flex;gap:8px">
+      <button onclick="
+        const mod=document.getElementById('_pMod').value;
+        const data=document.getElementById('_pData').value;
+        confermaPagamento('${contoId}',mod,data);
+        this.closest('div[style*=fixed]').remove()
+      " style="flex:1;background:#1e8449;color:#fff;border:none;border-radius:8px;padding:10px;font-weight:600;cursor:pointer;font-size:13px">
+        ✓ Pagato
+      </button>
+      <button onclick="this.closest('div[style*=fixed]').remove()"
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;font-size:13px;color:var(--text2)">
+        Annulla
+      </button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e => { if(e.target===ov) ov.remove(); });
+}
+
+function confermaPagamento(contoId, modalita, dataStr) {
+  const conti = loadConti();
+  const idx = conti.findIndex(c => c.id === contoId);
+  if (idx < 0) return;
+  conti[idx] = { ...conti[idx], status:'pagato', modalitaPag: modalita,
+    pagatoIl: dataStr ? new Date(dataStr).toISOString() : new Date().toISOString(),
+    ts: new Date().toISOString() };
+  saveConti(conti);
+  showToast('✓ Pagamento registrato', 'success');
+  renderContiTab('lista');
 }
 
 function riapriFoglio(bid) {
@@ -7251,9 +7445,58 @@ function aggiornaRiepilogoGruppo() {
 
 function emettiContoGruppo() {
   const g = window._gruppoCorrente;
-  if (!g) return;
+  if (!g || !g.bookings?.length) return;
+  const conti  = loadConti();
+  const groupId = 'G' + Date.now();
+  const ora    = new Date().toISOString();
+
+  // Crea una riga per ogni prenotazione del gruppo, collegate dallo stesso groupId
+  g.bookings.forEach(b => {
+    const room = ROOMS.find(r=>r.id===b.r);
+    const n    = nights(b.s, b.e);
+    const conto= calcolaConto(b, getExtraForBooking(b.id));
+    const idx  = conti.findIndex(x => x.bookingId === b.id);
+    const doc  = {
+      id:          idx >= 0 ? conti[idx].id : ('C'+Date.now()+b.id),
+      bookingId:   b.id,
+      groupId:     groupId,
+      nome:        b.n,
+      camera:      room?.name || roomName(b.r),
+      checkin:     b.s.toISOString(),
+      checkout:    b.e.toISOString(),
+      righe:       conto.righe,
+      totale:      conto.totale,
+      status:      'emesso',
+      emessoIl:    ora,
+      fatturatoIl: null, tipoDoc:null, numDoc:null,
+      pagatoIl:    null, modalitaPag:null,
+      isAppart:    false, ts: ora
+    };
+    if (idx >= 0) conti[idx] = doc; else conti.unshift(doc);
+  });
+
+  // Se ci sono extra di gruppo, aggiungi una riga extra con groupId
+  if (g.extraGruppo?.length) {
+    const extraDoc = {
+      id: 'CE' + Date.now(),
+      bookingId: null,
+      groupId: groupId,
+      nome: g.nome + ' (extra gruppo)',
+      camera: '—',
+      checkin: (g.dalD||new Date()).toISOString(),
+      checkout: (g.alD||new Date()).toISOString(),
+      righe: g.extraGruppo,
+      totale: g.extraGruppo.reduce((s,r)=>s+r.total, 0),
+      status: 'emesso', emessoIl: ora,
+      fatturatoIl:null, tipoDoc:null, numDoc:null,
+      pagatoIl:null, modalitaPag:null, ts:ora
+    };
+    conti.unshift(extraDoc);
+  }
+
+  saveConti(conti);
   apriPdfGruppo();
-  showToast('✓ Conto di gruppo emesso', 'success');
+  showToast(`✓ Conto gruppo salvato — ${g.bookings.length} prenotazioni`, 'success');
 }
 
 function apriPdfGruppo() {
