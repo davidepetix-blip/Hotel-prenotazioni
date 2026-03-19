@@ -722,7 +722,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">2026-03-19 · build 18.6.2</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">2026-03-19 · build 18.6.3</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -743,7 +743,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="2026-03-19 · build 18.6.2">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="2026-03-19 · build 18.6.3">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -5458,7 +5458,9 @@ async function saveCiCheckin() {
 // Formato fisso: record da 93 caratteri (versione 3)
 // Ref: specifiche tecniche Polizia di Stato – tracciato record tipo 20
 // ─── TABELLE ALLOGGIATI WEB ───────────────────────────────────────────────────
-// Cache comuni inseriti manualmente dall'utente (salvati in localStorage)
+// Il portale Alloggiati Web usa i codici catastali (Belfiore): lettera + 3 cifre
+// es. Roma=H501, Milano=F205, Firenze=D612 — padding con SPAZI A DESTRA a 9 char
+// Cache comuni inseriti manualmente dall'utente
 const _AL_COMUNI_CACHE = JSON.parse(localStorage.getItem('_alComuni')||'{}');
 function _alSalvaComune(nomeKey, cod, prov) {
   _AL_COMUNI_CACHE[nomeKey] = cod+';'+prov;
@@ -5466,10 +5468,7 @@ function _alSalvaComune(nomeKey, cod, prov) {
 }
 
 // Alias sigle Motorizzazione Civile → comune capoluogo
-// Gemini legge dal documento il timbro della motorizzazione (es. "MIT-UCO" = Udine,
-// "M.C.TC" = Torino, ecc.) — li mappiamo al comune corretto
 const _AL_MOTO = {
-  // Formato MIT-XXX o MCTC-XXX o varianti
   'MIT UCO':'UDINE','MITUCO':'UDINE','MIT-UCO':'UDINE',
   'MIT RM':'ROMA','MITRM':'ROMA','MIT-RM':'ROMA',
   'MIT MI':'MILANO','MITMI':'MILANO','MIT-MI':'MILANO',
@@ -5486,7 +5485,6 @@ const _AL_MOTO = {
   'MIT AN':'ANCONA','MITAN':'ANCONA','MIT-AN':'ANCONA',
   'MIT BG':'BERGAMO','MITBG':'BERGAMO','MIT-BG':'BERGAMO',
   'MIT BS':'BRESCIA','MITBS':'BRESCIA','MIT-BS':'BRESCIA',
-  'MIT RC':'REGGIO CALABRIA','MITRC':'REGGIO CALABRIA','MIT-RC':'REGGIO CALABRIA',
   'MIT PD':'PADOVA','MITPD':'PADOVA','MIT-PD':'PADOVA',
   'MIT PR':'PARMA','MITPR':'PARMA','MIT-PR':'PARMA',
   'MIT TS':'TRIESTE','MITTS':'TRIESTE','MIT-TS':'TRIESTE',
@@ -5496,173 +5494,109 @@ const _AL_MOTO = {
   'MIT SA':'SALERNO','MITSA':'SALERNO','MIT-SA':'SALERNO',
   'MIT TA':'TARANTO','MITTA':'TARANTO','MIT-TA':'TARANTO',
   'MIT ME':'MESSINA','MITME':'MESSINA','MIT-ME':'MESSINA',
-  'MIT FE':'FERRARA','MITFE':'FERRARA','MIT-FE':'FERRARA',
-  'MIT RA':'RAVENNA','MITRA':'RAVENNA','MIT-RA':'RAVENNA',
-  'MIT RE':'REGGIO EMILIA','MITRE':'REGGIO EMILIA','MIT-RE':'REGGIO EMILIA',
-  'MIT MO':'MODENA','MITMO':'MODENA','MIT-MO':'MODENA',
-  'MIT PC':'PIACENZA','MITPC':'PIACENZA','MIT-PC':'PIACENZA',
+  'MIT RC':'REGGIO CALABRIA','MITRC':'REGGIO CALABRIA','MIT-RC':'REGGIO CALABRIA',
   'MIT PE':'PESCARA','MITPE':'PESCARA','MIT-PE':'PESCARA',
-  'MIT AQ':'LAQUILA','MITAQ':'LAQUILA','MIT-AQ':'LAQUILA',
   'MIT CS':'COSENZA','MITCS':'COSENZA','MIT-CS':'COSENZA',
   'MIT CZ':'CATANZARO','MITCZ':'CATANZARO','MIT-CZ':'CATANZARO',
   'MIT SS':'SASSARI','MITSS':'SASSARI','MIT-SS':'SASSARI',
-  'MIT LU':'LUCCA','MITLU':'LUCCA','MIT-LU':'LUCCA',
-  'MIT AR':'AREZZO','MITAR':'AREZZO','MIT-AR':'AREZZO',
-  'MIT SI':'SIENA','MITSI':'SIENA','MIT-SI':'SIENA',
-  'MIT PI':'PISA','MITPI':'PISA','MIT-PI':'PISA',
-  'MIT PT':'PISTOIA','MITPT':'PISTOIA','MIT-PT':'PISTOIA',
-  'MIT PO':'PRATO','MITPO':'PRATO','MIT-PO':'PRATO',
-  'MIT GR':'GROSSETO','MITGR':'GROSSETO','MIT-GR':'GROSSETO',
-  'MIT LI':'LIVORNO','MITLI':'LIVORNO','MIT-LI':'LIVORNO',
-  'MIT MS':'MASSA','MITMS':'MASSA','MIT-MS':'MASSA',
-  'MIT SP':'LA SPEZIA','MITSP':'LA SPEZIA','MIT-SP':'LA SPEZIA',
-  'MIT SV':'SAVONA','MITSV':'SAVONA','MIT-SV':'SAVONA',
-  'MIT IM':'IMPERIA','MITIM':'IMPERIA','MIT-IM':'IMPERIA',
-  'MIT AO':'AOSTA','MITAO':'AOSTA','MIT-AO':'AOSTA',
-  'MIT NO':'NOVARA','MITNO':'NOVARA','MIT-NO':'NOVARA',
-  'MIT AL':'ALESSANDRIA','MITAL':'ALESSANDRIA','MIT-AL':'ALESSANDRIA',
-  'MIT AT':'ASTI','MITAT':'ASTI','MIT-AT':'ASTI',
-  'MIT CN':'CUNEO','MITCN':'CUNEO','MIT-CN':'CUNEO',
-  'MIT VC':'VERCELLI','MITVC':'VERCELLI','MIT-VC':'VERCELLI',
-  'MIT BI':'BIELLA','MITBI':'BIELLA','MIT-BI':'BIELLA',
-  'MIT VB':'VERBANIA','MITVB':'VERBANIA','MIT-VB':'VERBANIA',
   'MIT VA':'VARESE','MITVA':'VARESE','MIT-VA':'VARESE',
   'MIT CO':'COMO','MITCO':'COMO','MIT-CO':'COMO',
-  'MIT LC':'LECCO','MITLC':'LECCO','MIT-LC':'LECCO',
-  'MIT SO':'SONDRIO','MITSO':'SONDRIO','MIT-SO':'SONDRIO',
-  'MIT MB':'MONZA','ITMB':'MONZA','MIT-MB':'MONZA',
-  'MIT LO':'LODI','MITLO':'LODI','MIT-LO':'LODI',
-  'MIT CR':'CREMONA','MITCR':'CREMONA','MIT-CR':'CREMONA',
-  'MIT MN':'MANTOVA','ITMN':'MANTOVA','MIT-MN':'MANTOVA',
-  'MIT PV':'PAVIA','MITPV':'PAVIA','MIT-PV':'PAVIA',
-  'MIT BL':'BELLUNO','MITBL':'BELLUNO','MIT-BL':'BELLUNO',
-  'MIT TV':'TREVISO','MITTV':'TREVISO','MIT-TV':'TREVISO',
-  'MIT VI':'VICENZA','MITVI':'VICENZA','MIT-VI':'VICENZA',
-  'MIT RO':'ROVIGO','MITRO':'ROVIGO','MIT-RO':'ROVIGO',
-  'MIT VR':'VERONA','MITVR':'VERONA','MIT-VR':'VERONA',
-  'MIT PN':'PORDENONE','MITPN':'PORDENONE','MIT-PN':'PORDENONE',
-  'MIT GO':'GORIZIA','MITGO':'GORIZIA','MIT-GO':'GORIZIA',
   'MIT BZ':'BOLZANO','MITBZ':'BOLZANO','MIT-BZ':'BOLZANO',
   'MIT TN':'TRENTO','MITTN':'TRENTO','MIT-TN':'TRENTO',
-  'MIT RI':'RIETI','MITRI':'RIETI','MIT-RI':'RIETI',
-  'MIT VT':'VITERBO','MITVT':'VITERBO','MIT-VT':'VITERBO',
-  'MIT FR':'FROSINONE','MITFR':'FROSINONE','MIT-FR':'FROSINONE',
-  'MIT LT':'LATINA','MITLT':'LATINA','MIT-LT':'LATINA',
-  'MIT CB':'CAMPOBASSO','MITCB':'CAMPOBASSO','MIT-CB':'CAMPOBASSO',
-  'MIT IS':'ISERNIA','MITIS':'ISERNIA','MIT-IS':'ISERNIA',
-  'MIT CE':'CASERTA','MITCE':'CASERTA','MIT-CE':'CASERTA',
-  'MIT BN':'BENEVENTO','MITBN':'BENEVENTO','MIT-BN':'BENEVENTO',
-  'MIT AV':'AVELLINO','MITAV':'AVELLINO','MIT-AV':'AVELLINO',
-  'MIT SA':'SALERNO','MITSA':'SALERNO',
-  'MIT FG':'FOGGIA','MITFG':'FOGGIA','MIT-FG':'FOGGIA',
-  'MIT BR':'BRINDISI','MITBR':'BRINDISI','MIT-BR':'BRINDISI',
-  'MIT LE':'LECCE','MITLE':'LECCE','MIT-LE':'LECCE',
-  'MIT MT':'MATERA','MITMT':'MATERA','MIT-MT':'MATERA',
-  'MIT PZ':'POTENZA','MITPZ':'POTENZA','MIT-PZ':'POTENZA',
-  'MIT KR':'CROTONE','MITKR':'CROTONE','MIT-KR':'CROTONE',
-  'MIT VV':'VIBO VALENTIA','MITVV':'VIBO VALENTIA','MIT-VV':'VIBO VALENTIA',
-  'MIT AG':'AGRIGENTO','MITAG':'AGRIGENTO','MIT-AG':'AGRIGENTO',
-  'MIT CL':'CALTANISSETTA','MITCL':'CALTANISSETTA','MIT-CL':'CALTANISSETTA',
-  'MIT EN':'ENNA','MITEN':'ENNA','MIT-EN':'ENNA',
-  'MIT RG':'RAGUSA','MITRG':'RAGUSA','MIT-RG':'RAGUSA',
-  'MIT SR':'SIRACUSA','MITSR':'SIRACUSA','MIT-SR':'SIRACUSA',
-  'MIT TP':'TRAPANI','MITTP':'TRAPANI','MIT-TP':'TRAPANI',
-  'MIT NU':'NUORO','MITNU':'NUORO','MIT-NU':'NUORO',
-  'MIT OR':'ORISTANO','MITOR':'ORISTANO','MIT-OR':'ORISTANO',
-  // Sigle MCTC (vecchio formato)
-  'MCTC':'ROMA','M.C.T.C.':'ROMA','MCTC RM':'ROMA',
-  // Motorizzazione Centrale
-  'MOTORIZZAZIONE CENTRALE':'ROMA','MOT CENTRALE':'ROMA',
-  'MOTORIZZAZIONE CIVILE':'ROMA',
+  'MCTC':'ROMA','M.C.T.C.':'ROMA','MOTORIZZAZIONE CENTRALE':'ROMA',
+  'MOTORIZZAZIONE CIVILE':'ROMA','MOT CENTRALE':'ROMA',
 };
 
-// Codici ISTAT comuni (numero senza padding — _alPadL9 aggiunge zeri a sinistra)
+// Codici CATASTALI (Belfiore) dei comuni italiani — formato: 'NOME':'COD;PROV'
+// Padding a 9 con spazi a destra applicato al momento dell'uso
 const _AL_COMUNI = Object.assign({
-  'AGRIGENTO':'84001;AG','ALESSANDRIA':'6003;AL','ANCONA':'42002;AN','AOSTA':'7003;AO',
-  'AREZZO':'51002;AR','ASCOLI PICENO':'44003;AP','ASTI':'5005;AT','AVELLINO':'64005;AV',
-  'BARI':'72006;BA','BARLETTA':'110002;BT','BELLUNO':'25004;BL','BENEVENTO':'62008;BN',
-  'BERGAMO':'16024;BG','BIELLA':'96004;BI','BOLOGNA':'37006;BO','BOLZANO':'21008;BZ',
-  'BRESCIA':'17029;BS','BRINDISI':'74002;BR','CAGLIARI':'92009;CA','CALTANISSETTA':'85003;CL',
-  'CAMPOBASSO':'70006;CB','CASERTA':'61014;CE','CATANIA':'87015;CT','CATANZARO':'79023;CZ',
-  'CHIETI':'69021;CH','COMO':'13075;CO','COSENZA':'78048;CS','CREMONA':'19036;CR',
-  'CROTONE':'101009;KR','CUNEO':'4078;CN','ENNA':'86010;EN','FERMO':'109008;FM',
-  'FERRARA':'38008;FE','FIRENZE':'48017;FI','FOGGIA':'71024;FG','FORLI':'40013;FC',
-  'FROSINONE':'60038;FR','GENOVA':'10025;GE','GORIZIA':'31009;GO','GROSSETO':'53012;GR',
-  'IMPERIA':'8033;IM','ISERNIA':'94021;IS','LA SPEZIA':'11015;SP',"L'AQUILA":'66049;AQ',
-  'LAQUILA':'66049;AQ','LATINA':'59012;LT','LECCE':'75036;LE','LECCO':'97042;LC',
-  'LIVORNO':'49009;LI','LODI':'98023;LO','LUCCA':'46014;LU','MACERATA':'43022;MC',
-  'MANTOVA':'20030;MN','MASSA':'45011;MS','MATERA':'77014;MT','MESSINA':'83048;ME',
-  'MILANO':'15146;MI','MODENA':'36023;MO','MONZA':'108033;MB','NAPOLI':'63049;NA',
-  'NOVARA':'3130;NO','NUORO':'91057;NU','ORISTANO':'95032;OR','PADOVA':'28060;PD',
-  'PALERMO':'82053;PA','PARMA':'34027;PR','PAVIA':'18110;PV','PERUGIA':'54036;PG',
-  'PESARO':'41037;PU','PESCARA':'68028;PE','PIACENZA':'33045;PC','PISA':'50026;PI',
-  'PISTOIA':'47014;PT','PORDENONE':'93033;PN','POTENZA':'76063;PZ','PRATO':'100003;PO',
-  'RAGUSA':'88009;RG','RAVENNA':'39015;RA','REGGIO CALABRIA':'80063;RC',
-  'REGGIO EMILIA':'35033;RE','RIETI':'57059;RI','RIMINI':'99028;RN','ROMA':'58091;RM',
-  'ROME':'58091;RM','ROVIGO':'29036;RO','SALERNO':'65116;SA','SASSARI':'90061;SS',
-  'SAVONA':'9061;SV','SIENA':'52032;SI','SIRACUSA':'89018;SR','SONDRIO':'14058;SO',
-  'TARANTO':'73027;TA','TERAMO':'67046;TE','TERNI':'55024;TR','TORINO':'1272;TO',
-  'TRAPANI':'81021;TP','TRENTO':'22205;TN','TREVISO':'26027;TV','TRIESTE':'32006;TS',
-  'UDINE':'30129;UD','VARESE':'12133;VA','VENEZIA':'27042;VE','VERBANIA':'103068;VB',
-  'VERCELLI':'2158;VC','VERONA':'23091;VR','VIBO VALENTIA':'102046;VV',
-  'VICENZA':'24116;VI','VITERBO':'56059;VT',
-  'ACIREALE':'87001;CT','AFRAGOLA':'63001;NA','ALBA':'4003;CN','ALBANO LAZIALE':'58001;RM',
-  'ALBENGA':'9002;SV','ALCAMO':'81001;TP','ALGHERO':'90003;SS','ALTAMURA':'72003;BA',
-  'ANDRIA':'110003;BT','ANZIO':'58006;RM','APRILIA':'59002;LT','ARDEA':'58007;RM',
-  'ARICCIA':'58008;RM','ARONA':'3009;NO','ARZANO':'63005;NA','ASSISI':'54004;PG',
-  'AVERSA':'61004;CE','AVEZZANO':'66010;AQ','AVOLA':'89002;SR','BAGHERIA':'82006;PA',
-  'BATTIPAGLIA':'65013;SA','BOLLATE':'15018;MI','BORGOMANERO':'3022;NO',
-  'BRUGHERIO':'108009;MB','BUSTO ARSIZIO':'12023;VA','CAIVANO':'63010;NA',
-  'CALTAGIRONE':'87008;CT','CAMPI BISENZIO':'48005;FI','CANTU':'13043;CO',
-  'CAPANNORI':'46005;LU','CARATE BRIANZA':'108013;MB','CASALNUOVO DI NAPOLI':'63018;NA',
-  'CASORIA':'63020;NA','CASSINO':'60015;FR','CASTEL VOLTURNO':'61022;CE',
-  'CASTELLAMMARE DI STABIA':'63026;NA','CASTELVETRANO':'81005;TP',
-  'CAVA DE TIRRENI':'65027;SA','CERNUSCO SUL NAVIGLIO':'15059;MI',
-  'CESANO MADERNO':'108019;MB','CESENA':'40007;FC','CHIERI':'1078;TO',
-  'CINISELLO BALSAMO':'15065;MI','CITTA DI CASTELLO':'54013;PG',
-  'CIVITANOVA MARCHE':'43013;MC','CIVITAVECCHIA':'58019;RM','COLLEGNO':'1088;TO',
-  'COLLEFERRO':'58021;RM','CONEGLIANO':'26016;TV','CORSICO':'15079;MI',
-  'DESIO':'108024;MB','EMPOLI':'48015;FI','ERCOLANO':'63034;NA','ERBA':'13090;CO',
-  'FABRIANO':'42018;AN','FAENZA':'39011;RA','FALCONARA MARITTIMA':'42019;AN',
-  'FANO':'41018;PU','FASANO':'74008;BR','FIDENZA':'34014;PR','FOLIGNO':'54022;PG',
-  'FORMIA':'59009;LT','FRATTAMAGGIORE':'63039;NA','GALLARATE':'12065;VA',
-  'GELA':'85009;CL','GIARRE':'87019;CT','GIUGLIANO IN CAMPANIA':'63041;NA',
-  'GRAVINA IN PUGLIA':'72024;BA','GRUGLIASCO':'1131;TO','GUIDONIA MONTECELIO':'58044;RM',
-  'IGLESIAS':'92033;CA','IMOLA':'37032;BO','IVREA':'1131;TO','JESI':'42022;AN',
-  'LAINATE':'15121;MI','LANCIANO':'69036;CH','LAMEZIA TERME':'79060;CZ',
-  'LEGNAGO':'23043;VR','LEGNANO':'15122;MI','LENTINI':'89011;SR','LISSONE':'108030;MB',
-  'LOCRI':'80038;RC','LUGO':'39019;RA','MAGENTA':'15134;MI','MANDURIA':'73018;TA',
-  'MANFREDONIA':'71029;FG','MARCIANISE':'61034;CE','MARANO DI NAPOLI':'63043;NA',
-  'MARIGLIANO':'63044;NA','MARSALA':'81011;TP','MASSAFRA':'73020;TA',
-  'MAZARA DEL VALLO':'81012;TP','MELEGNANO':'15142;MI','MELITO DI NAPOLI':'63045;NA',
-  'MERCATO SAN SEVERINO':'65058;SA','MESTRE':'27042;VE','MISTERBIANCO':'87032;CT',
-  'MOLA DI BARI':'72032;BA','MOLFETTA':'72033;BA','MONDOVI':'4127;CN',
-  'MONOPOLI':'72034;BA','MONREALE':'82045;PA','MONSELICE':'28055;PD',
-  'MONTEBELLUNA':'26036;TV','MONTECATINI TERME':'47011;PT','MONTEROTONDO':'58060;RM',
-  'NICHELINO':'1163;TO','NOCERA INFERIORE':'65068;SA','NOLA':'63049;NA',
-  'NOTO':'89016;SR','NOVI LIGURE':'6118;AL','ORBASSANO':'1173;TO',
-  'PACHINO':'89017;SR','PALAGIANO':'73025;TA','PARABIAGO':'15168;MI',
-  'PATERNO':'87040;CT','PATERNÒ':'87040;CT','PERO':'15180;MI',
-  'PESCHIERA BORROMEO':'15182;MI','PIOLTELLO':'15183;MI','PIOMBINO':'49015;LI',
-  'POMEZIA':'58074;RM','PONTECAGNANO FAIANO':'65090;SA','PONTEDERA':'50026;PI',
-  'PORTICI':'63058;NA','POZZUOLI':'63059;NA','PUTIGNANO':'72036;BA',
-  'QUARTO':'63061;NA','RAPALLO':'10045;GE','RENDE':'78105;CS','RHO':'15195;MI',
-  'RIBERA':'84033;AG','RICCIONE':'99025;RN','RIVOLI':'1219;TO','ROZZANO':'15200;MI',
-  'RUVO DI PUGLIA':'72040;BA','SACILE':'93039;PN',
-  'SAN BENEDETTO DEL TRONTO':'44052;AP','SAN GIORGIO A CREMANO':'63064;NA',
-  'SAN GIOVANNI IN PERSICETO':'37050;BO','SAN GIUSEPPE VESUVIANO':'63066;NA',
-  'SAN GIULIANO MILANESE':'15206;MI','SAN SEVERO':'71050;FG',
-  'SANTA MARIA CAPUA VETERE':'61078;CE','SARNO':'65102;SA','SARONNO':'12120;VA',
-  'SCAFATI':'65104;SA','SENIGALLIA':'42044;AN','SESTO FIORENTINO':'48041;FI',
-  'SESTO SAN GIOVANNI':'15209;MI','SETTIMO TORINESE':'1260;TO',
-  'SOMMA VESUVIANA':'63074;NA','SORRENTO':'63075;NA','SPINEA':'27038;VE',
-  'TARQUINIA':'56053;VT','TERRACINA':'59031;LT','TIVOLI':'58103;RM',
-  'TORRE ANNUNZIATA':'63079;NA','TORRE DEL GRECO':'63080;NA','TRADATE':'12141;VA',
-  'TRANI':'110009;BT','TREZZO SULL ADDA':'15219;MI','TROPEA':'102043;VV',
-  'VENARIA REALE':'1295;TO','VENTIMIGLIA':'8063;IM','VIAREGGIO':'46033;LU',
-  'VILLABATE':'82077;PA','VILLAFRANCA DI VERONA':'23093;VR','VILLAROSA':'86019;EN',
-  'VILLARICCA':'63085;NA','VITTORIA':'88012;RG','VOGHERA':'18178;PV',
-  'VOLPIANO':'1314;TO','ZAGAROLO':'58115;RM','ZOLA PREDOSA':'37069;BO'
+  // Capoluoghi di provincia
+  'AGRIGENTO':'A089;AG','ALESSANDRIA':'A182;AL','ANCONA':'A271;AN','AOSTA':'A326;AO',
+  'AREZZO':'A390;AR','ASCOLI PICENO':'A462;AP','ASTI':'A479;AT','AVELLINO':'A509;AV',
+  'BARI':'A662;BA','BARLETTA':'A669;BT','BELLUNO':'A757;BL','BENEVENTO':'A783;BN',
+  'BERGAMO':'A794;BG','BIELLA':'A859;BI','BOLOGNA':'A944;BO','BOLZANO':'A952;BZ',
+  'BRESCIA':'B157;BS','BRINDISI':'B180;BR','CAGLIARI':'B354;CA','CALTANISSETTA':'B429;CL',
+  'CAMPOBASSO':'B519;CB','CASERTA':'B963;CE','CATANIA':'C351;CT','CATANZARO':'C352;CZ',
+  'CHIETI':'C632;CH','COMO':'C933;CO','COSENZA':'D086;CS','CREMONA':'D150;CR',
+  'CROTONE':'D122;KR','CUNEO':'D205;CN','ENNA':'C342;EN','FERMO':'D542;FM',
+  'FERRARA':'D548;FE','FIRENZE':'D612;FI','FOGGIA':'D643;FG','FORLI':'D704;FC',
+  'FROSINONE':'D810;FR','GENOVA':'D969;GE','GORIZIA':'E098;GO','GROSSETO':'E202;GR',
+  'IMPERIA':'E290;IM','ISERNIA':'E335;IS','LA SPEZIA':'E463;SP',"L'AQUILA":'A345;AQ',
+  'LAQUILA':'A345;AQ','LATINA':'E472;LT','LECCE':'E506;LE','LECCO':'E507;LC',
+  'LIVORNO':'E625;LI','LODI':'E648;LO','LUCCA':'E715;LU','MACERATA':'E783;MC',
+  'MANTOVA':'E897;MN','MASSA':'F023;MS','MATERA':'F052;MT','MESSINA':'F158;ME',
+  'MILANO':'F205;MI','MODENA':'F257;MO','MONZA':'F704;MB','NAPOLI':'F839;NA',
+  'NOVARA':'F952;NO','NUORO':'F979;NU','ORISTANO':'G113;OR','PADOVA':'G224;PD',
+  'PALERMO':'G273;PA','PARMA':'G337;PR','PAVIA':'G388;PV','PERUGIA':'G478;PG',
+  'PESARO':'G453;PU','PESCARA':'G482;PE','PIACENZA':'G535;PC','PISA':'G702;PI',
+  'PISTOIA':'G713;PT','PORDENONE':'G888;PN','POTENZA':'G942;PZ','PRATO':'G999;PO',
+  'RAGUSA':'H163;RG','RAVENNA':'H199;RA','REGGIO CALABRIA':'H224;RC',
+  'REGGIO EMILIA':'H223;RE','RIETI':'H282;RI','RIMINI':'H294;RN','ROMA':'H501;RM',
+  'ROME':'H501;RM','ROVIGO':'H620;RO','SALERNO':'H703;SA','SASSARI':'I452;SS',
+  'SAVONA':'I480;SV','SIENA':'I726;SI','SIRACUSA':'I754;SR','SONDRIO':'I829;SO',
+  'TARANTO':'L049;TA','TERAMO':'L103;TE','TERNI':'L117;TR','TORINO':'L219;TO',
+  'TRAPANI':'L331;TP','TRENTO':'L378;TN','TREVISO':'L407;TV','TRIESTE':'L424;TS',
+  'UDINE':'L483;UD','VARESE':'L682;VA','VENEZIA':'L736;VE','VERBANIA':'L746;VB',
+  'VERCELLI':'L750;VC','VERONA':'L781;VR','VIBO VALENTIA':'L744;VV',
+  'VICENZA':'L840;VI','VITERBO':'M082;VT',
+  // Altri comuni frequenti
+  'ACIREALE':'A028;CT','AFRAGOLA':'A064;NA','ALBA':'A124;CN','ALBANO LAZIALE':'A132;RM',
+  'ALBENGA':'A145;SV','ALCAMO':'A176;TP','ALGHERO':'A192;SS','ALTAMURA':'A225;BA',
+  'ANDRIA':'A285;BT','ANZIO':'A323;RM','APRILIA':'A341;LT','ARDEA':'A381;RM',
+  'ARICCIA':'A401;RM','ARONA':'A429;NO','ARZANO':'A455;NA','ASSISI':'A475;PG',
+  'AVERSA':'A512;CE','AVEZZANO':'A515;AQ','AVOLA':'A522;SR','BAGHERIA':'A546;PA',
+  'BATTIPAGLIA':'A716;SA','BOLLATE':'A940;MI','BORGOMANERO':'B019;NO',
+  'BRUGHERIO':'B212;MB','BUSTO ARSIZIO':'B300;VA','CAIVANO':'B371;NA',
+  'CALTAGIRONE':'B428;CT','CAMPI BISENZIO':'B507;FI','CANTU':'B639;CO',
+  'CAPANNORI':'B648;LU','CARATE BRIANZA':'B729;MB','CASALNUOVO DI NAPOLI':'B905;NA',
+  'CASORIA':'B990;NA','CASSINO':'C034;FR','CASTEL VOLTURNO':'C291;CE',
+  'CASTELLAMMARE DI STABIA':'C129;NA','CASTELVETRANO':'C286;TP',
+  'CAVA DE TIRRENI':'C361;SA','CERNUSCO SUL NAVIGLIO':'C523;MI',
+  'CESANO MADERNO':'C565;MB','CESENA':'C573;FC','CHIERI':'C627;TO',
+  'CINISELLO BALSAMO':'C707;MI','CITTA DI CASTELLO':'C745;PG',
+  'CIVITANOVA MARCHE':'C770;MC','CIVITAVECCHIA':'C773;RM','COLLEGNO':'C860;TO',
+  'COLLEFERRO':'C858;RM','CONEGLIANO':'C957;TV','CORSICO':'D045;MI',
+  'DESIO':'D286;MB','EMPOLI':'D403;FI','ERCOLANO':'H243;NA','ERBA':'D416;CO',
+  'FABRIANO':'D451;AN','FAENZA':'D458;RA','FALCONARA MARITTIMA':'D472;AN',
+  'FANO':'D488;PU','FASANO':'D508;BR','FIDENZA':'D530;PR','FOLIGNO':'D653;PG',
+  'FORMIA':'D708;LT','FRATTAMAGGIORE':'D787;NA','GALLARATE':'D869;VA',
+  'GELA':'D960;CL','GIARRE':'E013;CT','GIUGLIANO IN CAMPANIA':'E054;NA',
+  'GRAVINA IN PUGLIA':'E155;BA','GRUGLIASCO':'E221;TO','GUIDONIA MONTECELIO':'E263;RM',
+  'IGLESIAS':'E281;CA','IMOLA':'E289;BO','IVREA':'E379;TO','JESI':'E388;AN',
+  'LAINATE':'E414;MI','LANCIANO':'E435;CH','LAMEZIA TERME':'M208;CZ',
+  'LEGNAGO':'E514;VR','LEGNANO':'E514;MI','LENTINI':'E532;SR','LISSONE':'E617;MB',
+  'LOCRI':'D976;RC','LUGO':'E730;RA','MAGENTA':'E801;MI','MANDURIA':'E882;TA',
+  'MANFREDONIA':'E885;FG','MARCIANISE':'E932;CE','MARANO DI NAPOLI':'E906;NA',
+  'MARIGLIANO':'E955;NA','MARSALA':'E974;TP','MASSAFRA':'F030;TA',
+  'MAZARA DEL VALLO':'F061;TP','MELEGNANO':'F100;MI','MELITO DI NAPOLI':'F111;NA',
+  'MERCATO SAN SEVERINO':'F141;SA','MESTRE':'L736;VE','MISTERBIANCO':'F250;CT',
+  'MOLA DI BARI':'F280;BA','MOLFETTA':'F284;BA','MONDOVI':'F351;CN',
+  'MONOPOLI':'F376;BA','MONREALE':'F403;PA','MONSELICE':'F382;PD',
+  'MONTEBELLUNA':'F443;TV','MONTECATINI TERME':'F458;PT','MONTEROTONDO':'F611;RM',
+  'NICHELINO':'F889;TO','NOCERA INFERIORE':'F913;SA','NOLA':'F924;NA',
+  'NOTO':'F943;SR','NOVI LIGURE':'F965;AL','ORBASSANO':'G089;TO',
+  'PACHINO':'G211;SR','PALAGIANO':'G253;TA','PARABIAGO':'G324;MI',
+  'PATERNO':'G371;CT','PATERNÒ':'G371;CT','PERO':'G247;MI',
+  'PESCHIERA BORROMEO':'G488;MI','PIOLTELLO':'G686;MI','PIOMBINO':'G704;LI',
+  'POMEZIA':'G811;RM','PONTECAGNANO FAIANO':'G834;SA','PONTEDERA':'G846;PI',
+  'PORTICI':'G902;NA','POZZUOLI':'G964;NA','PUTIGNANO':'H096;BA',
+  'QUARTO':'H117;NA','RAPALLO':'H183;GE','RENDE':'H235;CS','RHO':'H264;MI',
+  'RIBERA':'H269;AG','RICCIONE':'H274;RN','RIVOLI':'H357;TO','ROZZANO':'H639;MI',
+  'RUVO DI PUGLIA':'H645;BA','SACILE':'H655;PN',
+  'SAN BENEDETTO DEL TRONTO':'H769;AP','SAN GIORGIO A CREMANO':'H892;NA',
+  'SAN GIOVANNI IN PERSICETO':'H917;BO','SAN GIUSEPPE VESUVIANO':'H931;NA',
+  'SAN GIULIANO MILANESE':'H882;MI','SAN SEVERO':'I158;FG',
+  'SANTA MARIA CAPUA VETERE':'I234;CE','SARNO':'I438;SA','SARONNO':'I441;VA',
+  'SCAFATI':'I483;SA','SENIGALLIA':'I608;AN','SESTO FIORENTINO':'I684;FI',
+  'SESTO SAN GIOVANNI':'I690;MI','SETTIMO TORINESE':'I703;TO',
+  'SOMMA VESUVIANA':'I820;NA','SORRENTO':'I862;NA','SPINEA':'I908;VE',
+  'TARQUINIA':'F494;VT','TERRACINA':'L120;LT','TIVOLI':'L182;RM',
+  'TORRE ANNUNZIATA':'L245;NA','TORRE DEL GRECO':'L259;NA','TRADATE':'L319;VA',
+  'TRANI':'L328;BT','TREZZO SULL ADDA':'L411;MI','TROPEA':'L452;VV',
+  'VENARIA REALE':'L727;TO','VENTIMIGLIA':'L740;IM','VIAREGGIO':'L833;LU',
+  'VILLABATE':'L916;PA','VILLAFRANCA DI VERONA':'L949;VR','VILLAROSA':'L988;EN',
+  'VILLARICCA':'L999;NA','VITTORIA':'M100;RG','VOGHERA':'M109;PV',
+  'VOLPIANO':'M120;TO','ZAGAROLO':'M141;RM','ZOLA PREDOSA':'M185;BO'
 }, _AL_COMUNI_CACHE);
 
 const _AL_STATI = {
@@ -5724,25 +5658,8 @@ function _alNorm(s) {
   return (s||'').toUpperCase().trim().normalize('NFD')
     .replace(/[\u0300-\u036f]/g,'').replace(/[.']/g,' ').replace(/-/g,' ').replace(/\s+/g,' ');
 }
-function _alPadL9(cod) { return String(cod).replace(/\s/g,'').padStart(9,'0'); }
-
-// Risolve il luogo rilascio doc: gestisce sigle motorizzazione, comuni, stati
-function _alRisolviLuogo(raw) {
-  if (!raw) return null;
-  const k = _alNorm(raw);
-  // 1. Alias motorizzazione
-  if (_AL_MOTO[k]) return _alCodiceComune(_AL_MOTO[k]);
-  // Ricerca parziale motorizzazione (es. "MIT-UCO" potrebbe arrivare come "MITUCO" o "MIT UCO")
-  for (const [mkey, mcity] of Object.entries(_AL_MOTO)) {
-    if (k.includes(mkey) || mkey.includes(k)) return _alCodiceComune(mcity);
-  }
-  // 2. Comune diretto
-  const com = _alCodiceComune(raw);
-  if (com) return com;
-  // 3. Stato estero
-  if (_AL_STATI[k]) return {cod: _alPadL9(_AL_STATI[k]), prov: null, isStato: true};
-  return null;
-}
+// Padding SPAZI A DESTRA a 9 char (codici catastali alfanumerici)
+function _alPadR9(cod) { return (cod||'').substring(0,9).padEnd(9,' '); }
 
 function _alCodiceStato(val) {
   if (!val) return '100000100';
@@ -5755,9 +5672,9 @@ function _alCodiceComune(val) {
   if (!val) return null;
   const k = _alNorm(val);
   const entry = _AL_COMUNI[k];
-  if (entry) { const p=entry.split(';'); return {cod:_alPadL9(p[0]),prov:p[1]}; }
+  if (entry) { const p=entry.split(';'); return {cod:_alPadR9(p[0]),prov:p[1]}; }
   for (const [key,val2] of Object.entries(_AL_COMUNI)) {
-    if (key===k||key.startsWith(k)||k.startsWith(key)) { const p=val2.split(';'); return {cod:_alPadL9(p[0]),prov:p[1]}; }
+    if (key===k||key.startsWith(k)||k.startsWith(key)) { const p=val2.split(';'); return {cod:_alPadR9(p[0]),prov:p[1]}; }
   }
   return null;
 }
@@ -5767,6 +5684,18 @@ function _alCodiceDoc(val) {
   if (_AL_DOCS[k]) return _AL_DOCS[k].trimEnd();
   for (const [key,cod] of Object.entries(_AL_DOCS)) { if (k.includes(key)||key.includes(k)) return cod.trimEnd(); }
   return k.substring(0,5);
+}
+function _alRisolviLuogo(raw) {
+  if (!raw) return null;
+  const k = _alNorm(raw);
+  if (_AL_MOTO[k]) return _alCodiceComune(_AL_MOTO[k]);
+  for (const [mkey,mcity] of Object.entries(_AL_MOTO)) {
+    if (k.includes(mkey)||mkey.includes(k)) return _alCodiceComune(mcity);
+  }
+  const com = _alCodiceComune(raw);
+  if (com) return com;
+  if (_AL_STATI[k]) return {cod:_alPadR9(_AL_STATI[k]),prov:null,isStato:true};
+  return null;
 }
 
 // ─── Popup comuni mancanti ────────────────────────────────────────────────────
@@ -5780,9 +5709,9 @@ function _alChiediCodiciMancanti(mancanti, onComplete) {
         📍 <strong>${m.nomeComune}</strong> <span style="color:#888;font-size:12px">${m.label}</span>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <input id="_alCod_${i}" placeholder="Codice ISTAT (es. 058091)"
-          style="flex:1;padding:9px 11px;border:1.5px solid #ccc;border-radius:8px;font-size:14px;font-family:monospace"
-          maxlength="9" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+        <input id="_alCod_${i}" placeholder="Codice catastale (es. H501)"
+          style="flex:1;padding:9px 11px;border:1.5px solid #ccc;border-radius:8px;font-size:14px;font-family:monospace;text-transform:uppercase"
+          maxlength="4">
         <input id="_alProv_${i}" placeholder="Prov"
           style="width:58px;padding:9px 11px;border:1.5px solid #ccc;border-radius:8px;font-size:14px;text-transform:uppercase"
           maxlength="2">
@@ -5792,8 +5721,10 @@ function _alChiediCodiciMancanti(mancanti, onComplete) {
     <div style="background:#fff;border-radius:16px;padding:24px;max-width:480px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.2)">
       <div style="font-size:17px;font-weight:700;margin-bottom:5px">⚠️ Comuni non trovati</div>
       <div style="font-size:13px;color:#666;margin-bottom:18px;line-height:1.5">
-        Inserisci il <strong>codice ISTAT</strong> e la <strong>sigla provincia</strong>.<br>
-        Cerca su <a href="https://alloggiatiweb.poliziadistato.it/portalealloggiati/tabelle.aspx" target="_blank" style="color:#1a73e8">Tabelle Alloggiati Web</a>.
+        Inserisci il <strong>codice catastale</strong> (es. H501 per Roma, D612 per Firenze)
+        e la <strong>sigla provincia</strong>.<br>
+        Cerca su <a href="https://alloggiatiweb.poliziadistato.it/portalealloggiati/tabelle.aspx" target="_blank" style="color:#1a73e8">Tabelle Alloggiati Web</a>
+        o <a href="https://www.agenziaentrate.gov.it/portale/web/guest/schede/istanze/richiesta-codice-fiscale-e-tessera-sanitaria/come-si-calcola-il-codice-fiscale" target="_blank" style="color:#1a73e8">Agenzia Entrate</a>.
         I codici vengono <strong>salvati</strong> per le prossime volte.
       </div>
       ${rows}
@@ -5818,9 +5749,9 @@ function _alConfermaComuni(n) {
   const ov=document.getElementById('_alComuneOv'); if(!ov) return;
   const mancanti=ov._mancanti;
   for (let i=0;i<n;i++) {
-    const cod  = (document.getElementById('_alCod_'+i)||{}).value.trim();
+    const cod  = (document.getElementById('_alCod_'+i)||{}).value.trim().toUpperCase();
     const prov = (document.getElementById('_alProv_'+i)||{}).value.trim().toUpperCase().substring(0,2);
-    if (cod.length >= 4) {
+    if (cod.length >= 2) {
       const nomeKey = _alNorm(mancanti[i].nomeComune);
       _AL_COMUNI[nomeKey] = cod+';'+(prov||'  ');
       _alSalvaComune(nomeKey, cod, prov||'  ');
@@ -5849,18 +5780,16 @@ function exportAlloggiati(scope='today') {
   }
   if (items.length === 0) { showToast('Nessun check-in da esportare', 'error'); return; }
 
-  // Fase 1: individua comuni mancanti (escluse sigle motorizzazione e stati esteri)
+  // Fase 1: individua comuni mancanti
   const comuniMancanti = [], visti = new Set();
   items.forEach(ci => {
     ci.guests.forEach((g, gIdx) => {
       const isIta = _alNorm(g.cittadinanza||'ITA').includes('ITA');
-      // Comune di nascita
       if (isIta && g.luogoNascita && !_alCodiceComune(g.luogoNascita)) {
         const k = _alNorm(g.luogoNascita);
         if (!visti.has('N:'+k)) { visti.add('N:'+k);
           comuniMancanti.push({nomeComune:g.luogoNascita, label:`nascita · ${cleanAl(g.cognome)} ${cleanAl(g.nome)}`}); }
       }
-      // Luogo rilascio doc (solo se non risolto da motorizzazione o stato)
       if (gIdx===0 && g.luogoRilascio && !_alRisolviLuogo(g.luogoRilascio)) {
         const k = _alNorm(g.luogoRilascio);
         if (!visti.has('R:'+k)) { visti.add('R:'+k);
@@ -5868,7 +5797,6 @@ function exportAlloggiati(scope='today') {
       }
     });
   });
-
   if (comuniMancanti.length > 0) {
     _alChiediCodiciMancanti(comuniMancanti, () => exportAlloggiati(scope));
     return;
@@ -5892,8 +5820,7 @@ function exportAlloggiati(scope='today') {
   let lines = [];
   items.forEach(ci => {
     const b = bookings.find(bk => bk.dbId === ci.preId);
-    const arrISO = ci.data;
-    const parISO = b ? new Date(b.e).toISOString().slice(0,10) : ci.data;
+    const arrISO = ci.data, parISO = b ? new Date(b.e).toISOString().slice(0,10) : ci.data;
 
     ci.guests.forEach((g, gIdx) => {
       const isCapo    = gIdx === 0;
@@ -5909,12 +5836,12 @@ function exportAlloggiati(scope='today') {
         const found = _alCodiceComune(g.luogoNascita);
         if (found) { comN=found.cod; provN=padR(found.prov,2); }
       }
-      const statoN = _alPadL9(_alCodiceStato(isIta?'ITA':(g.statoNascita||g.cittadinanza||'ITA')));
-      const cittad  = _alPadL9(_alCodiceStato(g.cittadinanza||'ITA'));
+      // Stato nascita e cittadinanza: codice numerico 9 char con zeri a sinistra
+      const statoN = _alCodiceStato(isIta?'ITA':(g.statoNascita||g.cittadinanza||'ITA')).padStart(9,'0');
+      const cittad  = _alCodiceStato(g.cittadinanza||'ITA').padStart(9,'0');
       const tipoDoc = isCapo ? padR(_alCodiceDoc(g.tipoDoc),5) : '     ';
       const numDoc  = isCapo ? padR(cleanAl(g.numDoc||''),20) : '                    ';
 
-      // Luogo rilascio: prova motorizzazione → comune → stato → spazi
       let luogoRil = '         ';
       if (isCapo && g.luogoRilascio) {
         const rl = _alRisolviLuogo(g.luogoRilascio);
