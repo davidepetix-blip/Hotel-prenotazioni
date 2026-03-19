@@ -88,6 +88,26 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 @keyframes syncPulse { 0%,100%{opacity:.3;transform:scale(.8)} 50%{opacity:1;transform:scale(1.3)} }
 .bg-sync-toast { position:fixed; bottom:72px; left:50%; transform:translateX(-50%); background:var(--accent); color:#fff; font-size:12px; font-weight:600; padding:7px 18px; border-radius:20px; opacity:0; pointer-events:none; transition:opacity .4s; z-index:999; white-space:nowrap; box-shadow:0 3px 12px rgba(0,0,0,.25); }
 .bg-sync-toast.show { opacity:1; }
+/* ── Log operazioni ── */
+#syncLog { position:fixed;bottom:0;left:0;right:0;height:0;background:#0f0f1a;color:#ccc;
+  font-family:'SF Mono',Consolas,monospace;font-size:10px;overflow:hidden;z-index:8888;
+  transition:height .25s ease;border-top:2px solid #4a86e8;display:flex;flex-direction:column; }
+#syncLog.open { height:200px; }
+#syncLogHeader { display:flex;align-items:center;justify-content:space-between;
+  padding:3px 10px;background:#080818;flex-shrink:0;border-bottom:1px solid #222; }
+#syncLogHeader span { font-size:10px;font-weight:700;color:#4a86e8;letter-spacing:.06em; }
+#syncLogEntries { flex:1;overflow-y:auto;padding:3px 8px 6px; }
+.sle { padding:1px 0;display:flex;gap:6px;line-height:1.4; }
+.sle .slt { color:#444;flex-shrink:0;font-size:9px;padding-top:1px; }
+.sle.ok  .slm { color:#4caf50; }
+.sle.err .slm { color:#f44336; }
+.sle.wrn .slm { color:#ff9800; }
+.sle.inf .slm { color:#4a86e8; }
+.sle.syn .slm { color:#ce93d8; }
+.sle.db  .slm { color:#80cbc4; }
+#syncLogBtn { position:fixed;bottom:0;right:60px;background:#080818;color:#4a86e8;
+  border:2px solid #4a86e8;border-bottom:none;font-size:9px;font-weight:700;
+  padding:2px 8px;cursor:pointer;z-index:8889;border-radius:4px 4px 0 0;letter-spacing:.05em; }
 
 /* ── BODY ── */
 .body { flex: 1; display: flex; overflow: hidden; }
@@ -702,7 +722,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.4</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.5</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -723,7 +743,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 18.4">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 18.5">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -963,6 +983,18 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 <!-- ══ TOAST ══ -->
 <div class="toast" id="toast"></div>
 <div class="bg-sync-toast" id="bgSyncToast"></div>
+<button id="syncLogBtn" onclick="toggleSyncLog()">📋 LOG</button>
+<div id="syncLog">
+  <div id="syncLogHeader" onclick="toggleSyncLog()">
+    <span>📋 SYNC LOG</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span id="syncLogCount" style="font-size:9px;color:#888">0 eventi</span>
+      <button onclick="clearSyncLog(event)">🗑 pulisci</button>
+      <button onclick="toggleSyncLog()">✕</button>
+    </div>
+  </div>
+  <div id="syncLogEntries"></div>
+</div>
 
 <!-- ══ ROOM STATE MODAL ══ -->
 <div class="rstate-overlay" id="rstateOverlay" onclick="rstateOverlayClick(event)">
@@ -2486,6 +2518,7 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
     if (isRecenteApp) {
       // Prenotazione recente da app: mantieni in attesa di aggiornamento JSON_ANNUALE
       console.log(`[SYNC] Protetta (recente, ${Math.round(etaMs/1000)}s fa): ${db.n} cam.${db.cameraName||db.r}`);
+      syncLog(`🛡 Protetta ${db.n} cam.${db.cameraName||db.r} (inserita ${Math.round(etaMs/1000)}s fa, attendo JSON)`, 'wrn');
       result.push(db);
       continue;
     }
@@ -2517,6 +2550,7 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
       } catch(e) { console.warn('[DB] Errore import batch:', e.message); }
     }
     console.log(`[DB] Importate ${total} nuove prenotazioni`);
+    syncLog(`✚ Importate ${total} nuove prenotazioni nel DB`, 'db');
   }
 
   // 3b. Aggiorna modificate (singole, sono poche)
@@ -2538,6 +2572,7 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
       console.warn('[CESTINO] Errore batch:', e.message);
     }
     console.log(`[CESTINO] ${toArchive.length} prenotazioni archiviate`);
+    syncLog(`🗑 ${toArchive.length} → CESTINO: ${toArchive.map(b=>b.n+' '+b.cameraName).join(', ')}`, 'wrn');
     showToast(
       `🗑 ${toArchive.length} prenotazion${toArchive.length === 1 ? 'e' : 'i'} nel Cestino`,
       'warn', 5000
@@ -2554,12 +2589,61 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
 // Legge solo il DB (1 chiamata API) e aggiorna l'UI se cambiato.
 // Non ri-legge il foglio Google → veloce e non invasivo.
 // ═══════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════
+// SYNC LOG — pannello debug operazioni
+// ═══════════════════════════════════════════════════════════════════
+let _logEntries = [];
+const MAX_LOG   = 200;
+
+function syncLog(msg, type='inf') {
+  const now  = new Date();
+  const time = now.toTimeString().slice(0,8);
+  _logEntries.unshift({ time, msg, type });
+  if (_logEntries.length > MAX_LOG) _logEntries.pop();
+
+  const el = document.getElementById('syncLogEntries');
+  if (el && document.getElementById('syncLog')?.classList.contains('open')) {
+    _renderLog();
+  }
+  // Aggiorna contatore sul bottone
+  const btn = document.getElementById('syncLogBtn');
+  if (btn) btn.textContent = `📋 LOG (${_logEntries.length})`;
+
+  // Errori mostrano anche un toast breve
+  if (type === 'err') showBgToast('❌ ' + msg.slice(0,60), 4000);
+}
+
+function _renderLog() {
+  const el = document.getElementById('syncLogEntries');
+  if (!el) return;
+  el.innerHTML = _logEntries.map(e =>
+    `<div class="sle ${e.type}"><span class="slt">${e.time}</span><span class="slm">${e.msg}</span></div>`
+  ).join('');
+}
+
+function toggleSyncLog() {
+  const log = document.getElementById('syncLog');
+  if (!log) return;
+  const wasOpen = log.classList.contains('open');
+  log.classList.toggle('open');
+  if (!wasOpen) _renderLog();
+}
+
+function clearSyncLog(e) {
+  e && e.stopPropagation();
+  _logEntries = [];
+  const el = document.getElementById('syncLogEntries');
+  if (el) el.innerHTML = '';
+  const btn = document.getElementById('syncLogBtn');
+  if (btn) btn.textContent = '📋 LOG (0)';
+}
 let _bgSyncTimer   = null;
 let _bgSyncRunning = false;
 
 function startBgSync() {
   if (_bgSyncTimer) clearInterval(_bgSyncTimer);
-  _bgSyncTimer = setInterval(bgSync, 5 * 60 * 1000);
+  _bgSyncTimer = setInterval(bgSync, 2 * 60 * 1000); // 2 min durante debug (sarà 5min a regime)
 }
 function stopBgSync() {
   if (_bgSyncTimer) { clearInterval(_bgSyncTimer); _bgSyncTimer = null; }
@@ -2581,6 +2665,7 @@ async function bgSync() {
   if (!accessToken || _bgSyncRunning) return;
   _bgSyncRunning = true;
   setSyncPulsing(true);
+  syncLog('⟳ bgSync avviato', 'syn');
   try {
     if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
     const dbFresh = await readDatabase();
@@ -2597,6 +2682,7 @@ async function bgSync() {
       }
     }
     const rimossi = bookings.filter(b => b.dbId && !active.find(d => d.dbId === b.dbId)).length;
+    syncLog(`DB: ${active.length} prenotazioni attive, rimossi ${rimossi}`, 'db');
 
     if (changed || rimossi > 0) {
       bookings = mergeMultiMonthBookings(active);
@@ -2668,6 +2754,7 @@ async function loadFromSheets() {
     let sheetBookings = [];
 
     if (sheetEntry) {
+      syncLog('📖 Lettura JSON_ANNUALE da foglio…', 'syn');
       showLoading('Lettura JSON_ANNUALE…');
       try {
         sheetBookings = await readJSONAnnuale(sheetEntry.sheetId);
@@ -2686,6 +2773,7 @@ async function loadFromSheets() {
 
     // Step 2+3: sincronizza con DB e aggiorna
     if (DATABASE_SHEET_ID) {
+      syncLog('Sincronizzazione DB…', 'syn');
       showLoading('Sincronizzazione database…');
       await ensureDbHeaders();
       sheetBookings = await syncWithDatabase(sheetBookings, true);
@@ -2871,7 +2959,7 @@ async function writeBookingToSheet(b) {
   }
 
   // Segnala modifica allo script Apps Script → rigenera JSON_ANNUALE immediatamente
-  // Funziona sia per prenotazioni singolo mese che multi-mese
+  syncLog(`✏ Prenotazione scritta: ${b.n} cam.${b.cameraName} ${b.s?.toLocaleDateString('it-IT')||''}→${b.e?.toLocaleDateString('it-IT')||''} (${fragments.length} mesi)`, 'ok');
   segnalaModificaAdAppsScript(annualSheets[0]?.sheetId).catch(e =>
     console.warn('[segnaModifica] non critico:', e.message)
   );
@@ -2924,6 +3012,7 @@ async function segnalaModificaAdAppsScript(sheetId) {
 
   try {
     showToast('🔄 Aggiornamento calendario in corso…', 'info');
+    syncLog(`📡 Chiamata Web App: ${url.slice(0,60)}…`, 'syn');
     const anno = new Date().getFullYear();
     const url  = `${webAppUrl}?anno=${anno}&ts=${Date.now()}`;
     // no-cors: Apps Script non supporta CORS, ma la chiamata arriva comunque
@@ -2933,6 +3022,7 @@ async function segnalaModificaAdAppsScript(sheetId) {
       try {
         await loadAnnualSheets();
         render();
+        syncLog('✓ JSON_ANNUALE rigenerato, calendario aggiornato', 'ok');
         showToast('✓ Calendario aggiornato', 'success');
       } catch(e2) {
         console.warn('[WebApp] reload fallito:', e2.message);
