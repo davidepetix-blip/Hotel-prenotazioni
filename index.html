@@ -702,7 +702,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.2</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.3</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -723,13 +723,14 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 18.2">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 18.3">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
     <div class="mlabel" id="mlabel">GEN 2026</div>
     <button onclick="changeMonth(1)">›</button>
   </div>
+  <button class="btn btn-icon" onclick="rigenera()" title="Rigenera calendario (chiama Web App Apps Script)">📡</button>
   <button class="btn btn-icon sync-btn" onclick="forceSync()" title="Leggi da JSON_2026 (1 chiamata API)">
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
@@ -1417,6 +1418,30 @@ async function onLoginSuccess() {
     }).catch(()=>{});
   }
   await loadFromSheets();
+}
+
+// Rigenerazione manuale JSON_ANNUALE via Web App Apps Script
+async function rigenera() {
+  const cfg = loadBillSettings();
+  const url = (cfg.webAppUrl||'').trim();
+  if (!url) {
+    showToast('URL Web App non configurato — vai in ⚙ Tariffe', 'error');
+    return;
+  }
+  showToast('📡 Rigenerazione in corso…', 'info');
+  try {
+    await fetch(`${url}?anno=${new Date().getFullYear()}&ts=${Date.now()}`, {method:'GET',mode:'no-cors'});
+    showToast('⏳ Attendi 5 secondi poi il calendario si aggiorna…', 'info');
+    setTimeout(async () => {
+      try {
+        await loadAnnualSheets();
+        render();
+        showToast('✓ Calendario rigenerato', 'success');
+      } catch(e2) { showToast('⚠ Ricarica la pagina manualmente', 'warning'); }
+    }, 5000);
+  } catch(e) {
+    showToast('❌ Errore Web App: ' + e.message, 'error');
+  }
 }
 
 function forceSync() {
@@ -2858,16 +2883,10 @@ async function writeBookingToSheet(b) {
 // ═══════════════════════════════════════════════════════════════════
 
 async function triggerAppsScriptUpdate(sName, cameraName, spreadsheetId) {
-  const colIdx = sheetColumnMap[sName]?.[cameraName];
-  if (!colIdx) { console.warn(`updateJson: colonna non trovata per "${cameraName}" in "${sName}"`); return; }
-  const sid = spreadsheetId || annualSheets.find(e => e.sheetId)?.sheetId || '';
-  if (!sid) return;
-  try {
-    await updateJsonRow45(sName, colIdx, cameraName, sid);
-    console.log(`✓ JSON riga 45: "${sName}" col ${colIdx}`);
-  } catch(err) {
-    console.warn('updateJson fallito (non critico):', err.message);
-  }
+  // La rigenerazione del JSON_ANNUALE è delegata interamente alla Web App Apps Script.
+  // Non scriviamo più la riga 45 direttamente — lo fa lo script con logica corretta.
+  // Questa funzione è ora un no-op: la chiamata alla Web App avviene in writeBookingToSheet.
+  console.log(`[triggerAppsScriptUpdate] skip riga 45 per "${cameraName}" in "${sName}" — gestito da WebApp`);
 }
 
 /**
@@ -2878,20 +2897,37 @@ async function triggerAppsScriptUpdate(sName, cameraName, spreadsheetId) {
  */
 async function segnalaModificaAdAppsScript(sheetId) {
   const cfg = loadBillSettings();
-  const webAppUrl = cfg.webAppUrl || '';
+  const webAppUrl = (cfg.webAppUrl || '').trim();
+
   if (!webAppUrl) {
-    console.log('[WebApp] URL non configurato — usa trigger 5min o rigenera manualmente');
+    // Nessun URL configurato: mostra avviso una sola volta per sessione
+    if (!window._webAppWarnShown) {
+      window._webAppWarnShown = true;
+      showToast('⚠ Configura URL Web App in ⚙ Tariffe per aggiornamento immediato del calendario', 'warning');
+    }
+    console.warn('[WebApp] URL non configurato');
     return;
   }
+
   try {
-    // Chiama la Web App Apps Script che rigenera JSON_ANNUALE immediatamente
+    showToast('🔄 Aggiornamento calendario in corso…', 'info');
     const anno = new Date().getFullYear();
     const url  = `${webAppUrl}?anno=${anno}&ts=${Date.now()}`;
-    // Usa no-cors perché Apps Script Web App non supporta CORS con credenziali
-    const resp = await fetch(url, { method:'GET', mode:'no-cors' });
-    console.log('[WebApp] Chiamata inviata — JSON_ANNUALE si rigenera in pochi secondi');
+    // no-cors: Apps Script non supporta CORS, ma la chiamata arriva comunque
+    await fetch(url, { method:'GET', mode:'no-cors' });
+    // Aspetta 3s poi ricarica le prenotazioni dal JSON_ANNUALE aggiornato
+    setTimeout(async () => {
+      try {
+        await loadAnnualSheets();
+        render();
+        showToast('✓ Calendario aggiornato', 'success');
+      } catch(e2) {
+        console.warn('[WebApp] reload fallito:', e2.message);
+      }
+    }, 4000);
   } catch(e) {
-    console.warn('[WebApp] chiamata fallita (non critico):', e.message);
+    console.warn('[WebApp] chiamata fallita:', e.message);
+    showToast('⚠ Aggiornamento calendario fallito — ricarica manualmente con 🔄', 'warning');
   }
 }
 
