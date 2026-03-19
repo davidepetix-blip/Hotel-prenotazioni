@@ -722,7 +722,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">2026-03-19 · build 18.6.1</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">2026-03-19 · build 18.6.2</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -743,7 +743,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="2026-03-19 · build 18.6.1">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="2026-03-19 · build 18.6.2">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -5458,13 +5458,125 @@ async function saveCiCheckin() {
 // Formato fisso: record da 93 caratteri (versione 3)
 // Ref: specifiche tecniche Polizia di Stato – tracciato record tipo 20
 // ─── TABELLE ALLOGGIATI WEB ───────────────────────────────────────────────────
-// Codici ISTAT comuni italiani  formato: 'NOME': 'CODICE;PROV'
-// (padding a 9 con zeri a sinistra applicato al momento dell'uso)
+// Cache comuni inseriti manualmente dall'utente (salvati in localStorage)
 const _AL_COMUNI_CACHE = JSON.parse(localStorage.getItem('_alComuni')||'{}');
 function _alSalvaComune(nomeKey, cod, prov) {
   _AL_COMUNI_CACHE[nomeKey] = cod+';'+prov;
   try { localStorage.setItem('_alComuni', JSON.stringify(_AL_COMUNI_CACHE)); } catch(e){}
 }
+
+// Alias sigle Motorizzazione Civile → comune capoluogo
+// Gemini legge dal documento il timbro della motorizzazione (es. "MIT-UCO" = Udine,
+// "M.C.TC" = Torino, ecc.) — li mappiamo al comune corretto
+const _AL_MOTO = {
+  // Formato MIT-XXX o MCTC-XXX o varianti
+  'MIT UCO':'UDINE','MITUCO':'UDINE','MIT-UCO':'UDINE',
+  'MIT RM':'ROMA','MITRM':'ROMA','MIT-RM':'ROMA',
+  'MIT MI':'MILANO','MITMI':'MILANO','MIT-MI':'MILANO',
+  'MIT TO':'TORINO','MITTO':'TORINO','MIT-TO':'TORINO',
+  'MIT NA':'NAPOLI','MITNA':'NAPOLI','MIT-NA':'NAPOLI',
+  'MIT FI':'FIRENZE','MITFI':'FIRENZE','MIT-FI':'FIRENZE',
+  'MIT BO':'BOLOGNA','MITBO':'BOLOGNA','MIT-BO':'BOLOGNA',
+  'MIT GE':'GENOVA','MITGE':'GENOVA','MIT-GE':'GENOVA',
+  'MIT VE':'VENEZIA','MITVE':'VENEZIA','MIT-VE':'VENEZIA',
+  'MIT PA':'PALERMO','MITPA':'PALERMO','MIT-PA':'PALERMO',
+  'MIT BA':'BARI','MITBA':'BARI','MIT-BA':'BARI',
+  'MIT CT':'CATANIA','MITCT':'CATANIA','MIT-CT':'CATANIA',
+  'MIT CA':'CAGLIARI','MITCA':'CAGLIARI','MIT-CA':'CAGLIARI',
+  'MIT AN':'ANCONA','MITAN':'ANCONA','MIT-AN':'ANCONA',
+  'MIT BG':'BERGAMO','MITBG':'BERGAMO','MIT-BG':'BERGAMO',
+  'MIT BS':'BRESCIA','MITBS':'BRESCIA','MIT-BS':'BRESCIA',
+  'MIT RC':'REGGIO CALABRIA','MITRC':'REGGIO CALABRIA','MIT-RC':'REGGIO CALABRIA',
+  'MIT PD':'PADOVA','MITPD':'PADOVA','MIT-PD':'PADOVA',
+  'MIT PR':'PARMA','MITPR':'PARMA','MIT-PR':'PARMA',
+  'MIT TS':'TRIESTE','MITTS':'TRIESTE','MIT-TS':'TRIESTE',
+  'MIT UD':'UDINE','MITUD':'UDINE','MIT-UD':'UDINE',
+  'MIT VR':'VERONA','MITVR':'VERONA','MIT-VR':'VERONA',
+  'MIT PG':'PERUGIA','MITPG':'PERUGIA','MIT-PG':'PERUGIA',
+  'MIT SA':'SALERNO','MITSA':'SALERNO','MIT-SA':'SALERNO',
+  'MIT TA':'TARANTO','MITTA':'TARANTO','MIT-TA':'TARANTO',
+  'MIT ME':'MESSINA','MITME':'MESSINA','MIT-ME':'MESSINA',
+  'MIT FE':'FERRARA','MITFE':'FERRARA','MIT-FE':'FERRARA',
+  'MIT RA':'RAVENNA','MITRA':'RAVENNA','MIT-RA':'RAVENNA',
+  'MIT RE':'REGGIO EMILIA','MITRE':'REGGIO EMILIA','MIT-RE':'REGGIO EMILIA',
+  'MIT MO':'MODENA','MITMO':'MODENA','MIT-MO':'MODENA',
+  'MIT PC':'PIACENZA','MITPC':'PIACENZA','MIT-PC':'PIACENZA',
+  'MIT PE':'PESCARA','MITPE':'PESCARA','MIT-PE':'PESCARA',
+  'MIT AQ':'LAQUILA','MITAQ':'LAQUILA','MIT-AQ':'LAQUILA',
+  'MIT CS':'COSENZA','MITCS':'COSENZA','MIT-CS':'COSENZA',
+  'MIT CZ':'CATANZARO','MITCZ':'CATANZARO','MIT-CZ':'CATANZARO',
+  'MIT SS':'SASSARI','MITSS':'SASSARI','MIT-SS':'SASSARI',
+  'MIT LU':'LUCCA','MITLU':'LUCCA','MIT-LU':'LUCCA',
+  'MIT AR':'AREZZO','MITAR':'AREZZO','MIT-AR':'AREZZO',
+  'MIT SI':'SIENA','MITSI':'SIENA','MIT-SI':'SIENA',
+  'MIT PI':'PISA','MITPI':'PISA','MIT-PI':'PISA',
+  'MIT PT':'PISTOIA','MITPT':'PISTOIA','MIT-PT':'PISTOIA',
+  'MIT PO':'PRATO','MITPO':'PRATO','MIT-PO':'PRATO',
+  'MIT GR':'GROSSETO','MITGR':'GROSSETO','MIT-GR':'GROSSETO',
+  'MIT LI':'LIVORNO','MITLI':'LIVORNO','MIT-LI':'LIVORNO',
+  'MIT MS':'MASSA','MITMS':'MASSA','MIT-MS':'MASSA',
+  'MIT SP':'LA SPEZIA','MITSP':'LA SPEZIA','MIT-SP':'LA SPEZIA',
+  'MIT SV':'SAVONA','MITSV':'SAVONA','MIT-SV':'SAVONA',
+  'MIT IM':'IMPERIA','MITIM':'IMPERIA','MIT-IM':'IMPERIA',
+  'MIT AO':'AOSTA','MITAO':'AOSTA','MIT-AO':'AOSTA',
+  'MIT NO':'NOVARA','MITNO':'NOVARA','MIT-NO':'NOVARA',
+  'MIT AL':'ALESSANDRIA','MITAL':'ALESSANDRIA','MIT-AL':'ALESSANDRIA',
+  'MIT AT':'ASTI','MITAT':'ASTI','MIT-AT':'ASTI',
+  'MIT CN':'CUNEO','MITCN':'CUNEO','MIT-CN':'CUNEO',
+  'MIT VC':'VERCELLI','MITVC':'VERCELLI','MIT-VC':'VERCELLI',
+  'MIT BI':'BIELLA','MITBI':'BIELLA','MIT-BI':'BIELLA',
+  'MIT VB':'VERBANIA','MITVB':'VERBANIA','MIT-VB':'VERBANIA',
+  'MIT VA':'VARESE','MITVA':'VARESE','MIT-VA':'VARESE',
+  'MIT CO':'COMO','MITCO':'COMO','MIT-CO':'COMO',
+  'MIT LC':'LECCO','MITLC':'LECCO','MIT-LC':'LECCO',
+  'MIT SO':'SONDRIO','MITSO':'SONDRIO','MIT-SO':'SONDRIO',
+  'MIT MB':'MONZA','ITMB':'MONZA','MIT-MB':'MONZA',
+  'MIT LO':'LODI','MITLO':'LODI','MIT-LO':'LODI',
+  'MIT CR':'CREMONA','MITCR':'CREMONA','MIT-CR':'CREMONA',
+  'MIT MN':'MANTOVA','ITMN':'MANTOVA','MIT-MN':'MANTOVA',
+  'MIT PV':'PAVIA','MITPV':'PAVIA','MIT-PV':'PAVIA',
+  'MIT BL':'BELLUNO','MITBL':'BELLUNO','MIT-BL':'BELLUNO',
+  'MIT TV':'TREVISO','MITTV':'TREVISO','MIT-TV':'TREVISO',
+  'MIT VI':'VICENZA','MITVI':'VICENZA','MIT-VI':'VICENZA',
+  'MIT RO':'ROVIGO','MITRO':'ROVIGO','MIT-RO':'ROVIGO',
+  'MIT VR':'VERONA','MITVR':'VERONA','MIT-VR':'VERONA',
+  'MIT PN':'PORDENONE','MITPN':'PORDENONE','MIT-PN':'PORDENONE',
+  'MIT GO':'GORIZIA','MITGO':'GORIZIA','MIT-GO':'GORIZIA',
+  'MIT BZ':'BOLZANO','MITBZ':'BOLZANO','MIT-BZ':'BOLZANO',
+  'MIT TN':'TRENTO','MITTN':'TRENTO','MIT-TN':'TRENTO',
+  'MIT RI':'RIETI','MITRI':'RIETI','MIT-RI':'RIETI',
+  'MIT VT':'VITERBO','MITVT':'VITERBO','MIT-VT':'VITERBO',
+  'MIT FR':'FROSINONE','MITFR':'FROSINONE','MIT-FR':'FROSINONE',
+  'MIT LT':'LATINA','MITLT':'LATINA','MIT-LT':'LATINA',
+  'MIT CB':'CAMPOBASSO','MITCB':'CAMPOBASSO','MIT-CB':'CAMPOBASSO',
+  'MIT IS':'ISERNIA','MITIS':'ISERNIA','MIT-IS':'ISERNIA',
+  'MIT CE':'CASERTA','MITCE':'CASERTA','MIT-CE':'CASERTA',
+  'MIT BN':'BENEVENTO','MITBN':'BENEVENTO','MIT-BN':'BENEVENTO',
+  'MIT AV':'AVELLINO','MITAV':'AVELLINO','MIT-AV':'AVELLINO',
+  'MIT SA':'SALERNO','MITSA':'SALERNO',
+  'MIT FG':'FOGGIA','MITFG':'FOGGIA','MIT-FG':'FOGGIA',
+  'MIT BR':'BRINDISI','MITBR':'BRINDISI','MIT-BR':'BRINDISI',
+  'MIT LE':'LECCE','MITLE':'LECCE','MIT-LE':'LECCE',
+  'MIT MT':'MATERA','MITMT':'MATERA','MIT-MT':'MATERA',
+  'MIT PZ':'POTENZA','MITPZ':'POTENZA','MIT-PZ':'POTENZA',
+  'MIT KR':'CROTONE','MITKR':'CROTONE','MIT-KR':'CROTONE',
+  'MIT VV':'VIBO VALENTIA','MITVV':'VIBO VALENTIA','MIT-VV':'VIBO VALENTIA',
+  'MIT AG':'AGRIGENTO','MITAG':'AGRIGENTO','MIT-AG':'AGRIGENTO',
+  'MIT CL':'CALTANISSETTA','MITCL':'CALTANISSETTA','MIT-CL':'CALTANISSETTA',
+  'MIT EN':'ENNA','MITEN':'ENNA','MIT-EN':'ENNA',
+  'MIT RG':'RAGUSA','MITRG':'RAGUSA','MIT-RG':'RAGUSA',
+  'MIT SR':'SIRACUSA','MITSR':'SIRACUSA','MIT-SR':'SIRACUSA',
+  'MIT TP':'TRAPANI','MITTP':'TRAPANI','MIT-TP':'TRAPANI',
+  'MIT NU':'NUORO','MITNU':'NUORO','MIT-NU':'NUORO',
+  'MIT OR':'ORISTANO','MITOR':'ORISTANO','MIT-OR':'ORISTANO',
+  // Sigle MCTC (vecchio formato)
+  'MCTC':'ROMA','M.C.T.C.':'ROMA','MCTC RM':'ROMA',
+  // Motorizzazione Centrale
+  'MOTORIZZAZIONE CENTRALE':'ROMA','MOT CENTRALE':'ROMA',
+  'MOTORIZZAZIONE CIVILE':'ROMA',
+};
+
+// Codici ISTAT comuni (numero senza padding — _alPadL9 aggiunge zeri a sinistra)
 const _AL_COMUNI = Object.assign({
   'AGRIGENTO':'84001;AG','ALESSANDRIA':'6003;AL','ANCONA':'42002;AN','AOSTA':'7003;AO',
   'AREZZO':'51002;AR','ASCOLI PICENO':'44003;AP','ASTI':'5005;AT','AVELLINO':'64005;AV',
@@ -5608,15 +5720,30 @@ const _AL_DOCS = {
   'PERM':'PERM ','PERMESSO DI SOGGIORNO':'PERM ',
 };
 
-// Normalizza stringa per confronto
 function _alNorm(s) {
   return (s||'').toUpperCase().trim().normalize('NFD')
-    .replace(/[\u0300-\u036f]/g,'').replace(/'/g,' ').replace(/\s+/g,' ');
+    .replace(/[\u0300-\u036f]/g,'').replace(/[.']/g,' ').replace(/-/g,' ').replace(/\s+/g,' ');
 }
-// Padding con zeri a sinistra (per codici ISTAT comuni/stati)
-function _alPadL9(cod) {
-  return String(cod).replace(/\s/g,'').padStart(9,'0');
+function _alPadL9(cod) { return String(cod).replace(/\s/g,'').padStart(9,'0'); }
+
+// Risolve il luogo rilascio doc: gestisce sigle motorizzazione, comuni, stati
+function _alRisolviLuogo(raw) {
+  if (!raw) return null;
+  const k = _alNorm(raw);
+  // 1. Alias motorizzazione
+  if (_AL_MOTO[k]) return _alCodiceComune(_AL_MOTO[k]);
+  // Ricerca parziale motorizzazione (es. "MIT-UCO" potrebbe arrivare come "MITUCO" o "MIT UCO")
+  for (const [mkey, mcity] of Object.entries(_AL_MOTO)) {
+    if (k.includes(mkey) || mkey.includes(k)) return _alCodiceComune(mcity);
+  }
+  // 2. Comune diretto
+  const com = _alCodiceComune(raw);
+  if (com) return com;
+  // 3. Stato estero
+  if (_AL_STATI[k]) return {cod: _alPadL9(_AL_STATI[k]), prov: null, isStato: true};
+  return null;
 }
+
 function _alCodiceStato(val) {
   if (!val) return '100000100';
   const k = _alNorm(val);
@@ -5630,9 +5757,7 @@ function _alCodiceComune(val) {
   const entry = _AL_COMUNI[k];
   if (entry) { const p=entry.split(';'); return {cod:_alPadL9(p[0]),prov:p[1]}; }
   for (const [key,val2] of Object.entries(_AL_COMUNI)) {
-    if (key===k||key.startsWith(k)||k.startsWith(key)) {
-      const p=val2.split(';'); return {cod:_alPadL9(p[0]),prov:p[1]};
-    }
+    if (key===k||key.startsWith(k)||k.startsWith(key)) { const p=val2.split(';'); return {cod:_alPadL9(p[0]),prov:p[1]}; }
   }
   return null;
 }
@@ -5667,9 +5792,9 @@ function _alChiediCodiciMancanti(mancanti, onComplete) {
     <div style="background:#fff;border-radius:16px;padding:24px;max-width:480px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.2)">
       <div style="font-size:17px;font-weight:700;margin-bottom:5px">⚠️ Comuni non trovati</div>
       <div style="font-size:13px;color:#666;margin-bottom:18px;line-height:1.5">
-        Inserisci il <strong>codice ISTAT</strong> (6 cifre) e la <strong>sigla provincia</strong> per ogni comune.<br>
-        Cercali su <a href="https://alloggiatiweb.poliziadistato.it/portalealloggiati/tabelle.aspx" target="_blank" style="color:#1a73e8">Tabelle Alloggiati Web</a>.
-        I codici saranno <strong>salvati</strong> per le prossime volte.
+        Inserisci il <strong>codice ISTAT</strong> e la <strong>sigla provincia</strong>.<br>
+        Cerca su <a href="https://alloggiatiweb.poliziadistato.it/portalealloggiati/tabelle.aspx" target="_blank" style="color:#1a73e8">Tabelle Alloggiati Web</a>.
+        I codici vengono <strong>salvati</strong> per le prossime volte.
       </div>
       ${rows}
       <div style="display:flex;gap:10px;margin-top:6px">
@@ -5686,15 +5811,12 @@ function _alChiediCodiciMancanti(mancanti, onComplete) {
   ov._onComplete = onComplete;
   ov._mancanti   = mancanti;
   document.body.appendChild(ov);
-  // Focus sul primo campo
   setTimeout(()=>{ const f=document.getElementById('_alCod_0'); if(f)f.focus(); },100);
 }
-function _alAnnullaComuni() {
-  const ov = document.getElementById('_alComuneOv'); if(ov) ov.remove();
-}
+function _alAnnullaComuni() { const ov=document.getElementById('_alComuneOv'); if(ov)ov.remove(); }
 function _alConfermaComuni(n) {
-  const ov = document.getElementById('_alComuneOv'); if(!ov) return;
-  const mancanti = ov._mancanti;
+  const ov=document.getElementById('_alComuneOv'); if(!ov) return;
+  const mancanti=ov._mancanti;
   for (let i=0;i<n;i++) {
     const cod  = (document.getElementById('_alCod_'+i)||{}).value.trim();
     const prov = (document.getElementById('_alProv_'+i)||{}).value.trim().toUpperCase().substring(0,2);
@@ -5727,23 +5849,22 @@ function exportAlloggiati(scope='today') {
   }
   if (items.length === 0) { showToast('Nessun check-in da esportare', 'error'); return; }
 
-  // Fase 1: individua comuni mancanti prima di generare
+  // Fase 1: individua comuni mancanti (escluse sigle motorizzazione e stati esteri)
   const comuniMancanti = [], visti = new Set();
   items.forEach(ci => {
     ci.guests.forEach((g, gIdx) => {
       const isIta = _alNorm(g.cittadinanza||'ITA').includes('ITA');
+      // Comune di nascita
       if (isIta && g.luogoNascita && !_alCodiceComune(g.luogoNascita)) {
         const k = _alNorm(g.luogoNascita);
         if (!visti.has('N:'+k)) { visti.add('N:'+k);
           comuniMancanti.push({nomeComune:g.luogoNascita, label:`nascita · ${cleanAl(g.cognome)} ${cleanAl(g.nome)}`}); }
       }
-      if (gIdx===0 && g.luogoRilascio) {
-        const lr = _alNorm(g.luogoRilascio);
-        // è un comune italiano mancante se non è già in stati e non in comuni
-        if (!_alCodiceComune(g.luogoRilascio) && !_AL_STATI[lr]) {
-          if (!visti.has('R:'+lr)) { visti.add('R:'+lr);
-            comuniMancanti.push({nomeComune:g.luogoRilascio, label:`rilascio doc · ${cleanAl(g.cognome)} ${cleanAl(g.nome)}`}); }
-        }
+      // Luogo rilascio doc (solo se non risolto da motorizzazione o stato)
+      if (gIdx===0 && g.luogoRilascio && !_alRisolviLuogo(g.luogoRilascio)) {
+        const k = _alNorm(g.luogoRilascio);
+        if (!visti.has('R:'+k)) { visti.add('R:'+k);
+          comuniMancanti.push({nomeComune:g.luogoRilascio, label:`rilascio doc · ${cleanAl(g.cognome)} ${cleanAl(g.nome)}`}); }
       }
     });
   });
@@ -5783,23 +5904,21 @@ function exportAlloggiati(scope='today') {
       const dataN     = toFmt(g.dataNascita||'');
       const isIta     = _alNorm(g.cittadinanza||'ITA').includes('ITA');
 
-      // Comune nascita (9 cifre con padding zeri a sinistra) + provincia (2)
       let comN = '         ', provN = '  ';
       if (isIta && g.luogoNascita) {
         const found = _alCodiceComune(g.luogoNascita);
-        if (found) { comN = found.cod; provN = padR(found.prov,2); }
+        if (found) { comN=found.cod; provN=padR(found.prov,2); }
       }
-
       const statoN = _alPadL9(_alCodiceStato(isIta?'ITA':(g.statoNascita||g.cittadinanza||'ITA')));
       const cittad  = _alPadL9(_alCodiceStato(g.cittadinanza||'ITA'));
       const tipoDoc = isCapo ? padR(_alCodiceDoc(g.tipoDoc),5) : '     ';
       const numDoc  = isCapo ? padR(cleanAl(g.numDoc||''),20) : '                    ';
 
+      // Luogo rilascio: prova motorizzazione → comune → stato → spazi
       let luogoRil = '         ';
       if (isCapo && g.luogoRilascio) {
-        const foundLR = _alCodiceComune(g.luogoRilascio);
-        if (foundLR) { luogoRil = foundLR.cod; }
-        else { luogoRil = _alPadL9(_alCodiceStato(g.luogoRilascio)); }
+        const rl = _alRisolviLuogo(g.luogoRilascio);
+        if (rl) luogoRil = rl.cod;
       }
 
       const record = tipoAllog+toFmt(arrISO)+nGiorni(arrISO,parISO)+
@@ -5807,7 +5926,7 @@ function exportAlloggiati(scope='today') {
                      comN+provN+statoN+cittad+
                      tipoDoc+numDoc+luogoRil;
 
-      if (record.length!==168) console.warn('[Alloggiati] ⚠ len='+record.length+' '+g.cognome, JSON.stringify(record));
+      if (record.length!==168) console.warn('[Alloggiati] ⚠ len='+record.length+' '+g.cognome);
       lines.push(record);
     });
   });
@@ -5824,7 +5943,11 @@ function exportAlloggiati(scope='today') {
 // Helper testo Alloggiati Web
 function cleanAl(s) { return (s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 '.,\-]/g,''); }
 function padR(s, n) { const t=(s||'').substring(0,n); return t+' '.repeat(Math.max(0,n-t.length)); }
-function pad(s, n)  { const t=(s||'').substring(0,n); return '0'.repeat(Math.max(0,n-t.length))+t; }// ═══════════════════════════════════════════════════════════════════
+function pad(s, n)  { const t=(s||'').substring(0,n); return '0'.repeat(Math.max(0,n-t.length))+t; }
+
+
+
+// ═══════════════════════════════════════════════════════════════════
 // OCR DOCUMENTO — Estrazione dati con Claude Vision
 // ═══════════════════════════════════════════════════════════════════
 
