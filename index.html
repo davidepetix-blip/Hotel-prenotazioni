@@ -722,7 +722,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">2026-03-19 · build 18.5.2</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">2026-03-19 · build 18.6.0</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -743,7 +743,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="2026-03-19 · build 18.5.2">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="2026-03-19 · build 18.6.0">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -5457,123 +5457,261 @@ async function saveCiCheckin() {
 // ── Generazione file Alloggiati Web ──
 // Formato fisso: record da 93 caratteri (versione 3)
 // Ref: specifiche tecniche Polizia di Stato – tracciato record tipo 20
+// ─── TABELLE ALLOGGIATI WEB ───────────────────────────────────────────────────
+// Codici ISTAT comuni italiani  formato: 'NOME': 'CODICE9;PROV'
+// Cache runtime per comuni inseriti manualmente dall'utente
+const _AL_COMUNI_CACHE = JSON.parse(localStorage.getItem('_alComuni')||'{}');
+function _alSalvaComune(nome, cod, prov) {
+  const k = nome.toUpperCase().trim();
+  _AL_COMUNI_CACHE[k] = cod+';'+prov;
+  try { localStorage.setItem('_alComuni', JSON.stringify(_AL_COMUNI_CACHE)); } catch(e){}
+}
+
+const _AL_COMUNI = Object.assign({
+  'AGRIGENTO':'084001;AG','ALESSANDRIA':'006003;AL','ANCONA':'042002;AN','AOSTA':'007003;AO',
+  'AREZZO':'051002;AR','ASCOLI PICENO':'044003;AP','ASTI':'005005;AT','AVELLINO':'064005;AV',
+  'BARI':'072006;BA','BARLETTA':'110002;BT','BELLUNO':'025004;BL','BENEVENTO':'062008;BN',
+  'BERGAMO':'016024;BG','BIELLA':'096004;BI','BOLOGNA':'037006;BO','BOLZANO':'021008;BZ',
+  'BRESCIA':'017029;BS','BRINDISI':'074002;BR','CAGLIARI':'092009;CA','CALTANISSETTA':'085003;CL',
+  'CAMPOBASSO':'070006;CB','CASERTA':'061014;CE','CATANIA':'087015;CT','CATANZARO':'079023;CZ',
+  'CHIETI':'069021;CH','COMO':'013075;CO','COSENZA':'078048;CS','CREMONA':'019036;CR',
+  'CROTONE':'101009;KR','CUNEO':'004078;CN','ENNA':'086010;EN','FERMO':'109008;FM',
+  'FERRARA':'038008;FE','FIRENZE':'048017;FI','FOGGIA':'071024;FG','FORLI':'040013;FC',
+  'FROSINONE':'060038;FR','GENOVA':'010025;GE','GORIZIA':'031009;GO','GROSSETO':'053012;GR',
+  'IMPERIA':'008033;IM','ISERNIA':'094021;IS','LA SPEZIA':'011015;SP',"L'AQUILA":'066049;AQ',
+  'LAQUILA':'066049;AQ','LATINA':'059012;LT','LECCE':'075036;LE','LECCO':'097042;LC',
+  'LIVORNO':'049009;LI','LODI':'098023;LO','LUCCA':'046014;LU','MACERATA':'043022;MC',
+  'MANTOVA':'020030;MN','MASSA':'045011;MS','MATERA':'077014;MT','MESSINA':'083048;ME',
+  'MILANO':'015146;MI','MODENA':'036023;MO','MONZA':'108033;MB','NAPOLI':'063049;NA',
+  'NOVARA':'003130;NO','NUORO':'091057;NU','ORISTANO':'095032;OR','PADOVA':'028060;PD',
+  'PALERMO':'082053;PA','PARMA':'034027;PR','PAVIA':'018110;PV','PERUGIA':'054036;PG',
+  'PESARO':'041037;PU','PESCARA':'068028;PE','PIACENZA':'033045;PC','PISA':'050026;PI',
+  'PISTOIA':'047014;PT','PORDENONE':'093033;PN','POTENZA':'076063;PZ','PRATO':'100003;PO',
+  'RAGUSA':'088009;RG','RAVENNA':'039015;RA','REGGIO CALABRIA':'080063;RC',
+  'REGGIO EMILIA':'035033;RE','RIETI':'057059;RI','RIMINI':'099028;RN','ROMA':'058091;RM',
+  'ROME':'058091;RM','ROVIGO':'029036;RO','SALERNO':'065116;SA','SASSARI':'090061;SS',
+  'SAVONA':'009061;SV','SIENA':'052032;SI','SIRACUSA':'089018;SR','SONDRIO':'014058;SO',
+  'TARANTO':'073027;TA','TERAMO':'067046;TE','TERNI':'055024;TR','TORINO':'001272;TO',
+  'TRAPANI':'081021;TP','TRENTO':'022205;TN','TREVISO':'026027;TV','TRIESTE':'032006;TS',
+  'UDINE':'030129;UD','VARESE':'012133;VA','VENEZIA':'027042;VE','VERBANIA':'103068;VB',
+  'VERCELLI':'002158;VC','VERONA':'023091;VR','VIBO VALENTIA':'102046;VV',
+  'VICENZA':'024116;VI','VITERBO':'056059;VT',
+  'ACIREALE':'087001;CT','AFRAGOLA':'063001;NA','ALBA':'004003;CN','ALBANO LAZIALE':'058001;RM',
+  'ALBENGA':'009002;SV','ALCAMO':'081001;TP','ALGHERO':'090003;SS','ALTAMURA':'072003;BA',
+  'ANDRIA':'110003;BT','ANZIO':'058006;RM','APRILIA':'059002;LT','ARCORE':'108003;MB',
+  'ARDEA':'058007;RM','ARICCIA':'058008;RM','ARONA':'003009;NO','ARZANO':'063005;NA',
+  'ASSISI':'054004;PG','AVERSA':'061004;CE','AVEZZANO':'066010;AQ','AVOLA':'089002;SR',
+  'BAGHERIA':'082006;PA','BATTIPAGLIA':'065013;SA','BOLLATE':'015018;MI',
+  'BORGOMANERO':'003022;NO','BRUGHERIO':'108009;MB','BUSTO ARSIZIO':'012023;VA',
+  'CAIVANO':'063010;NA','CALTAGIRONE':'087008;CT','CAMPI BISENZIO':'048005;FI',
+  'CANTU':'013043;CO','CAPANNORI':'046005;LU','CARATE BRIANZA':'108013;MB',
+  'CASALNUOVO DI NAPOLI':'063018;NA','CASORIA':'063020;NA','CASSINO':'060015;FR',
+  'CASTEL VOLTURNO':'061022;CE','CASTELLAMMARE DI STABIA':'063026;NA',
+  'CASTELVETRANO':'081005;TP','CAVA DE TIRRENI':'065027;SA',
+  'CERNUSCO SUL NAVIGLIO':'015059;MI','CESANO MADERNO':'108019;MB',
+  'CESENA':'040007;FC','CHIERI':'001078;TO','CINISELLO BALSAMO':'015065;MI',
+  'CITTA DI CASTELLO':'054013;PG','CIVITANOVA MARCHE':'043013;MC',
+  'CIVITAVECCHIA':'058019;RM','COLLEGNO':'001088;TO','COLLEFERRO':'058021;RM',
+  'CONEGLIANO':'026016;TV','CORSICO':'015079;MI','DESIO':'108024;MB',
+  'EMPOLI':'048015;FI','ERCOLANO':'063034;NA','ERBA':'013090;CO',
+  'FABRIANO':'042018;AN','FAENZA':'039011;RA','FALCONARA MARITTIMA':'042019;AN',
+  'FANO':'041018;PU','FASANO':'074008;BR','FIDENZA':'034014;PR',
+  'FOLIGNO':'054022;PG','FORMIA':'059009;LT','FRATTAMAGGIORE':'063039;NA',
+  'GALLARATE':'012065;VA','GELA':'085009;CL','GIARRE':'087019;CT',
+  'GIUGLIANO IN CAMPANIA':'063041;NA','GRAVINA IN PUGLIA':'072024;BA',
+  'GRUGLIASCO':'001131;TO','GUIDONIA MONTECELIO':'058044;RM',
+  'IGLESIAS':'092033;CA','IMOLA':'037032;BO','IVREA':'001131;TO',
+  'JESI':'042022;AN','LAINATE':'015121;MI','LANCIANO':'069036;CH',
+  'LAMEZIA TERME':'079060;CZ','LEGNAGO':'023043;VR','LEGNANO':'015122;MI',
+  'LENTINI':'089011;SR','LISSONE':'108030;MB','LOCRI':'080038;RC',
+  'LUGO':'039019;RA','MAGENTA':'015134;MI','MANDURIA':'073018;TA',
+  'MANFREDONIA':'071029;FG','MARCIANISE':'061034;CE','MARANO DI NAPOLI':'063043;NA',
+  'MARIGLIANO':'063044;NA','MARSALA':'081011;TP','MASSAFRA':'073020;TA',
+  'MAZARA DEL VALLO':'081012;TP','MELEGNANO':'015142;MI','MELITO DI NAPOLI':'063045;NA',
+  'MERCATO SAN SEVERINO':'065058;SA','MESTRE':'027042;VE','MISTERBIANCO':'087032;CT',
+  'MOLA DI BARI':'072032;BA','MOLFETTA':'072033;BA','MONDOVI':'004127;CN',
+  'MONOPOLI':'072034;BA','MONREALE':'082045;PA','MONSELICE':'028055;PD',
+  'MONTEBELLUNA':'026036;TV','MONTECATINI TERME':'047011;PT',
+  'MONTEROTONDO':'058060;RM','NICHELINO':'001163;TO','NOCERA INFERIORE':'065068;SA',
+  'NOLA':'063049;NA','NOTO':'089016;SR','NOVI LIGURE':'006118;AL',
+  'ORBASSANO':'001173;TO','PACHINO':'089017;SR','PALAGIANO':'073025;TA',
+  'PARABIAGO':'015168;MI','PATERNO':'087040;CT','PATERNÒ':'087040;CT',
+  'PERO':'015180;MI','PESCHIERA BORROMEO':'015182;MI','PIOLTELLO':'015183;MI',
+  'PIOMBINO':'049015;LI','POMEZIA':'058074;RM','PONTECAGNANO FAIANO':'065090;SA',
+  'PONTEDERA':'050026;PI','PORTICI':'063058;NA','POZZUOLI':'063059;NA',
+  'PUTIGNANO':'072036;BA','QUARTO':'063061;NA','RAPALLO':'010045;GE',
+  'RENDE':'078105;CS','RHO':'015195;MI','RIBERA':'084033;AG',
+  'RICCIONE':'099025;RN','RIVOLI':'001219;TO','ROZZANO':'015200;MI',
+  'RUVO DI PUGLIA':'072040;BA','SACILE':'093039;PN',
+  'SAN BENEDETTO DEL TRONTO':'044052;AP','SAN GIORGIO A CREMANO':'063064;NA',
+  'SAN GIOVANNI IN PERSICETO':'037050;BO','SAN GIUSEPPE VESUVIANO':'063066;NA',
+  'SAN GIULIANO MILANESE':'015206;MI','SAN SEVERO':'071050;FG',
+  'SANTA MARIA CAPUA VETERE':'061078;CE','SARNO':'065102;SA',
+  'SARONNO':'012120;VA','SCAFATI':'065104;SA','SENIGALLIA':'042044;AN',
+  'SESTO FIORENTINO':'048041;FI','SESTO SAN GIOVANNI':'015209;MI',
+  'SETTIMO TORINESE':'001260;TO','SOMMA VESUVIANA':'063074;NA',
+  'SORRENTO':'063075;NA','SPINEA':'027038;VE','TARQUINIA':'056053;VT',
+  'TERRACINA':'059031;LT','TIVOLI':'058103;RM','TORRE ANNUNZIATA':'063079;NA',
+  'TORRE DEL GRECO':'063080;NA','TRADATE':'012141;VA','TRANI':'110009;BT',
+  'TREZZO SULL ADDA':'015219;MI','TROPEA':'102043;VV','VARESE':'012133;VA',
+  'VENARIA REALE':'001295;TO','VENTIMIGLIA':'008063;IM','VIAREGGIO':'046033;LU',
+  'VILLABATE':'082077;PA','VILLAFRANCA DI VERONA':'023093;VR',
+  'VILLAROSA':'086019;EN','VILLARICCA':'063085;NA','VITTORIA':'088012;RG',
+  'VOGHERA':'018178;PV','VOLPIANO':'001314;TO','ZAGAROLO':'058115;RM',
+  'ZOLA PREDOSA':'037069;BO'
+}, _AL_COMUNI_CACHE);
+
+const _AL_STATI = {
+  'ITA':'100000100','ITALIA':'100000100','ITALY':'100000100',
+  'ALB':'100000003','ALBANIA':'100000003','AND':'100000005','ANDORRA':'100000005',
+  'ARG':'100000008','ARGENTINA':'100000008','AUS':'100000010','AUSTRALIA':'100000010',
+  'AUT':'100000011','AUSTRIA':'100000011','BEL':'100000014','BELGIO':'100000014','BELGIUM':'100000014',
+  'BLR':'100000033','BIELORUSSIA':'100000033','BRA':'100000016','BRASILE':'100000016','BRAZIL':'100000016',
+  'BUL':'100000018','BULGARIA':'100000018','CAN':'100000019','CANADA':'100000019',
+  'CHE':'100000022','SVIZZERA':'100000022','SWITZERLAND':'100000022',
+  'CHN':'100000027','CINA':'100000027','CHINA':'100000027',
+  'COL':'100000032','COLOMBIA':'100000032','CRO':'100000118','CROAZIA':'100000118','CROATIA':'100000118',
+  'CUB':'100000034','CUBA':'100000034','CZE':'100000036','CECHIA':'100000036','REPUBBLICA CECA':'100000036',
+  'DEU':'100000083','GERMANIA':'100000083','GERMANY':'100000083',
+  'DNK':'100000038','DANIMARCA':'100000038','DENMARK':'100000038',
+  'EGY':'100000040','EGITTO':'100000040','EGYPT':'100000040',
+  'ESP':'100000070','SPAGNA':'100000070','SPAIN':'100000070',
+  'EST':'100000044','ESTONIA':'100000044','ETH':'100000046','ETIOPIA':'100000046',
+  'FIN':'100000048','FINLANDIA':'100000048','FINLAND':'100000048',
+  'FRA':'100000050','FRANCIA':'100000050','FRANCE':'100000050',
+  'GBR':'100000219','REGNO UNITO':'100000219','UK':'100000219','GRAN BRETAGNA':'100000219',
+  'GRC':'100000059','GRECIA':'100000059','GREECE':'100000059',
+  'HUN':'100000063','UNGHERIA':'100000063','HUNGARY':'100000063',
+  'IND':'100000065','INDIA':'100000065','IRL':'100000067','IRLANDA':'100000067','IRELAND':'100000067',
+  'IRN':'100000068','IRAN':'100000068','IRQ':'100000069','IRAQ':'100000069',
+  'ISL':'100000066','ISLANDA':'100000066','ISR':'100000071','ISRAELE':'100000071','ISRAEL':'100000071',
+  'JPN':'100000074','GIAPPONE':'100000074','JAPAN':'100000074',
+  'KAZ':'100000249','KAZAKISTAN':'100000249','KOR':'100000177','COREA DEL SUD':'100000177',
+  'MAR':'100000096','MAROCCO':'100000096','MOROCCO':'100000096',
+  'MDA':'100000253','MOLDOVA':'100000253','MOLDAVIA':'100000253',
+  'MEX':'100000101','MESSICO':'100000101','MEXICO':'100000101',
+  'MLT':'100000092','MALTA':'100000092','MNE':'100000258','MONTENEGRO':'100000258',
+  'NGA':'100000112','NIGERIA':'100000112',
+  'NLD':'100000108','PAESI BASSI':'100000108','OLANDA':'100000108','NETHERLANDS':'100000108',
+  'NOR':'100000110','NORVEGIA':'100000110','NORWAY':'100000110',
+  'PAK':'100000122','PAKISTAN':'100000122','PER':'100000128','PERU':'100000128',
+  'PHL':'100000132','FILIPPINE':'100000132','PHILIPPINES':'100000132',
+  'POL':'100000135','POLONIA':'100000135','POLAND':'100000135',
+  'PRT':'100000136','PORTOGALLO':'100000136','PORTUGAL':'100000136',
+  'ROU':'100000143','ROMANIA':'100000143','RUS':'100000151','RUSSIA':'100000151',
+  'SAU':'100000154','ARABIA SAUDITA':'100000154','SEN':'100000161','SENEGAL':'100000161',
+  'SER':'100000257','SERBIA':'100000257','SGP':'100000163','SINGAPORE':'100000163',
+  'SLO':'100000167','SLOVACCHIA':'100000167','SVN':'100000168','SLOVENIA':'100000168',
+  'SWE':'100000172','SVEZIA':'100000172','SWEDEN':'100000172',
+  'THA':'100000179','TAILANDIA':'100000179','TUN':'100000212','TUNISIA':'100000212',
+  'TUR':'100000213','TURCHIA':'100000213','TURKEY':'100000213',
+  'UKR':'100000222','UCRAINA':'100000222','UKRAINE':'100000222',
+  'USA':'100000223','STATI UNITI':'100000223','UNITED STATES':'100000223','US':'100000223',
+  'VEN':'100000226','VENEZUELA':'100000226','VNM':'100000229','VIETNAM':'100000229',
+  'ZAF':'100000239','SUDAFRICA':'100000239','SOUTH AFRICA':'100000239',
+};
+
+const _AL_DOCS = {
+  'IDENT':'IDENT','CARTA DI IDENTITA':'IDENT','CARTA IDENTITA':'IDENT','CI':'IDENT','C.I.':'IDENT',
+  'PASS':'PASS ','PASSAPORTO':'PASS ','PASSPORT':'PASS ',
+  'PATEN':'PATEN','PATENTE':'PATEN','PATENTE DI GUIDA':'PATEN',
+  'PERM':'PERM ','PERMESSO DI SOGGIORNO':'PERM ',
+};
+
+function _alNorm(s) {
+  return (s||'').toUpperCase().trim().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'').replace(/'/g,' ').replace(/\s+/g,' ');
+}
+function _alCodiceStato(val) {
+  if (!val) return '100000100';
+  const k = _alNorm(val);
+  if (_AL_STATI[k]) return _AL_STATI[k];
+  for (const [key,cod] of Object.entries(_AL_STATI)) { if (k.includes(key)||key.includes(k)) return cod; }
+  return '100000100';
+}
+function _alCodiceComune(val) {
+  if (!val) return null;
+  const k = _alNorm(val);
+  const entry = _AL_COMUNI[k];
+  if (entry) { const p=entry.split(';'); return {cod:p[0],prov:p[1]}; }
+  for (const [key,val2] of Object.entries(_AL_COMUNI)) {
+    if (key===k||key.startsWith(k)||k.startsWith(key)) { const p=val2.split(';'); return {cod:p[0],prov:p[1]}; }
+  }
+  return null;
+}
+function _alCodiceDoc(val) {
+  if (!val) return 'IDENT';
+  const k = _alNorm(val);
+  if (_AL_DOCS[k]) return _AL_DOCS[k].trimEnd();
+  for (const [key,cod] of Object.entries(_AL_DOCS)) { if (k.includes(key)||key.includes(k)) return cod.trimEnd(); }
+  return k.substring(0,5);
+}
+
+// ─── Popup comuni mancanti ────────────────────────────────────────────────────
+// Mostra un overlay che chiede il codice ISTAT per ogni comune non trovato,
+// poi richiama la generazione del file con i codici inseriti.
+function _alChiediCodiciMancanti(mancanti, onComplete) {
+  // mancanti = [{nomeComune, label}]  label = "per COGNOME NOME (nascita/rilascio)"
+  const ov = document.createElement('div');
+  ov.id = '_alComuneOv';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  const rows = mancanti.map((m,i) => `
+    <div style="margin-bottom:14px">
+      <div style="font-size:13px;color:#555;margin-bottom:4px">
+        📍 <strong>${m.nomeComune}</strong> <span style="color:#888">${m.label}</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="_alCod_${i}" placeholder="Codice ISTAT (es. 058091)"
+          style="flex:1;padding:8px 10px;border:1.5px solid #ccc;border-radius:8px;font-size:14px;font-family:monospace"
+          maxlength="9" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+        <input id="_alProv_${i}" placeholder="Prov (es. RM)"
+          style="width:60px;padding:8px 10px;border:1.5px solid #ccc;border-radius:8px;font-size:14px;text-transform:uppercase"
+          maxlength="2">
+      </div>
+    </div>`).join('');
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:16px;padding:24px;max-width:480px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <div style="font-size:17px;font-weight:700;margin-bottom:6px">⚠️ Comuni non trovati nel lookup</div>
+      <div style="font-size:13px;color:#666;margin-bottom:18px">
+        Inserisci il codice ISTAT a 9 cifre e la sigla provincia per ogni comune.<br>
+        Puoi trovarlo su <a href="https://alloggiatiweb.poliziadistato.it/portalealloggiati/tabelle.aspx" target="_blank" style="color:#1a73e8">tabelle Alloggiati Web</a> o su <a href="https://www.istat.it/it/archivio/6789" target="_blank" style="color:#1a73e8">ISTAT</a>.
+        I codici inseriti verranno <strong>salvati</strong> per le prossime volte.
+      </div>
+      ${rows}
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button onclick="_alAnnullaComuni()" style="flex:1;padding:10px;border:1.5px solid #ccc;background:#fff;border-radius:8px;cursor:pointer;font-size:14px">Annulla</button>
+        <button onclick="_alConfermaComuni(${mancanti.length})" style="flex:1;padding:10px;background:#1a73e8;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600">✓ Genera file</button>
+      </div>
+    </div>`;
+  ov._onComplete = onComplete;
+  ov._mancanti   = mancanti;
+  document.body.appendChild(ov);
+}
+function _alAnnullaComuni() {
+  const ov = document.getElementById('_alComuneOv');
+  if (ov) ov.remove();
+}
+function _alConfermaComuni(n) {
+  const ov = document.getElementById('_alComuneOv');
+  if (!ov) return;
+  const mancanti = ov._mancanti;
+  for (let i=0;i<n;i++) {
+    const cod  = (document.getElementById('_alCod_'+i)||{}).value.trim();
+    const prov = (document.getElementById('_alProv_'+i)||{}).value.trim().toUpperCase();
+    if (cod.length >= 6) {
+      const codPad = cod.padStart(9,'0');
+      const nomeKey = _alNorm(mancanti[i].nomeComune);
+      _AL_COMUNI[nomeKey] = codPad+';'+(prov||'  ');
+      _alSalvaComune(nomeKey, codPad, prov||'  ');
+    }
+  }
+  ov.remove();
+  if (ov._onComplete) ov._onComplete();
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function exportAlloggiati(scope='today') {
-  // ─────────────────────────────────────────────────────────────────────────
-  // TRACCIATO UFFICIALE — Manuale WS_ALLOGGIATI Rev.01 24/01/2022
-  // 168 caratteri dati + CR+LF tra righe (tranne dopo l'ultima) = 170 per riga
-  //
-  // Pos  0- 1  (2)  Tipo Alloggiato       codice tabella (es. "20")
-  // Pos  2-11  (10) Data Arrivo           gg/mm/aaaa
-  // Pos 12-13  (2)  Num. Giorni           "01"-"30"
-  // Pos 14-63  (50) Cognome
-  // Pos 64-93  (30) Nome
-  // Pos 94-94  (1)  Sesso                 "1"=M  "2"=F
-  // Pos 95-104 (10) Data Nascita          gg/mm/aaaa
-  // Pos 105-113(9)  Comune Nascita        codice tabella comuni (spazi se estero)
-  // Pos 114-115(2)  Provincia Nascita     sigla (spazi se estero)
-  // Pos 116-124(9)  Stato Nascita         codice tabella stati
-  // Pos 125-133(9)  Cittadinanza          codice tabella stati
-  // Pos 134-138(5)  Tipo Documento        codice tabella documenti (blank se familiare)
-  // Pos 139-158(20) Numero Documento      (blank se familiare)
-  // Pos 159-167(9)  Luogo Rilascio Doc    codice comuni o stati (blank se familiare)
-  // TOTALE = 168
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // Lookup codici stati — i più comuni (fonte tabella Alloggiati Web)
-  const STATI = {
-    'ITA':'100000100','ITALIA':'100000100',
-    'ALB':'100000003','ALBANIA':'100000003',
-    'DEU':'100000083','GERMANIA':'100000083','GERMANY':'100000083',
-    'FRA':'100000050','FRANCIA':'100000050','FRANCE':'100000050',
-    'GBR':'100000219','REGNO UNITO':'100000219','UK':'100000219',
-    'USA':'100000223','STATI UNITI':'100000223',
-    'ESP':'100000070','SPAGNA':'100000070','SPAIN':'100000070',
-    'CHN':'100000027','CINA':'100000027','CHINA':'100000027',
-    'RUS':'100000151','RUSSIA':'100000151',
-    'ROM':'100000143','ROMANIA':'100000143',
-    'MAR':'100000096','MAROCCO':'100000096',
-    'BRA':'100000016','BRASILE':'100000016','BRAZIL':'100000016',
-    'ARG':'100000008','ARGENTINA':'100000008',
-    'POL':'100000135','POLONIA':'100000135','POLAND':'100000135',
-    'UKR':'100000222','UCRAINA':'100000222','UKRAINE':'100000222',
-    'TUN':'100000212','TUNISIA':'100000212',
-    'SEN':'100000161','SENEGAL':'100000161',
-    'PHL':'100000132','FILIPPINE':'100000132','PHILIPPINES':'100000132',
-    'IND':'100000065','INDIA':'100000065',
-    'EGY':'100000040','EGITTO':'100000040','EGYPT':'100000040',
-    'NLD':'100000108','PAESI BASSI':'100000108','OLANDA':'100000108',
-    'BEL':'100000014','BELGIO':'100000014','BELGIUM':'100000014',
-    'AUT':'100000011','AUSTRIA':'100000011',
-    'CHE':'100000022','SVIZZERA':'100000022','SWITZERLAND':'100000022',
-    'PRT':'100000136','PORTOGALLO':'100000136','PORTUGAL':'100000136',
-    'GRC':'100000059','GRECIA':'100000059','GREECE':'100000059',
-    'TUR':'100000213','TURCHIA':'100000213','TURKEY':'100000213',
-    'JPN':'100000074','GIAPPONE':'100000074','JAPAN':'100000074',
-    'KOR':'100000177','COREA':'100000177','KOREA':'100000177',
-    'CAN':'100000019','CANADA':'100000019',
-    'AUS':'100000010','AUSTRALIA':'100000010',
-    'MEX':'100000101','MESSICO':'100000101','MEXICO':'100000101',
-    'COL':'100000032','COLOMBIA':'100000032',
-    'NGA':'100000112','NIGERIA':'100000112',
-  };
-
-  // Lookup codici documenti
-  const DOCS = {
-    'IDENT':'IDENT','CARTA DI IDENTITA':'IDENT','CARTA IDENTITA':'IDENT',
-    'CI':'IDENT','C.I.':'IDENT','ID':'IDENT',
-    'PASS':'PASS','PASSAPORTO':'PASS','PASSPORT':'PASS',
-    'PATEN':'PATEN','PATENTE':'PATEN','DRIVING LICENSE':'PATEN',
-    'PERM':'PERM','PERMESSO DI SOGGIORNO':'PERM',
-  };
-
-  const codiceStato = val => {
-    if (!val) return '100000100'; // default Italia
-    const k = val.toUpperCase().trim();
-    return STATI[k] || '100000100';
-  };
-
-  const codiceDoc = val => {
-    if (!val) return 'IDENT';
-    const k = val.toUpperCase().trim();
-    // cerca match diretto o parziale
-    if (DOCS[k]) return DOCS[k];
-    for (const [key, cod] of Object.entries(DOCS)) {
-      if (k.includes(key) || key.includes(k)) return cod;
-    }
-    return padR(k, 5); // usa valore grezzo troncato a 5
-  };
-
-  // Data ISO YYYY-MM-DD → gg/mm/aaaa (con slash, formato ufficiale)
-  const toGGMMAAAA = s => {
-    if (!s) return '          ';
-    const clean = s.replace(/-/g,'').replace(/\//g,'');
-    if (clean.length !== 8) return '          ';
-    let gg, mm, aaaa;
-    if (/^(19|20)\d{6}$/.test(clean)) {
-      // YYYYMMDD → inverti
-      aaaa = clean.slice(0,4); mm = clean.slice(4,6); gg = clean.slice(6,8);
-    } else {
-      // GGMMAAAA
-      gg = clean.slice(0,2); mm = clean.slice(2,4); aaaa = clean.slice(4,8);
-    }
-    return `${gg}/${mm}/${aaaa}`; // 10 caratteri con slash
-  };
-
-  // Calcola giorni di permanenza tra arrivo e partenza (max 30, min 1)
-  const calcolaGiorni = (arrISO, parISO) => {
-    try {
-      const a = new Date(arrISO); const p = new Date(parISO);
-      const g = Math.round((p - a) / 86400000);
-      return String(Math.min(Math.max(g, 1), 30)).padStart(2, '0');
-    } catch { return '01'; }
-  };
-
-  // Sesso: M→1, F→2
-  const codSesso = s => {
-    const v = (s||'M').toUpperCase().charAt(0);
-    return v === 'F' ? '2' : '1';
-  };
-
+  // TRACCIATO UFFICIALE — Manuale WS_ALLOGGIATI Rev.01 24/01/2022 — 168 char + CRLF
   const today = new Date().toISOString().slice(0,10);
   let items;
   if (scope === 'today') {
@@ -5588,94 +5726,101 @@ function exportAlloggiati(scope='today') {
              ci.data.includes(q);
     });
   }
-
   if (items.length === 0) { showToast('Nessun check-in da esportare', 'error'); return; }
 
-  let lines = [];
+  // Fase 1: scopri comuni mancanti prima di generare
+  const comuniMancanti = [];
+  const visti = new Set();
+  items.forEach(ci => {
+    ci.guests.forEach((g, gIdx) => {
+      const cittVal = _alNorm(g.cittadinanza||'ITA');
+      const isIta   = cittVal.includes('ITA')||cittVal.includes('ITAL');
+      if (isIta && g.luogoNascita && !_alCodiceComune(g.luogoNascita)) {
+        const k = _alNorm(g.luogoNascita);
+        if (!visti.has('N:'+k)) { visti.add('N:'+k);
+          comuniMancanti.push({nomeComune:g.luogoNascita, label:`nascita di ${cleanAl(g.cognome)} ${cleanAl(g.nome)}`}); }
+      }
+      if (gIdx===0 && g.luogoRilascio && !_alCodiceComune(g.luogoRilascio) && !_alCodiceStato(g.luogoRilascio).startsWith('1000')) {
+        // potrebbe essere un comune italiano non trovato
+        const k = _alNorm(g.luogoRilascio);
+        if (!visti.has('R:'+k)) { visti.add('R:'+k);
+          comuniMancanti.push({nomeComune:g.luogoRilascio, label:`rilascio doc di ${cleanAl(g.cognome)} ${cleanAl(g.nome)}`}); }
+      }
+    });
+  });
 
+  // Se ci sono comuni mancanti, mostra popup e riprendi dopo
+  if (comuniMancanti.length > 0) {
+    _alChiediCodiciMancanti(comuniMancanti, () => exportAlloggiati(scope));
+    return;
+  }
+
+  // Fase 2: genera il file
+  const toFmt = s => {
+    if (!s) return '          ';
+    const c = s.replace(/-/g,'').replace(/\//g,'');
+    if (c.length!==8) return '          ';
+    let gg,mm,aaaa;
+    if (/^(19|20)\d{6}$/.test(c)) { aaaa=c.slice(0,4);mm=c.slice(4,6);gg=c.slice(6,8); }
+    else { gg=c.slice(0,2);mm=c.slice(2,4);aaaa=c.slice(4,8); }
+    return `${gg}/${mm}/${aaaa}`;
+  };
+  const nGiorni = (a,p) => {
+    try { const g=Math.round((new Date(p)-new Date(a))/86400000); return String(Math.min(Math.max(g,1),30)).padStart(2,'0'); }
+    catch { return '01'; }
+  };
+
+  let lines = [];
   items.forEach(ci => {
     const b = bookings.find(bk => bk.dbId === ci.preId);
-    const dataArrISO  = ci.data;
-    const dataPartISO = b ? new Date(b.e).toISOString().slice(0,10) : ci.data;
-
-    const dataArrFmt  = toGGMMAAAA(dataArrISO);   // gg/mm/aaaa (10)
-    const numGiorni   = calcolaGiorni(dataArrISO, dataPartISO); // 2 cifre
+    const arrISO = ci.data;
+    const parISO = b ? new Date(b.e).toISOString().slice(0,10) : ci.data;
 
     ci.guests.forEach((g, gIdx) => {
-      const isCapo = gIdx === 0; // capofamiglia/ospite singolo = tipo 20, altri = 21
-
-      // Tipo alloggiato: 20=ospite singolo/capofamiglia, 21=familiare/accompagnatore
+      const isCapo    = gIdx === 0;
       const tipoAllog = isCapo ? '20' : '21';
+      const cognome   = padR(cleanAl(g.cognome), 50);
+      const nome      = padR(cleanAl(g.nome), 30);
+      const sesso     = (_alNorm(g.sesso||'M').charAt(0)==='F') ? '2' : '1';
+      const dataN     = toFmt(g.dataNascita||'');
+      const cittVal   = _alNorm(g.cittadinanza||'ITA');
+      const isIta     = cittVal.includes('ITA')||cittVal.includes('ITAL');
 
-      // Cognome (50) e Nome (30)
-      const cognome = padR(cleanAl(g.cognome), 50);
-      const nome    = padR(cleanAl(g.nome), 30);
+      let comN = '         ', provN = '  ';
+      if (isIta && g.luogoNascita) {
+        const found = _alCodiceComune(g.luogoNascita);
+        if (found) { comN=padR(found.cod,9); provN=padR(found.prov,2); }
+      }
+      const statoN = padR(_alCodiceStato(isIta?'ITA':(g.statoNascita||g.cittadinanza||'ITA')),9);
+      const cittad  = padR(_alCodiceStato(g.cittadinanza||'ITA'),9);
+      const tipoDoc = isCapo ? padR(_alCodiceDoc(g.tipoDoc),5) : '     ';
+      const numDoc  = isCapo ? padR(cleanAl(g.numDoc||''),20) : '                    ';
 
-      // Sesso: 1=M, 2=F
-      const sesso = codSesso(g.sesso);
-
-      // Data nascita gg/mm/aaaa (10)
-      const dataNasc = toGGMMAAAA(g.dataNascita || '');
-
-      // Comune nascita (9) — codice tabella, spazi se nato all'estero
-      // Se il campo g.codComuneNascita è già un codice numerico lo usa,
-      // altrimenti lascia spazi (da compilare manualmente o con lookup futuro)
-      const comN = g.codComuneNascita
-        ? padR(g.codComuneNascita, 9)
-        : '         '; // 9 spazi — nato all'estero o codice non disponibile
-
-      // Provincia nascita (2) — spazi se estero
-      const provN = g.codComuneNascita
-        ? padR((g.provNascita||'').toUpperCase(), 2)
-        : '  ';
-
-      // Stato nascita (9) — codice numerico
-      const statoN = padR(codiceStato(g.statoNascita || g.cittadinanza || 'ITA'), 9);
-
-      // Cittadinanza (9) — codice numerico
-      const cittad = padR(codiceStato(g.cittadinanza || 'ITA'), 9);
-
-      // Documento (solo per capofamiglia/ospite singolo)
-      const tipoDoc = isCapo ? padR(codiceDoc(g.tipoDoc), 5) : '     ';
-      const numDoc  = isCapo ? padR(cleanAl(g.numDoc||''), 20) : '                    ';
-
-      // Luogo rilascio doc (9) — codice comune o stato
       let luogoRil = '         ';
       if (isCapo && g.luogoRilascio) {
-        // Se è un nome di comune italiano usa spazi (il codice andrebbe cercato),
-        // se è uno stato estero usa il codice stato
-        const lr = g.luogoRilascio.toUpperCase().trim();
-        if (STATI[lr]) {
-          luogoRil = padR(STATI[lr], 9);
-        } else if (g.codLuogoRilascio) {
-          luogoRil = padR(g.codLuogoRilascio, 9);
-        } else {
-          luogoRil = '         '; // comune italiano: codice non disponibile
-        }
+        const foundLR = _alCodiceComune(g.luogoRilascio);
+        if (foundLR) { luogoRil = padR(foundLR.cod,9); }
+        else { luogoRil = padR(_alCodiceStato(g.luogoRilascio),9); }
       }
 
-      const record = tipoAllog + dataArrFmt + numGiorni +
-                     cognome + nome + sesso + dataNasc +
-                     comN + provN + statoN + cittad +
-                     tipoDoc + numDoc + luogoRil;
+      const record = tipoAllog+toFmt(arrISO)+nGiorni(arrISO,parISO)+
+                     cognome+nome+sesso+dataN+
+                     comN+provN+statoN+cittad+
+                     tipoDoc+numDoc+luogoRil;
 
-      if (record.length !== 168) {
-        console.warn('[Alloggiati] ⚠ Record lunghezza errata:', record.length, 'per', g.cognome, '→', record);
-      }
+      if (record.length!==168) console.warn('[Alloggiati] ⚠ len='+record.length, g.cognome, JSON.stringify(record));
       lines.push(record);
     });
   });
 
-  // CR+LF tra ogni riga, NIENTE dopo l'ultima (spec ufficiale)
+  // CR+LF tra righe, niente dopo l'ultima (spec ufficiale)
   const content = lines.join('\r\n');
-  const blob    = new Blob([content], {type:'text/plain;charset=utf-8'});
-  const url     = URL.createObjectURL(blob);
-  const a       = document.createElement('a');
-  a.href = url;
-  a.download = `alloggiati_${today}.txt`;
-  a.click();
+  const blob = new Blob([content],{type:'text/plain;charset=utf-8'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href=url; a.download=`alloggiati_${today}.txt`; a.click();
   URL.revokeObjectURL(url);
-  showToast(`✓ File generato · ${lines.length} record`, 'success');
+  showToast(`✓ File generato · ${lines.length} record`,'success');
 }
 
 // Helper testo Alloggiati Web
