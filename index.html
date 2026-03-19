@@ -702,7 +702,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.3</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">v2026.03.14 · build 18.4</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -723,7 +723,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="v2026.03.14 · build 18.3">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="v2026.03.14 · build 18.4">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -2475,9 +2475,22 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
       continue;
     }
 
-    // Non trovata nel foglio → cancellata/spostata dal foglio → CESTINO
-    // Questo vale per TUTTE le prenotazioni (sia fonte='app' che 'manuale'):
-    // se non è più nel foglio, il foglio l'ha rimossa o spostata.
+    // Non trovata nel foglio → normalmente va nel CESTINO.
+    // ECCEZIONE CRITICA: prenotazioni inserite dall'app nelle ultime 15 minuti
+    // potrebbero non essere ancora nel JSON_ANNUALE (in attesa che la Web App rigeneri).
+    // Le proteggiamo temporaneamente finché il JSON non si aggiorna.
+    const tsModifica = db.ts ? new Date(db.ts).getTime() : 0;
+    const etaMs = Date.now() - tsModifica;
+    const isRecenteApp = db.fonte === 'app' && etaMs < 15 * 60 * 1000; // 15 minuti
+
+    if (isRecenteApp) {
+      // Prenotazione recente da app: mantieni in attesa di aggiornamento JSON_ANNUALE
+      console.log(`[SYNC] Protetta (recente, ${Math.round(etaMs/1000)}s fa): ${db.n} cam.${db.cameraName||db.r}`);
+      result.push(db);
+      continue;
+    }
+
+    // Più vecchia di 15 min e non nel foglio → CESTINO
     const reason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
     db.deleted       = true;
     db.deleteReason  = reason;
