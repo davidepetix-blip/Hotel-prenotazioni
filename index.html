@@ -722,7 +722,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">2026-03-19 · build 18.5.1</div>
+    <div style="font-size:9px;color:#aaa;margin-top:4px;letter-spacing:.06em">2026-03-19 · build 18.5.2</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -743,7 +743,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo" title="2026-03-19 · build 18.5.1">Albergo<span class="logo-sub">prenotazioni</span></div>
+  <div class="logo" title="2026-03-19 · build 18.5.2">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -5458,12 +5458,127 @@ async function saveCiCheckin() {
 // Formato fisso: record da 93 caratteri (versione 3)
 // Ref: specifiche tecniche Polizia di Stato – tracciato record tipo 20
 function exportAlloggiati(scope='today') {
+  // ─────────────────────────────────────────────────────────────────────────
+  // TRACCIATO UFFICIALE — Manuale WS_ALLOGGIATI Rev.01 24/01/2022
+  // 168 caratteri dati + CR+LF tra righe (tranne dopo l'ultima) = 170 per riga
+  //
+  // Pos  0- 1  (2)  Tipo Alloggiato       codice tabella (es. "20")
+  // Pos  2-11  (10) Data Arrivo           gg/mm/aaaa
+  // Pos 12-13  (2)  Num. Giorni           "01"-"30"
+  // Pos 14-63  (50) Cognome
+  // Pos 64-93  (30) Nome
+  // Pos 94-94  (1)  Sesso                 "1"=M  "2"=F
+  // Pos 95-104 (10) Data Nascita          gg/mm/aaaa
+  // Pos 105-113(9)  Comune Nascita        codice tabella comuni (spazi se estero)
+  // Pos 114-115(2)  Provincia Nascita     sigla (spazi se estero)
+  // Pos 116-124(9)  Stato Nascita         codice tabella stati
+  // Pos 125-133(9)  Cittadinanza          codice tabella stati
+  // Pos 134-138(5)  Tipo Documento        codice tabella documenti (blank se familiare)
+  // Pos 139-158(20) Numero Documento      (blank se familiare)
+  // Pos 159-167(9)  Luogo Rilascio Doc    codice comuni o stati (blank se familiare)
+  // TOTALE = 168
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Lookup codici stati — i più comuni (fonte tabella Alloggiati Web)
+  const STATI = {
+    'ITA':'100000100','ITALIA':'100000100',
+    'ALB':'100000003','ALBANIA':'100000003',
+    'DEU':'100000083','GERMANIA':'100000083','GERMANY':'100000083',
+    'FRA':'100000050','FRANCIA':'100000050','FRANCE':'100000050',
+    'GBR':'100000219','REGNO UNITO':'100000219','UK':'100000219',
+    'USA':'100000223','STATI UNITI':'100000223',
+    'ESP':'100000070','SPAGNA':'100000070','SPAIN':'100000070',
+    'CHN':'100000027','CINA':'100000027','CHINA':'100000027',
+    'RUS':'100000151','RUSSIA':'100000151',
+    'ROM':'100000143','ROMANIA':'100000143',
+    'MAR':'100000096','MAROCCO':'100000096',
+    'BRA':'100000016','BRASILE':'100000016','BRAZIL':'100000016',
+    'ARG':'100000008','ARGENTINA':'100000008',
+    'POL':'100000135','POLONIA':'100000135','POLAND':'100000135',
+    'UKR':'100000222','UCRAINA':'100000222','UKRAINE':'100000222',
+    'TUN':'100000212','TUNISIA':'100000212',
+    'SEN':'100000161','SENEGAL':'100000161',
+    'PHL':'100000132','FILIPPINE':'100000132','PHILIPPINES':'100000132',
+    'IND':'100000065','INDIA':'100000065',
+    'EGY':'100000040','EGITTO':'100000040','EGYPT':'100000040',
+    'NLD':'100000108','PAESI BASSI':'100000108','OLANDA':'100000108',
+    'BEL':'100000014','BELGIO':'100000014','BELGIUM':'100000014',
+    'AUT':'100000011','AUSTRIA':'100000011',
+    'CHE':'100000022','SVIZZERA':'100000022','SWITZERLAND':'100000022',
+    'PRT':'100000136','PORTOGALLO':'100000136','PORTUGAL':'100000136',
+    'GRC':'100000059','GRECIA':'100000059','GREECE':'100000059',
+    'TUR':'100000213','TURCHIA':'100000213','TURKEY':'100000213',
+    'JPN':'100000074','GIAPPONE':'100000074','JAPAN':'100000074',
+    'KOR':'100000177','COREA':'100000177','KOREA':'100000177',
+    'CAN':'100000019','CANADA':'100000019',
+    'AUS':'100000010','AUSTRALIA':'100000010',
+    'MEX':'100000101','MESSICO':'100000101','MEXICO':'100000101',
+    'COL':'100000032','COLOMBIA':'100000032',
+    'NGA':'100000112','NIGERIA':'100000112',
+  };
+
+  // Lookup codici documenti
+  const DOCS = {
+    'IDENT':'IDENT','CARTA DI IDENTITA':'IDENT','CARTA IDENTITA':'IDENT',
+    'CI':'IDENT','C.I.':'IDENT','ID':'IDENT',
+    'PASS':'PASS','PASSAPORTO':'PASS','PASSPORT':'PASS',
+    'PATEN':'PATEN','PATENTE':'PATEN','DRIVING LICENSE':'PATEN',
+    'PERM':'PERM','PERMESSO DI SOGGIORNO':'PERM',
+  };
+
+  const codiceStato = val => {
+    if (!val) return '100000100'; // default Italia
+    const k = val.toUpperCase().trim();
+    return STATI[k] || '100000100';
+  };
+
+  const codiceDoc = val => {
+    if (!val) return 'IDENT';
+    const k = val.toUpperCase().trim();
+    // cerca match diretto o parziale
+    if (DOCS[k]) return DOCS[k];
+    for (const [key, cod] of Object.entries(DOCS)) {
+      if (k.includes(key) || key.includes(k)) return cod;
+    }
+    return padR(k, 5); // usa valore grezzo troncato a 5
+  };
+
+  // Data ISO YYYY-MM-DD → gg/mm/aaaa (con slash, formato ufficiale)
+  const toGGMMAAAA = s => {
+    if (!s) return '          ';
+    const clean = s.replace(/-/g,'').replace(/\//g,'');
+    if (clean.length !== 8) return '          ';
+    let gg, mm, aaaa;
+    if (/^(19|20)\d{6}$/.test(clean)) {
+      // YYYYMMDD → inverti
+      aaaa = clean.slice(0,4); mm = clean.slice(4,6); gg = clean.slice(6,8);
+    } else {
+      // GGMMAAAA
+      gg = clean.slice(0,2); mm = clean.slice(2,4); aaaa = clean.slice(4,8);
+    }
+    return `${gg}/${mm}/${aaaa}`; // 10 caratteri con slash
+  };
+
+  // Calcola giorni di permanenza tra arrivo e partenza (max 30, min 1)
+  const calcolaGiorni = (arrISO, parISO) => {
+    try {
+      const a = new Date(arrISO); const p = new Date(parISO);
+      const g = Math.round((p - a) / 86400000);
+      return String(Math.min(Math.max(g, 1), 30)).padStart(2, '0');
+    } catch { return '01'; }
+  };
+
+  // Sesso: M→1, F→2
+  const codSesso = s => {
+    const v = (s||'M').toUpperCase().charAt(0);
+    return v === 'F' ? '2' : '1';
+  };
+
   const today = new Date().toISOString().slice(0,10);
   let items;
   if (scope === 'today') {
     items = Object.values(ciData).filter(ci => ci.data === today);
   } else {
-    // filtered = tutti quelli visibili nello storico
     items = Object.values(ciData).filter(ci => {
       if (!_ciHistSearch) return true;
       const q = _ciHistSearch.toLowerCase();
@@ -5476,59 +5591,83 @@ function exportAlloggiati(scope='today') {
 
   if (items.length === 0) { showToast('Nessun check-in da esportare', 'error'); return; }
 
-  // Trova il codice struttura (da impostazioni, fallback '00000000')
-  const codStruttura = localStorage.getItem('hotelCodiceStruttura') || '00000000';
-
   let lines = [];
-  // Converte data ISO YYYY-MM-DD o YYYYMMDD → GGMMAAAA (formato Alloggiati Web)
-  const toGGMMAAAA = s => {
-    if (!s) return '        ';
-    const clean8 = s.replace(/-/g,'').replace(/\//g,'');
-    if (clean8.length !== 8) return '        ';
-    // Rileva formato: se inizia con 19xx o 20xx è AAAAMMGG → inverti
-    if (/^(19|20)\d{6}$/.test(clean8)) {
-      return clean8.slice(6,8) + clean8.slice(4,6) + clean8.slice(0,4); // GGMMAAAA
-    }
-    return clean8; // già GGMMAAAA
-  };
 
   items.forEach(ci => {
     const b = bookings.find(bk => bk.dbId === ci.preId);
-    // Date in formato GGMMAAAA (richiesto da Alloggiati Web)
-    const dataArr  = toGGMMAAAA(ci.data);
-    const dataFine = b ? toGGMMAAAA(new Date(b.e).toISOString().slice(0,10)) : dataArr;
+    const dataArrISO  = ci.data;
+    const dataPartISO = b ? new Date(b.e).toISOString().slice(0,10) : ci.data;
+
+    const dataArrFmt  = toGGMMAAAA(dataArrISO);   // gg/mm/aaaa (10)
+    const numGiorni   = calcolaGiorni(dataArrISO, dataPartISO); // 2 cifre
 
     ci.guests.forEach((g, gIdx) => {
-      // Schema fisso 183 caratteri per record (spec. Alloggiati Web PS)
-      // Tipo(2)+DataArr(8)+DataPart(8)+Cognome(50)+Nome(30)+Sesso(1)+
-      // DataNasc(8)+ComuneNasc(26)+ProvNasc(2)+Cittadinanza(9)+
-      // TipoDoc(5)+NumDoc(20)+LuogoRilDoc(14) = 183
-      const tipoRec  = '20';
-      const dataCin  = dataArr;                                // 8 GGMMAAAA
-      const dataFineP= dataFine;                               // 8 GGMMAAAA
-      const cognome  = padR(cleanAl(g.cognome), 50);          // 50
-      const nome     = padR(cleanAl(g.nome), 30);             // 30
-      const sesso    = (g.sesso||'M').charAt(0).toUpperCase();// 1
-      const dataN    = toGGMMAAAA(g.dataNascita||'');         // 8 GGMMAAAA
-      const comuneN  = padR(cleanAl(g.luogoNascita), 26);    // 26
-      const provN    = padR((g.provNascita||'EE').toUpperCase(), 2); // 2
-      const nazN     = padR((g.cittadinanza||'ITA').toUpperCase(), 9); // 9
-      const tipoDoc  = gIdx===0 ? padR((g.tipoDoc||'IDENT').toUpperCase(),5) : padR('',5); // 5
-      const numDoc   = gIdx===0 ? padR(cleanAl(g.numDoc||''),20) : padR('',20);            // 20
-      const luogRil  = gIdx===0 ? padR(cleanAl(g.luogoRilascio||''),14) : padR('',14);    // 14
+      const isCapo = gIdx === 0; // capofamiglia/ospite singolo = tipo 20, altri = 21
 
-      const record = tipoRec + dataCin + dataFineP + cognome + nome + sesso +
-                     dataN + comuneN + provN + nazN + tipoDoc + numDoc + luogRil;
+      // Tipo alloggiato: 20=ospite singolo/capofamiglia, 21=familiare/accompagnatore
+      const tipoAllog = isCapo ? '20' : '21';
 
-      // Verifica lunghezza (deve essere esattamente 183)
-      if (record.length !== 183) {
-        console.warn('[Alloggiati] Record lunghezza errata:', record.length, 'per', g.cognome);
+      // Cognome (50) e Nome (30)
+      const cognome = padR(cleanAl(g.cognome), 50);
+      const nome    = padR(cleanAl(g.nome), 30);
+
+      // Sesso: 1=M, 2=F
+      const sesso = codSesso(g.sesso);
+
+      // Data nascita gg/mm/aaaa (10)
+      const dataNasc = toGGMMAAAA(g.dataNascita || '');
+
+      // Comune nascita (9) — codice tabella, spazi se nato all'estero
+      // Se il campo g.codComuneNascita è già un codice numerico lo usa,
+      // altrimenti lascia spazi (da compilare manualmente o con lookup futuro)
+      const comN = g.codComuneNascita
+        ? padR(g.codComuneNascita, 9)
+        : '         '; // 9 spazi — nato all'estero o codice non disponibile
+
+      // Provincia nascita (2) — spazi se estero
+      const provN = g.codComuneNascita
+        ? padR((g.provNascita||'').toUpperCase(), 2)
+        : '  ';
+
+      // Stato nascita (9) — codice numerico
+      const statoN = padR(codiceStato(g.statoNascita || g.cittadinanza || 'ITA'), 9);
+
+      // Cittadinanza (9) — codice numerico
+      const cittad = padR(codiceStato(g.cittadinanza || 'ITA'), 9);
+
+      // Documento (solo per capofamiglia/ospite singolo)
+      const tipoDoc = isCapo ? padR(codiceDoc(g.tipoDoc), 5) : '     ';
+      const numDoc  = isCapo ? padR(cleanAl(g.numDoc||''), 20) : '                    ';
+
+      // Luogo rilascio doc (9) — codice comune o stato
+      let luogoRil = '         ';
+      if (isCapo && g.luogoRilascio) {
+        // Se è un nome di comune italiano usa spazi (il codice andrebbe cercato),
+        // se è uno stato estero usa il codice stato
+        const lr = g.luogoRilascio.toUpperCase().trim();
+        if (STATI[lr]) {
+          luogoRil = padR(STATI[lr], 9);
+        } else if (g.codLuogoRilascio) {
+          luogoRil = padR(g.codLuogoRilascio, 9);
+        } else {
+          luogoRil = '         '; // comune italiano: codice non disponibile
+        }
+      }
+
+      const record = tipoAllog + dataArrFmt + numGiorni +
+                     cognome + nome + sesso + dataNasc +
+                     comN + provN + statoN + cittad +
+                     tipoDoc + numDoc + luogoRil;
+
+      if (record.length !== 168) {
+        console.warn('[Alloggiati] ⚠ Record lunghezza errata:', record.length, 'per', g.cognome, '→', record);
       }
       lines.push(record);
     });
   });
 
-  const content = lines.join('\n');
+  // CR+LF tra ogni riga, NIENTE dopo l'ultima (spec ufficiale)
+  const content = lines.join('\r\n');
   const blob    = new Blob([content], {type:'text/plain;charset=utf-8'});
   const url     = URL.createObjectURL(blob);
   const a       = document.createElement('a');
