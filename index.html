@@ -2523,6 +2523,16 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
       continue;
     }
 
+    // ECCEZIONE IMPORTAZIONE MASSIVA: se il foglio ha portato molte nuove prenotazioni
+    // (es. re-import totale), il DB vecchio è inevitabilmente "sfasato" → non cestinare.
+    // Soglia: se toAddToDB contiene già più del 50% delle sheetBookings, siamo in un
+    // re-import — le prenotazioni DB non matchate sono probabilmente duplicati/vecchi formati,
+    // non cancellazioni reali. Le manteniamo nel result invece di cestinarle.
+    if (toAddToDB.length > sheetBookings.length * 0.5 && sheetBookings.length > 20) {
+      result.push(db);
+      continue;
+    }
+
     // Più vecchia di 15 min e non nel foglio → CESTINO
     const reason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
     db.deleted       = true;
@@ -2683,6 +2693,15 @@ async function bgSync() {
     }
     const rimossi = bookings.filter(b => b.dbId && !active.find(d => d.dbId === b.dbId)).length;
     syncLog(`DB: ${active.length} prenotazioni attive, rimossi ${rimossi}`, 'db');
+
+    // GUARD: se il DB ha molte meno prenotazioni di quelle in memoria (es. sync completo appena
+    // fatto che ha importato masse di nuove), non sovrascrivere — rischieremmo di svuotare il Gantt.
+    // Soglia: se il DB ha più del 30% in meno di bookings in memoria, salta il render.
+    if (active.length < prevCount * 0.7 && prevCount > 20) {
+      syncLog(`⚠ bgSync: DB ha ${active.length} pren. vs ${prevCount} in memoria — skip render (attendi sync completo)`, 'wrn');
+      await loadRoomStates();
+      return;
+    }
 
     if (changed || rimossi > 0) {
       bookings = mergeMultiMonthBookings(active);
