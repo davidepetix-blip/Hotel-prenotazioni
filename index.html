@@ -3017,7 +3017,7 @@ async function segnalaModificaAdAppsScript(sheetId) {
     const url  = `${webAppUrl}?anno=${anno}&ts=${Date.now()}`;
     // no-cors: Apps Script non supporta CORS, ma la chiamata arriva comunque
     await fetch(url, { method:'GET', mode:'no-cors' });
-    // Aspetta 3s poi ricarica le prenotazioni dal JSON_ANNUALE aggiornato
+    // Aspetta 6s (Apps Script può impiegare 3-5s) poi ricarica dal JSON_ANNUALE aggiornato
     setTimeout(async () => {
       try {
         await loadAnnualSheets();
@@ -3027,7 +3027,7 @@ async function segnalaModificaAdAppsScript(sheetId) {
       } catch(e2) {
         console.warn('[WebApp] reload fallito:', e2.message);
       }
-    }, 4000);
+    }, 6000);
   } catch(e) {
     console.warn('[WebApp] chiamata fallita:', e.message);
     showToast('⚠ Aggiornamento calendario fallito — ricarica manualmente con 🔄', 'warning');
@@ -3297,6 +3297,10 @@ async function clearBookingFromSheet(b) {
       console.warn(`Errore pulizia frammento ${frag.sName}:`, e.message);
     }
   }
+  // Segnala modifica → rigenera JSON_ANNUALE immediatamente
+  segnalaModificaAdAppsScript(
+    annualSheets[0]?.sheetId
+  ).catch(e => console.warn('[clearBooking→WebApp] non critico:', e.message));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3601,6 +3605,7 @@ async function delBook(id){
   showLoading('Rimozione…');
   try {
     // Rimuovi dal foglio Google sempre (bidirezionale)
+    // clearBookingFromSheet chiama già segnalaModifica → rigenera JSON_ANNUALE
     await clearBookingFromSheet(b);
     if(DATABASE_SHEET_ID && b.dbRow) await dbDelete(b, 'Eliminata dall\'app');
     bookings=bookings.filter(x=>x.id!==id);
