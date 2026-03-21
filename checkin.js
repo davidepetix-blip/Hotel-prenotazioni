@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '2'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '3'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -544,7 +544,7 @@ function exportAlloggiati(scope='today'){
       const sesso=(_alNorm(g.sesso||'M').charAt(0)==='F')?'2':'1';
       const dataN=toFmt(g.dataNascita||'');
       const isIta=_alNorm(g.cittadinanza||'ITALIA').includes('ITAL');
-      let comN=isIta?'         ':'000000000',provN='  ';
+      let comN='000000000',provN='  ';
       if(isIta&&g.luogoNascita){const found=_alCodiceComune(g.luogoNascita);if(found){comN=found.cod;provN=padR(found.prov,2);}}
       const statoN=_alCodiceStato(isIta?'ITALIA':(g.statoEsteroNascita||g.cittadinanza||'ITALIA')).padStart(9,'0');
       const cittad=_alCodiceStato(g.cittadinanza||'ITALIA').padStart(9,'0');
