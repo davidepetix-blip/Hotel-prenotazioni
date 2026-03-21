@@ -893,7 +893,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
       <input type="text" class="fi" id="fName" placeholder="es. Rossi Mario" autocomplete="off">
     </div>
     <div class="frow">
-      <div class="fg"><label class="fl">Check-in</label><input type="date" class="fi" id="fIn"></div>
+      <div class="fg"><label class="fl">Check-in</label><input type="date" class="fi" id="fIn" oninput="(function(){var i=document.getElementById('fIn'),o=document.getElementById('fOut');if(!i.value)return;var d=new Date(i.value);d.setDate(d.getDate()+1);var nx=d.toISOString().slice(0,10);if(!o.value||o.value<=i.value)o.value=nx;})()"></div>
       <div class="fg"><label class="fl">Check-out</label><input type="date" class="fi" id="fOut"></div>
     </div>
     <div class="fg">
