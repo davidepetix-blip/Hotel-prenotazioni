@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '1'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '2'; // ← incrementa ad ogni modifica
 
 function render() {
   const days = dim(curY, curM);
