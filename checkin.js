@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '4'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '5'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -764,7 +764,7 @@ async function ciHandleDocImage(input) {
  * Definita qui (checkin.js caricato dopo gantt.js) per evitare duplicati.
  * Gestisce sia i tab esistenti (drTabInfo, drTabBill) che drTabCI.
  */
-function drTab(el, tabId, bookingDbId) {
+function drTab(el, tabId, bookingId) {
   const tabs = el.closest('.dr-bill-tabs');
   if (tabs) tabs.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
@@ -775,23 +775,37 @@ function drTab(el, tabId, bookingDbId) {
   const panel = document.getElementById(tabId);
   if (panel) panel.style.display = '';
 
-  // Lazy render del tab Check-in: carica ciData fresco poi inietta HTML
+  // Lazy render del tab Check-in
   if (tabId === 'drTabCI' && panel) {
-    const dbId = bookingDbId || panel.dataset.bookingId || '';
+    const bid = bookingId !== undefined ? bookingId : panel.dataset.bookingId;
     panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">⏳ Caricamento…</div>';
+
     loadCiData().then(() => {
-      // Trova la prenotazione in memoria
-      const b = (typeof bookings !== 'undefined') ? bookings.find(x => x.dbId === dbId) : null;
-      if (b) {
-        panel.innerHTML = renderDrawerCheckin(b);
-      } else {
-        // dbId non matcha — prova a costruire un oggetto minimale dal DOM
-        const title  = document.getElementById('drtitle');
-        const sub    = document.getElementById('drsub');
-        panel.innerHTML = renderDrawerCheckin({ dbId, s: new Date(), n: title?.textContent || '' });
+      // Trova il booking tramite id numerico (sempre presente in gantt)
+      const b = (typeof bookings !== 'undefined')
+        ? bookings.find(x => String(x.id) === String(bid))
+        : null;
+
+      if (!b) {
+        panel.innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px;">
+          Prenotazione non trovata (id=${bid})<br>
+          <button class="btn" style="margin-top:8px" onclick="openCheckin()">Apri modulo check-in</button>
+        </div>`;
+        return;
       }
+
+      // Se b.dbId è null, il check-in non può essere salvato sul DB
+      if (!b.dbId) {
+        panel.innerHTML = `<div style="padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
+          ⚠ Questa prenotazione non è ancora sincronizzata con il database.<br>
+          Premi <strong>↻</strong> per sincronizzare, poi riprova.
+        </div>`;
+        return;
+      }
+
+      panel.innerHTML = renderDrawerCheckin(b);
     }).catch(e => {
-      panel.innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px;">Errore caricamento: ${e.message}</div>`;
+      panel.innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px;">Errore: ${e.message}</div>`;
     });
   }
 }

@@ -749,10 +749,6 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;">
-      <span style="background:#2d6a4f;color:#fff;font-size:9px;font-weight:700;letter-spacing:.08em;padding:2px 8px;border-radius:20px;text-transform:uppercase;">Nuova release</span>
-      <span style="font-size:9px;color:#aaa;letter-spacing:.05em;font-family:monospace;" data-blip-version="full">v18.7.1</span>
-    </div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -773,7 +769,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <!-- ══ TOPBAR ══ -->
 <div class="topbar">
-  <div class="logo">Albergo<span class="logo-sub">prenotazioni</span><span class="logo-ver" data-blip-version="short">v18.7.1</span></div>
+  <div class="logo">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
@@ -1047,7 +1043,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Versione build ──
-const BLIP_BUILD = '18.8.1'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.8.2'; // ← build complessiva (major.minor.patch)
 
 // Assembla la versione completa dai moduli appena caricati
 function blipFullVersion() {
