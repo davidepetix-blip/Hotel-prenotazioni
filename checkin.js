@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '13'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '14'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -777,69 +777,62 @@ async function ciHandleDocImage(input) {
  * Definita qui (checkin.js caricato dopo gantt.js) per evitare duplicati.
  * Gestisce sia i tab esistenti (drTabInfo, drTabBill) che drTabCI.
  */
-function drTab(el, tabId, bookingId) {
-  showToast('drTab chiamata: ' + tabId, 'info');
+// drTabCheckin — gestisce SOLO il tab 🛎 Check-in nel drawer.
+// Nome univoco per evitare conflitti con drTab di billing.js
+function drTabCheckin(el, bookingId) {
+  showToast('CI tab: bid=' + bookingId, 'success');
 
+  // Attiva il tab visivamente
   const tabsContainer = el.closest('.dr-bill-tabs');
-  if (!tabsContainer) { showToast('ERR: no tabsContainer', 'error'); return; }
-  tabsContainer.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-
-  const drbody = document.getElementById('drbody');
-  if (!drbody) { showToast('ERR: no drbody', 'error'); return; }
-
-  if (tabId !== 'drTabCI') {
-    // Per Dettagli e Conto: nascondi/mostra pannelli normalmente
-    const parent = tabsContainer.parentElement;
-    if (!parent) return;
-    parent.querySelectorAll('[id^="drTab"]').forEach(p => p.style.display = 'none');
-    const panel = parent.querySelector('#' + tabId);
-    if (panel) panel.style.display = 'block';
-    return;
+  if (tabsContainer) {
+    tabsContainer.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
   }
 
-  // ── TAB CHECK-IN: riscrivi drbody direttamente ──
-  const bid = bookingId !== undefined ? bookingId : '';
-  const allBooks = typeof bookings !== 'undefined' ? bookings : [];
-  const b = allBooks.find(x => String(x.id) === String(bid));
+  // Nascondi pannelli esistenti
+  const parent = tabsContainer ? tabsContainer.parentElement : null;
+  if (parent) {
+    parent.querySelectorAll('[id^="drTab"]').forEach(p => p.style.display = 'none');
+  }
 
-  showToast('bid=' + bid + ' trovato=' + (b ? b.n : 'NO'), 'info');
+  // Crea/trova il pannello CI
+  let panel = parent ? parent.querySelector('#drTabCI') : null;
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'drTabCI';
+    if (parent) parent.appendChild(panel);
+  }
+  panel.style.cssText = 'display:block;padding:0;';
+
+  // Trova booking
+  const allBooks = typeof bookings !== 'undefined' ? bookings : [];
+  const b = allBooks.find(x => String(x.id) === String(bookingId));
 
   if (!b) {
-    drbody.innerHTML = tabsContainer.outerHTML +
-      `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;margin-top:12px;">
-        ⚠ Booking non trovato (id=${bid}, tot=${allBooks.length})
-      </div>`;
-    // Riattiva il tab selezionato
-    drbody.querySelector('.dr-bill-tabs .dr-bill-tab:nth-child(3)')?.classList.add('active');
+    panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;margin-top:8px;">
+      ⚠ Booking non trovato (id=${bookingId}, tot=${allBooks.length})
+    </div>`;
     return;
   }
 
-  let ciHtml;
-  try {
-    ciHtml = renderDrawerCheckin(b);
-  } catch(e) {
-    ciHtml = `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Errore render: ${e.message}</div>`;
-  }
-  if (!ciHtml || !ciHtml.trim()) {
-    ciHtml = `<div style="padding:12px;background:#fff7ed;border-radius:8px;font-size:12px;color:#9a3412;">⚠ renderDrawerCheckin restituito vuoto — b.dbId=${b.dbId||'null'}</div>`;
-  }
+  // Render immediato
+  let html;
+  try { html = renderDrawerCheckin(b); } catch(e) { html = ''; }
 
-  drbody.innerHTML = tabsContainer.outerHTML + ciHtml;
-  // Riattiva il tab Check-in
-  const tabs3 = drbody.querySelectorAll('.dr-bill-tab');
-  if (tabs3.length >= 3) tabs3[2].classList.add('active');
+  if (!html || !html.trim()) {
+    html = `<div style="padding:12px;background:#fff7ed;border-radius:8px;font-size:12px;color:#9a3412;margin-top:8px;">
+      ⚠ Nessun contenuto (dbId=${b.dbId||'null'})
+    </div>`;
+  }
+  panel.innerHTML = html;
 
-  // Refresh dopo loadCiData
+  // Refresh silenzioso
   if (typeof loadCiData === 'function') {
     loadCiData().then(() => {
+      if (!panel.isConnected) return;
       try {
-        const updated = renderDrawerCheckin(b);
-        if (updated && updated.trim()) {
-          drbody.innerHTML = tabsContainer.outerHTML + updated;
-          const t3 = drbody.querySelectorAll('.dr-bill-tab');
-          if (t3.length >= 3) t3[2].classList.add('active');
-        }
+        const u = renderDrawerCheckin(b);
+        if (u && u.trim()) panel.innerHTML = u;
       } catch(e) {}
     }).catch(() => {});
   }

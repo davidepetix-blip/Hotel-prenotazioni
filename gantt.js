@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '5'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '6'; // ← incrementa ad ogni modifica
 
 function render() {
   const days = dim(curY, curM);
@@ -185,7 +185,7 @@ function selBook(id,e){
     <div class="dr-bill-tabs">
       <div class="dr-bill-tab active" onclick="drTab(this,'drTabInfo')">📋 Dettagli</div>
       <div class="dr-bill-tab" onclick="drTab(this,'drTabBill')">💶 Conto</div>
-      <div class="dr-bill-tab" onclick="drTab(this,'drTabCI',${b.id})">🛎 Check-in</div>
+      <div class="dr-bill-tab" onclick="drTabCheckin(this,${b.id})">🛎 Check-in</div>
     </div>
     <div id="drTabInfo">
     <div class="dcard">
