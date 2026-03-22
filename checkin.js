@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '8'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '9'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -765,62 +765,58 @@ async function ciHandleDocImage(input) {
  * Gestisce sia i tab esistenti (drTabInfo, drTabBill) che drTabCI.
  */
 function drTab(el, tabId, bookingId) {
-  // Switch active tab
   const tabsContainer = el.closest('.dr-bill-tabs');
   if (!tabsContainer) return;
   tabsContainer.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
 
-  // Trova i pannelli nel parent (drbody) — querySelector locale, non getElementById
   const parent = tabsContainer.parentElement;
   if (!parent) return;
 
-  // Nascondi tutti i pannelli
   parent.querySelectorAll('[id^="drTab"]').forEach(p => p.style.display = 'none');
-
-  // Mostra il pannello target
   const panel = parent.querySelector('#' + tabId);
   if (panel) panel.style.display = '';
 
-  // ── Lazy render Check-in ──
-  if (tabId === 'drTabCI') {
-    if (!panel) {
-      // Pannello non trovato — crea al volo come ultimo figlio
-      const fallback = document.createElement('div');
-      fallback.id = 'drTabCI';
-      fallback.style.padding = '12px';
-      fallback.innerHTML = '<div style="color:red;font-size:12px;">Errore: pannello check-in non trovato nel DOM</div>';
-      parent.appendChild(fallback);
-      return;
-    }
+  if (tabId !== 'drTabCI') return;
 
-    const bid = bookingId !== undefined ? bookingId : panel.dataset.bookingId;
-    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">⏳ Caricamento…</div>';
+  if (!panel) {
+    // Failsafe: crea il pannello al volo
+    const fp = document.createElement('div');
+    fp.id = 'drTabCI';
+    fp.style.cssText = 'padding:12px;color:red;font-size:12px;';
+    fp.textContent = 'Errore: pannello CI non trovato';
+    parent.appendChild(fp);
+    return;
+  }
 
-    const allBooks = typeof bookings !== 'undefined' ? bookings : [];
-    const b = allBooks.find(x => String(x.id) === String(bid));
+  const bid = bookingId !== undefined ? bookingId : panel.dataset.bookingId;
+  const allBooks = typeof bookings !== 'undefined' ? bookings : [];
+  const b = allBooks.find(x => String(x.id) === String(bid));
 
-    if (!b) {
-      panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;">
-        ⚠ Prenotazione non trovata (id=${bid})<br>
-        <small>Prenotazioni in memoria: ${allBooks.length}</small><br>
-        <button class="btn" style="margin-top:8px" onclick="openCheckin()">Apri modulo check-in</button>
-      </div>`;
-      return;
-    }
+  if (!b) {
+    panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;">
+      ⚠ Prenotazione id=${bid} non in memoria (${allBooks.length} tot).<br>
+      <button style="margin-top:8px;padding:4px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;" onclick="openCheckin()">Apri check-in</button>
+    </div>`;
+    return;
+  }
 
-    if (!b.dbId) {
-      panel.innerHTML = `<div style="padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
-        ⚠ Prenotazione non ancora nel database.<br>Premi <strong>↻</strong> per sincronizzare, poi riprova.
-      </div>`;
-      return;
-    }
+  if (!b.dbId) {
+    panel.innerHTML = `<div style="padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
+      ⚠ dbId mancante — premi ↻ per sincronizzare.
+    </div>`;
+    return;
+  }
 
+  // Render immediato con ciData in memoria (sincrono, nessuna await)
+  panel.innerHTML = renderDrawerCheckin(b);
+
+  // Refresh silenzioso in background — aggiorna solo se diverso
+  if (typeof loadCiData === 'function') {
     loadCiData().then(() => {
-      panel.innerHTML = renderDrawerCheckin(b);
-    }).catch(e => {
-      panel.innerHTML = `<div style="padding:12px;color:red;font-size:12px;">Errore: ${e.message}</div>`;
-    });
+      const updated = renderDrawerCheckin(b);
+      if (panel.isConnected) panel.innerHTML = updated;
+    }).catch(() => {});
   }
 }
 
