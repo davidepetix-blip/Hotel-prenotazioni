@@ -395,6 +395,19 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 #checkinPage { display:none; position:fixed; inset:0; background:var(--bg); z-index:200; flex-direction:column; overflow:hidden; }
 #checkinPage.open { display:flex; }
 
+/* ── DRAWER CHECK-IN TAB ── */
+.ci-dr-done-badge { background:#d1fae5; color:#065f46; border-radius:8px; padding:8px 12px; font-size:12px; font-weight:600; margin-bottom:10px; }
+.ci-dr-guests-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+.ci-dr-guest-row { display:flex; justify-content:space-between; align-items:baseline; padding:4px 0; border-bottom:1px solid var(--border); }
+.ci-dr-guest-row:last-of-type { border-bottom:none; }
+.ci-dr-guest-label { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:.05em; flex-shrink:0; margin-right:8px; }
+.ci-dr-guest-name { font-size:13px; font-weight:600; color:var(--text); text-align:right; }
+.ci-dr-meta { font-size:10px; color:var(--text3); margin-top:6px; padding-top:6px; border-top:1px solid var(--border); }
+.ci-dr-alert { border-radius:8px; padding:10px 12px; font-size:13px; font-weight:600; line-height:1.4; margin-bottom:4px; }
+.ci-dr-alert.warn  { background:#fff7ed; color:#9a3412; border:1px solid #fed7aa; }
+.ci-dr-alert.danger{ background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }
+.ci-dr-future { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:13px; color:var(--text2); line-height:1.5; text-align:center; }
+
 .ci-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); padding:0 16px; background:var(--surface); flex-shrink:0; }
 .ci-tab  { padding:10px 16px; font-size:12px; font-weight:500; color:var(--text3); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; transition:color .15s,border-color .15s; }
 .ci-tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }
@@ -1035,7 +1048,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Versione build ──
-const BLIP_BUILD = '18.7.1'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.8.0'; // ← build complessiva (major.minor.patch)
 
 // Assembla la versione completa dai moduli appena caricati
 function blipFullVersion() {

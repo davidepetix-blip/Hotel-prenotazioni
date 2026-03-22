@@ -754,3 +754,105 @@ async function ciHandleDocImage(input) {
 // GESTIONE FOGLI ANNUALI NELLE IMPOSTAZIONI
 // ═══════════════════════════════════════════════════════════════════
 
+
+// ═══════════════════════════════════════════════════════════════════
+// DRAWER CHECK-IN — Tab nella scheda prenotazione (gantt.js)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * drTab(el, tabId) — switcha tra i tab del drawer prenotazione.
+ * Definita qui (checkin.js caricato dopo gantt.js) per evitare duplicati.
+ * Gestisce sia i tab esistenti (drTabInfo, drTabBill) che drTabCI.
+ */
+function drTab(el, tabId) {
+  // Deseleziona tutti i tab dello stesso gruppo
+  const tabs = el.closest('.dr-bill-tabs');
+  if (tabs) tabs.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  // Nascondi tutti i pannelli fratelli
+  ['drTabInfo','drTabBill','drTabCI'].forEach(id => {
+    const p = document.getElementById(id);
+    if (p) p.style.display = 'none';
+  });
+  const panel = document.getElementById(tabId);
+  if (panel) panel.style.display = '';
+}
+
+/**
+ * renderDrawerCheckin(b) — HTML del tab 🛎 Check-in nel drawer.
+ * Chiamata da gantt.js al render del drawer prenotazione.
+ * Legge ciData (già in memoria) — nessuna fetch.
+ */
+function renderDrawerCheckin(b) {
+  if (!b) return '';
+  const ci      = ciData && ciData[b.dbId];
+  const now     = Date.now();
+  const arrival = b.s instanceof Date ? b.s.getTime() : new Date(b.s).getTime();
+  const hoursToArrival = (arrival - now) / 36e5; // negativo = già arrivato
+
+  // ── Check-in già fatto ──
+  if (ci && ci.guests && ci.guests.length > 0) {
+    const capo   = ci.guests[0];
+    const nomeCapo = [capo.cognome, capo.nome].filter(Boolean).join(' ') || '—';
+    const accomp = ci.guests.slice(1);
+
+    const guestRows = ci.guests.map((g, i) => {
+      const nome  = [g.cognome, g.nome].filter(Boolean).join(' ') || '—';
+      const label = i === 0 ? 'Capogruppo' : `Accompagnatore ${i}`;
+      return `<div class="ci-dr-guest-row">
+        <span class="ci-dr-guest-label">${label}</span>
+        <span class="ci-dr-guest-name">${nome}</span>
+      </div>`;
+    }).join('');
+
+    return `
+      <div class="ci-dr-done-badge">✓ Check-in registrato</div>
+      <div class="ci-dr-guests-box">
+        ${guestRows}
+        <div class="ci-dr-meta">${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · registrato il ${(ci.ts||'').slice(0,10).split('-').reverse().join('/')}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn" style="flex:1;justify-content:center;" onclick="openCiModal('${b.dbId}')">✎ Modifica</button>
+        <button class="btn" style="flex:1;justify-content:center;" onclick="exportAlloggiati('filtered')">⬇ Alloggiati</button>
+      </div>`;
+  }
+
+  // ── Check-in NON fatto ──
+  // In ritardo (arrivo passato)
+  if (hoursToArrival < 0) {
+    const giorni = Math.abs(Math.floor(hoursToArrival / 24));
+    return `
+      <div class="ci-dr-alert danger">
+        ⚠ Check-in in ritardo<br>
+        <span style="font-size:11px;opacity:.85;">Arrivo ${giorni > 0 ? giorni+' giorn'+(giorni===1?'o':'i')+' fa' : 'oggi'} — non ancora registrato</span>
+      </div>
+      <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" onclick="openCiModal('${b.dbId}')">
+        🛎 Registra check-in ora
+      </button>`;
+  }
+
+  // Entro 48h dall'arrivo
+  if (hoursToArrival <= 48) {
+    const ore = Math.floor(hoursToArrival);
+    const label = ore < 1 ? 'Meno di 1 ora' : ore < 24 ? `${ore} or${ore===1?'a':'e'}` : `${Math.floor(ore/24)} giorn${Math.floor(ore/24)===1?'o':'i'}`;
+    return `
+      <div class="ci-dr-alert warn">
+        🕐 Arrivo tra ${label}<br>
+        <span style="font-size:11px;opacity:.85;">Prepara il check-in in anticipo</span>
+      </div>
+      <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" onclick="openCiModal('${b.dbId}')">
+        🛎 Fai check-in
+      </button>`;
+  }
+
+  // Arrivo lontano (>48h)
+  const gg = Math.floor(hoursToArrival / 24);
+  return `
+    <div class="ci-dr-future">
+      Arrivo tra <strong>${gg} giorni</strong><br>
+      <span style="font-size:11px;color:var(--text3);">Il check-in può essere fatto fino a 48h prima o dopo l'arrivo.</span>
+    </div>
+    <button class="btn" style="width:100%;justify-content:center;margin-top:12px;" onclick="openCiModal('${b.dbId}')">
+      🛎 Fai check-in in anticipo
+    </button>`;
+}
