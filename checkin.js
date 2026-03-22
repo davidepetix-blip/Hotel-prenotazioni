@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '10'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '11'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -822,7 +822,11 @@ function drTab(el, tabId, bookingId) {
   }
 
   // Render immediato con ciData in memoria (sincrono, nessuna await)
-  panel.innerHTML = renderDrawerCheckin(b);
+  try {
+    panel.innerHTML = renderDrawerCheckin(b);
+  } catch(e) {
+    panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Errore: ${e.message}</div>`;
+  }
 
   // Refresh silenzioso in background — aggiorna solo se diverso
   if (typeof loadCiData === 'function') {
@@ -840,19 +844,29 @@ function drTab(el, tabId, bookingId) {
  */
 function renderDrawerCheckin(b) {
   if (!b) return '';
+  try {
+    // Helper data locale (evita shift UTC: toISOString() usa UTC, non ora locale)
+    const localDate = d => {
+      const dt = d instanceof Date ? d : new Date(d);
+      if (isNaN(dt.getTime())) return '';
+      return dt.getFullYear() + '-'
+        + String(dt.getMonth() + 1).padStart(2, '0') + '-'
+        + String(dt.getDate()).padStart(2, '0');
+    };
 
-  // Lookup: prima per dbId, poi per cam:CAMERA:DATA (fallback record con preId vuoto)
-  const room    = typeof ROOMS !== 'undefined' ? ROOMS.find(r => r.id === b.r) : null;
-  const camName = room?.name || b.cameraName || '';
-  const dataArr = (b.s instanceof Date ? b.s : new Date(b.s)).toISOString().slice(0, 10);
-  const altKey  = 'cam:' + camName + ':' + dataArr;
-  const ci      = (ciData && b.dbId && ciData[b.dbId])
-               || (ciData && ciData[altKey])
-               || null;
+    // Lookup: per dbId, poi fallback cam:CAMERA:DATA_LOCALE
+    const room    = typeof ROOMS !== 'undefined' ? ROOMS.find(r => r.id === b.r) : null;
+    const camName = room?.name || b.cameraName || '';
+    const dataArr = localDate(b.s);
+    const altKey  = 'cam:' + camName + ':' + dataArr;
+    const ci      = (ciData && b.dbId && ciData[b.dbId])
+                 || (ciData && altKey && ciData[altKey])
+                 || null;
 
-  const now     = Date.now();
-  const arrival = b.s instanceof Date ? b.s.getTime() : new Date(b.s).getTime();
-  const hoursToArrival = (arrival - now) / 36e5;
+    const now     = Date.now();
+    const arrDate = b.s instanceof Date ? b.s : new Date(b.s);
+    const arrival = isNaN(arrDate.getTime()) ? now : arrDate.getTime();
+    const hoursToArrival = (arrival - now) / 36e5;
 
   // ── Check-in già fatto ──
   if (ci && ci.guests && ci.guests.length > 0) {
@@ -919,4 +933,9 @@ function renderDrawerCheckin(b) {
     <button class="btn" style="width:100%;justify-content:center;margin-top:12px;" onclick="openCiModal('${b.id}')">
       🛎 Fai check-in in anticipo
     </button>`;
+  } catch(e) {
+    return `<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;">
+      ⚠ Errore rendering check-in: ${e.message}
+    </div>`;
+  }
 }
