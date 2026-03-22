@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '11'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '12'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -788,51 +788,65 @@ function drTab(el, tabId, bookingId) {
 
   parent.querySelectorAll('[id^="drTab"]').forEach(p => p.style.display = 'none');
   const panel = parent.querySelector('#' + tabId);
-  if (panel) panel.style.display = '';
+  if (panel) panel.style.display = 'block';
 
   if (tabId !== 'drTabCI') return;
 
+  // Pannello debug: scritto DIRETTAMENTE nel drbody, sempre visibile
+  let debugEl = document.getElementById('ciTabDebug');
+  if (!debugEl) {
+    debugEl = document.createElement('div');
+    debugEl.id = 'ciTabDebug';
+    debugEl.style.cssText = 'position:sticky;top:0;background:#0f0f1a;color:#4a86e8;font-size:9px;font-family:monospace;padding:4px 8px;z-index:9999;line-height:1.6;';
+    parent.insertBefore(debugEl, tabsContainer.nextSibling);
+  }
+  const log = msg => { debugEl.innerHTML += msg + '<br>'; console.log('[CI-TAB]', msg); };
+  debugEl.innerHTML = '';
+
   if (!panel) {
-    // Failsafe: crea il pannello al volo
-    const fp = document.createElement('div');
-    fp.id = 'drTabCI';
-    fp.style.cssText = 'padding:12px;color:red;font-size:12px;';
-    fp.textContent = 'Errore: pannello CI non trovato';
-    parent.appendChild(fp);
+    log('❌ panel #drTabCI NOT FOUND');
+    log('parent id=' + (parent.id||'no-id') + ' children=' + parent.children.length);
     return;
   }
 
   const bid = bookingId !== undefined ? bookingId : panel.dataset.bookingId;
+  log('bid=' + bid + ' panel.connected=' + panel.isConnected);
+
   const allBooks = typeof bookings !== 'undefined' ? bookings : [];
   const b = allBooks.find(x => String(x.id) === String(bid));
+  log('booking=' + (b ? '"'+b.n+'" dbId='+b.dbId : 'NOT FOUND tot='+allBooks.length));
 
   if (!b) {
-    panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;">
-      ⚠ Prenotazione id=${bid} non in memoria (${allBooks.length} tot).<br>
-      <button style="margin-top:8px;padding:4px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;" onclick="openCheckin()">Apri check-in</button>
-    </div>`;
+    panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Booking non trovato (id=${bid})</div>`;
     return;
   }
 
-  if (!b.dbId) {
-    panel.innerHTML = `<div style="padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
-      ⚠ dbId mancante — premi ↻ per sincronizzare.
-    </div>`;
-    return;
-  }
-
-  // Render immediato con ciData in memoria (sincrono, nessuna await)
+  let html;
   try {
-    panel.innerHTML = renderDrawerCheckin(b);
+    html = renderDrawerCheckin(b);
+    log('html.len=' + html.length);
   } catch(e) {
-    panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Errore: ${e.message}</div>`;
+    log('❌ renderDrawerCheckin threw: ' + e.message);
+    html = `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Errore render: ${e.message}</div>`;
   }
 
-  // Refresh silenzioso in background — aggiorna solo se diverso
+  if (!html || !html.trim()) {
+    log('⚠ html EMPTY');
+    html = `<div style="padding:12px;background:#fff7ed;border-radius:8px;font-size:12px;color:#9a3412;">⚠ renderDrawerCheckin restituito vuoto</div>`;
+  }
+
+  panel.innerHTML = html;
+  log('innerHTML SET ok. panel.offsetHeight=' + panel.offsetHeight);
+
   if (typeof loadCiData === 'function') {
     loadCiData().then(() => {
-      const updated = renderDrawerCheckin(b);
-      if (panel.isConnected) panel.innerHTML = updated;
+      if (panel.isConnected) {
+        const updated = renderDrawerCheckin(b);
+        if (updated && updated.trim()) {
+          panel.innerHTML = updated;
+          log('refreshed after loadCiData');
+        }
+      }
     }).catch(() => {});
   }
 }
