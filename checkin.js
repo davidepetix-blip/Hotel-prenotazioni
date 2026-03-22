@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '9'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '10'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -82,20 +82,28 @@ async function readCiSheet() {
     const rows = d.values || [];
     const result = {};
     rows.forEach((row, i) => {
-      const preId = row[1] || '';
-      if (!preId) return;
+      const preId  = row[1] || '';
+      const camera = row[2] || '';
+      const data   = row[3] || '';
       try {
-        result[preId] = {
+        const rec = {
           ciId:   row[0] || '',
-          preId:  row[1] || '',
-          camera: row[2] || '',
-          data:   row[3] || '',
+          preId,
+          camera,
+          data,
           numOspiti: parseInt(row[4]) || 0,
           guests: JSON.parse(row[5] || '[]'),
           ts:     row[6] || '',
           utente: row[7] || '',
           ciRow:  i + 2,
         };
+        // Chiave primaria per preId (se presente)
+        if (preId) result[preId] = rec;
+        // Chiave alternativa sempre: cam:CAMERA:DATA — permette lookup anche con preId vuoto
+        if (camera && data) {
+          const altKey = 'cam:' + camera + ':' + data;
+          if (!result[altKey]) result[altKey] = rec; // non sovrascrivere se già presente
+        }
       } catch(e) {}
     });
     return result;
@@ -302,9 +310,12 @@ function renderCiHistory() {
 
 // ── Modale check-in ──
 function openCiModal(bookingDbId) {
-  const b = bookings.find(b => b.dbId === bookingDbId);
+  // Trova il booking: prima per dbId esatto, poi per id numerico (fallback dal drawer)
+  let b = bookings.find(x => x.dbId && x.dbId === bookingDbId);
+  if (!b) b = bookings.find(x => String(x.id) === String(bookingDbId));
   if (!b) { showToast('Prenotazione non trovata', 'error'); return; }
-  _ciEditBookingId = bookingDbId;
+  // Usa dbId se disponibile, altrimenti chiave locale stabile
+  _ciEditBookingId = b.dbId || ('LOCAL-' + b.id);
   const room = ROOMS.find(r => r.id === b.r);
   document.getElementById('ciPanelTitle').textContent = `Check-in · Camera ${room?.name||b.cameraName}`;
   document.getElementById('ciPanelSub').textContent = `${b.n} · ${fmtDate(b.s)} → ${fmtDate(b.e)}`;
@@ -480,7 +491,9 @@ async function saveCiCheckin() {
     return;
   }
 
-  const b = bookings.find(b => b.dbId === _ciEditBookingId);
+  // Trova booking: per dbId o per id numerico (chiave LOCAL-)
+  const b = bookings.find(x => x.dbId === _ciEditBookingId)
+         || bookings.find(x => ('LOCAL-' + x.id) === _ciEditBookingId);
   const room = ROOMS.find(r => r.id === b?.r);
   const existing = ciData[_ciEditBookingId];
 
@@ -827,10 +840,19 @@ function drTab(el, tabId, bookingId) {
  */
 function renderDrawerCheckin(b) {
   if (!b) return '';
-  const ci      = ciData && ciData[b.dbId];
+
+  // Lookup: prima per dbId, poi per cam:CAMERA:DATA (fallback record con preId vuoto)
+  const room    = typeof ROOMS !== 'undefined' ? ROOMS.find(r => r.id === b.r) : null;
+  const camName = room?.name || b.cameraName || '';
+  const dataArr = (b.s instanceof Date ? b.s : new Date(b.s)).toISOString().slice(0, 10);
+  const altKey  = 'cam:' + camName + ':' + dataArr;
+  const ci      = (ciData && b.dbId && ciData[b.dbId])
+               || (ciData && ciData[altKey])
+               || null;
+
   const now     = Date.now();
   const arrival = b.s instanceof Date ? b.s.getTime() : new Date(b.s).getTime();
-  const hoursToArrival = (arrival - now) / 36e5; // negativo = già arrivato
+  const hoursToArrival = (arrival - now) / 36e5;
 
   // ── Check-in già fatto ──
   if (ci && ci.guests && ci.guests.length > 0) {
@@ -854,7 +876,7 @@ function renderDrawerCheckin(b) {
         <div class="ci-dr-meta">${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · registrato il ${(ci.ts||'').slice(0,10).split('-').reverse().join('/')}</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
-        <button class="btn" style="flex:1;justify-content:center;" onclick="openCiModal('${b.dbId}')">✎ Modifica</button>
+        <button class="btn" style="flex:1;justify-content:center;" onclick="openCiModal('${b.id}')">✎ Modifica</button>
         <button class="btn" style="flex:1;justify-content:center;" onclick="exportAlloggiati('filtered')">⬇ Alloggiati</button>
       </div>`;
   }
@@ -868,7 +890,7 @@ function renderDrawerCheckin(b) {
         ⚠ Check-in in ritardo<br>
         <span style="font-size:11px;opacity:.85;">Arrivo ${giorni > 0 ? giorni+' giorn'+(giorni===1?'o':'i')+' fa' : 'oggi'} — non ancora registrato</span>
       </div>
-      <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" onclick="openCiModal('${b.dbId}')">
+      <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" onclick="openCiModal('${b.id}')">
         🛎 Registra check-in ora
       </button>`;
   }
@@ -882,7 +904,7 @@ function renderDrawerCheckin(b) {
         🕐 Arrivo tra ${label}<br>
         <span style="font-size:11px;opacity:.85;">Prepara il check-in in anticipo</span>
       </div>
-      <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" onclick="openCiModal('${b.dbId}')">
+      <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" onclick="openCiModal('${b.id}')">
         🛎 Fai check-in
       </button>`;
   }
@@ -894,7 +916,7 @@ function renderDrawerCheckin(b) {
       Arrivo tra <strong>${gg} giorni</strong><br>
       <span style="font-size:11px;color:var(--text3);">Il check-in può essere fatto fino a 48h prima o dopo l'arrivo.</span>
     </div>
-    <button class="btn" style="width:100%;justify-content:center;margin-top:12px;" onclick="openCiModal('${b.dbId}')">
+    <button class="btn" style="width:100%;justify-content:center;margin-top:12px;" onclick="openCiModal('${b.id}')">
       🛎 Fai check-in in anticipo
     </button>`;
 }
