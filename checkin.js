@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '3'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '4'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -764,18 +764,36 @@ async function ciHandleDocImage(input) {
  * Definita qui (checkin.js caricato dopo gantt.js) per evitare duplicati.
  * Gestisce sia i tab esistenti (drTabInfo, drTabBill) che drTabCI.
  */
-function drTab(el, tabId) {
-  // Deseleziona tutti i tab dello stesso gruppo
+function drTab(el, tabId, bookingDbId) {
   const tabs = el.closest('.dr-bill-tabs');
   if (tabs) tabs.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  // Nascondi tutti i pannelli fratelli
   ['drTabInfo','drTabBill','drTabCI'].forEach(id => {
     const p = document.getElementById(id);
     if (p) p.style.display = 'none';
   });
   const panel = document.getElementById(tabId);
   if (panel) panel.style.display = '';
+
+  // Lazy render del tab Check-in: carica ciData fresco poi inietta HTML
+  if (tabId === 'drTabCI' && panel) {
+    const dbId = bookingDbId || panel.dataset.bookingId || '';
+    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">⏳ Caricamento…</div>';
+    loadCiData().then(() => {
+      // Trova la prenotazione in memoria
+      const b = (typeof bookings !== 'undefined') ? bookings.find(x => x.dbId === dbId) : null;
+      if (b) {
+        panel.innerHTML = renderDrawerCheckin(b);
+      } else {
+        // dbId non matcha — prova a costruire un oggetto minimale dal DOM
+        const title  = document.getElementById('drtitle');
+        const sub    = document.getElementById('drsub');
+        panel.innerHTML = renderDrawerCheckin({ dbId, s: new Date(), n: title?.textContent || '' });
+      }
+    }).catch(e => {
+      panel.innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px;">Errore caricamento: ${e.message}</div>`;
+    });
+  }
 }
 
 /**
