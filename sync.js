@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '3'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '5'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -100,19 +100,26 @@ async function rigenera() {
     showToast('URL Web App non configurato — vai in ⚙ Tariffe', 'error');
     return;
   }
-  showToast('📡 Rigenerazione in corso…', 'info');
+  showToast('📡 Chiamata Web App…', 'info');
   try {
-    await fetch(`${url}?anno=${new Date().getFullYear()}&ts=${Date.now()}`, {method:'GET',mode:'no-cors'});
-    showToast('⏳ Attendi 5 secondi poi il calendario si aggiorna…', 'info');
-    setTimeout(async () => {
-      try {
-        annualSheets = loadAnnualSheets();
-        await loadFromSheets();
-        showToast('✓ Calendario rigenerato', 'success');
-      } catch(e2) { showToast('⚠ Ricarica la pagina manualmente', 'warning'); }
-    }, 5000);
-  } catch(e) {
-    showToast('❌ Errore Web App: ' + e.message, 'error');
+    await fetch(`${url}?anno=${new Date().getFullYear()}&ts=${Date.now()}`, {method:'GET',mode:'no-cors'}).catch(()=>{});
+    showToast('⏳ Attendi 7 secondi…', 'info');
+    await new Promise(r => setTimeout(r, 7000));
+    // Verifica che il JSON_ANNUALE sia stato effettivamente aggiornato
+    try {
+      const sheetEntry = loadAnnualSheets().find(e => e.sheetId);
+      if (sheetEntry) {
+        const fresh = await readJSONAnnuale(sheetEntry.sheetId);
+        if (fresh && fresh.length > 0) {
+          annualSheets = loadAnnualSheets();
+          await loadFromSheets();
+          showToast('✓ Calendario rigenerato', 'success');
+          return;
+        }
+      }
+    } catch(e2) {}
+    // Se arriviamo qui, la Web App non ha risposto correttamente
+    showToast('⚠ Web App non ha risposto — verifica il deploy in Apps Script (Distribuisci → Gestisci distribuzioni → Accesso: Chiunque)', 'warning');
   }
 }
 
@@ -1303,28 +1310,59 @@ async function segnalaModificaAdAppsScript(sheetId) {
     return;
   }
   try {
-    showToast('🔄 Aggiornamento calendario in corso…', 'info');
     const anno = new Date().getFullYear();
     const url  = `${webAppUrl}?anno=${anno}&ts=${Date.now()}`;
     syncLog(`📡 Chiamata Web App: ${url.slice(0,60)}…`, 'syn');
-    await fetch(url, { method:'GET', mode:'no-cors' });
-    setTimeout(async () => {
-      try {
-        annualSheets = loadAnnualSheets();
-        await loadFromSheets();
-        syncLog('✓ JSON_ANNUALE rigenerato, calendario aggiornato', 'ok');
-        showToast('✓ Calendario aggiornato', 'success');
-      } catch(e2) { console.warn('[WebApp] reload fallito:', e2.message); }
-    }, 6000);
+
+    // no-cors: non possiamo leggere la risposta, ma la richiesta parte
+    // Usiamo un Image trick come fallback diagnostico
+    await fetch(url, { method:'GET', mode:'no-cors' }).catch(() => {});
+
+    // Aspetta che Apps Script elabori (3-8 sec tipicamente)
+    await new Promise(r => setTimeout(r, 7000));
+
+    // Rileggi il JSON_ANNUALE per verificare se è stato aggiornato
+    try {
+      const sheetEntry = annualSheets.find(e => e.sheetId);
+      if (!sheetEntry) return;
+      const freshBookings = await readJSONAnnuale(sheetEntry.sheetId);
+      if (freshBookings && freshBookings.length > 0) {
+        syncLog(`✓ Web App OK — JSON_ANNUALE aggiornato (${freshBookings.length} prenotazioni)`, 'ok');
+        // Aggiorna bookings solo se non c'è già un sync in corso
+        if (!_bgSyncRunning) {
+          bookings = mergeMultiMonthBookings(freshBookings.filter(b => !isDeletedLocally(b.dbId)));
+          render();
+        }
+      } else {
+        syncLog('⚠ Web App: JSON_ANNUALE vuoto dopo aggiornamento — verifica deploy', 'wrn');
+        showToast('⚠ Web App non risponde correttamente — verifica il deploy in Apps Script', 'warning');
+      }
+    } catch(e2) {
+      syncLog(`⚠ Web App: verifica fallita (${e2.message}) — premi 🔄 per aggiornare manualmente`, 'wrn');
+    }
   } catch(e) {
     console.warn('[WebApp] chiamata fallita:', e.message);
-    showToast('⚠ Aggiornamento calendario fallito — ricarica manualmente con 🔄', 'warning');
+    syncLog(`❌ Web App errore: ${e.message}`, 'err');
   }
 }
 
 async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap, spreadsheetId) {
   let colIdx = sheetColumnMap[sName]?.[cameraName];
-  if (!colIdx) return;
+  if (!colIdx) {
+    // Carica la mappa colonne on-demand (può essere vuota dopo forceSync/riavvio)
+    try {
+      const hd = await sheetsGet(`'${sName}'!B${HEADER_ROW}:AJ${HEADER_ROW}`);
+      sheetColumnMap[sName] = {};
+      (hd.values?.[0]||[]).forEach((h,i) => {
+        if (!h) return;
+        const raw = String(h).trim(), norm = raw.replace(/\.0$/,'');
+        sheetColumnMap[sName][raw] = i + 2;
+        if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
+      });
+      colIdx = sheetColumnMap[sName]?.[cameraName];
+    } catch(e) { console.warn('[clearFragment] caricamento mappa colonne:', e.message); }
+  }
+  if (!colIdx) { console.warn(`[clearFragment] Camera "${cameraName}" non trovata in "${sName}"`); return; }
   const sheetId = sheetIdMap[sName];
   if (sheetId === undefined) return;
   const startRow = FIRST_DATA_ROW + startDay - 1;
