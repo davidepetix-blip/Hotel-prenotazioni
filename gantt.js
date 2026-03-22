@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '2'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '3'; // ← incrementa ad ogni modifica
 
 function render() {
   const days = dim(curY, curM);
@@ -309,9 +309,44 @@ function openModal(isEdit=false){
   document.getElementById('mtitle').textContent=isEdit?'Modifica Prenotazione':'Nuova Prenotazione';
   rebuildBeds(isEdit ? bedCounts : null); rebuildColors();
   document.getElementById('errmsg').classList.remove('show');
+  // In modalità modifica: forza la selezione della camera nel select
+  // (il valore può non essere visibile se le option non erano ancora pronte)
+  if (isEdit) {
+    const sel = document.getElementById('fRoom');
+    const val = sel.value;
+    // Cerca e seleziona l'option corrispondente
+    const opt = sel.querySelector(`option[value="${val}"]`);
+    if (opt) {
+      opt.selected = true;
+      // Mostra nome camera nel label (per evitare campo apparentemente vuoto su mobile)
+      const lbl = sel.closest('.fg')?.querySelector('label.fl');
+      if (lbl) lbl.textContent = 'Camera: ' + opt.textContent;
+    }
+    // Blocca il select in modifica (la camera non si cambia su una prenotazione esistente)
+    sel.disabled = true;
+    sel.style.opacity = '0.6';
+  } else {
+    // In nuova prenotazione: select abilitato e label normale
+    const sel = document.getElementById('fRoom');
+    sel.disabled = false;
+    sel.style.opacity = '';
+    const lbl = sel.closest('.fg')?.querySelector('label.fl');
+    if (lbl) lbl.textContent = 'Camera';
+  }
   document.getElementById('mov').classList.add('open');
 }
-function closeModal(){ document.getElementById('mov').classList.remove('open'); editId=null; document.getElementById('fIn').value=''; document.getElementById('fOut').value=''; }
+function closeModal(){
+  document.getElementById('mov').classList.remove('open');
+  editId=null;
+  document.getElementById('fIn').value='';
+  document.getElementById('fOut').value='';
+  // Riabilita il select camera (potrebbe essere stato disabilitato in edit mode)
+  const sel = document.getElementById('fRoom');
+  sel.disabled = false;
+  sel.style.opacity = '';
+  const lbl = sel.closest('.fg')?.querySelector('label.fl');
+  if (lbl) lbl.textContent = 'Camera';
+}
 function movClick(e){ if(e.target===document.getElementById('mov')) closeModal(); }
 
 function rebuildBeds(initCounts) {
@@ -1660,6 +1695,7 @@ async function testDbConnection() {
 
 function buildRoomSelect(){
   const sel=document.getElementById('fRoom');
+  sel.innerHTML = ''; // svuota prima di ricostruire (idempotente)
   const groups=[...new Set(ROOMS.map(r=>r.g))];
   groups.forEach(g=>{
     const og=document.createElement('optgroup'); og.label=g;
