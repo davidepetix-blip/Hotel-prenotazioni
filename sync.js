@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '2'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '3'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -877,6 +877,8 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   // FASE 1: Foglio → verità assoluta
   for (const sheet of sheetBookings) {
     if (!sheet.n || sheet.n === '???' || sheet.n.trim() === '') continue;
+    // Salta prenotazioni cancellate localmente (blacklist anti-ghost)
+    if (isDeletedLocally(sheet.dbId)) { syncLog(`🗑 Skip blacklist: ${sheet.n}`, 'wrn'); continue; }
     const match = findMatch(sheet, dbActive);
     if (!match) {
       sheet.dbId  = genBookingId(sheet.s.getFullYear());
@@ -902,6 +904,8 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   // FASE 2: DB → gestione non-matchati
   for (const db of dbActive) {
     if (seenDbIds.has(db.dbId)) continue;
+    // Salta prenotazioni cancellate localmente (blacklist anti-ghost)
+    if (isDeletedLocally(db.dbId)) { syncLog(`🗑 Skip blacklist DB: ${db.n}`, 'wrn'); continue; }
     if (!db.n || db.n === '???' || db.n.trim() === '') { result.push(db); continue; }
 
     const tsModifica = db.ts ? new Date(db.ts).getTime() : 0;
