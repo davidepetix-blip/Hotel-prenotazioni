@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '5'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '6'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -775,37 +775,54 @@ function drTab(el, tabId, bookingId) {
   const panel = document.getElementById(tabId);
   if (panel) panel.style.display = '';
 
-  // Lazy render del tab Check-in
   if (tabId === 'drTabCI' && panel) {
     const bid = bookingId !== undefined ? bookingId : panel.dataset.bookingId;
-    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">⏳ Caricamento…</div>';
+
+    // ── DIAGNOSTICA VISIBILE ──
+    const diag = (msg, color) => {
+      panel.innerHTML += `<div style="font-size:10px;font-family:monospace;padding:2px 8px;color:${color||'#666'}">${msg}</div>`;
+    };
+    panel.innerHTML = `<div style="padding:12px;background:#f8f9fa;border-radius:8px;margin:8px;font-size:10px;font-family:monospace;color:#444;">
+      <strong>DEBUG CHECK-IN</strong><br>bookingId passato: <b>${bid}</b></div>`;
+
+    // Controlla bookings in memoria
+    const allBooks = typeof bookings !== 'undefined' ? bookings : [];
+    diag(`bookings in memoria: ${allBooks.length}`);
+
+    const b = allBooks.find(x => String(x.id) === String(bid));
+    if (!b) {
+      diag(`❌ booking con id=${bid} NON trovato`, '#c00');
+      diag(`IDs disponibili: ${allBooks.slice(0,5).map(x=>x.id).join(', ')}…`);
+      return;
+    }
+    diag(`✓ booking trovato: "${b.n}"`, '#060');
+    diag(`dbId: ${b.dbId || 'NULL'}`);
+
+    if (!b.dbId) {
+      panel.innerHTML = `<div style="padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin:8px;font-size:12px;color:#9a3412;">
+        ⚠ Prenotazione non ancora nel database (dbId mancante).<br>Premi <strong>↻</strong> per sincronizzare, poi riprova.
+      </div>`;
+      return;
+    }
+
+    diag(`ciData prima del load: ${Object.keys(typeof ciData!=='undefined'?ciData:{}).length} record`);
 
     loadCiData().then(() => {
-      // Trova il booking tramite id numerico (sempre presente in gantt)
-      const b = (typeof bookings !== 'undefined')
-        ? bookings.find(x => String(x.id) === String(bid))
-        : null;
+      const ciKeys = Object.keys(typeof ciData!=='undefined'?ciData:{});
+      diag(`ciData dopo load: ${ciKeys.length} record`);
+      diag(`chiavi ciData: ${ciKeys.slice(0,3).join(', ')||'nessuna'}`);
+      diag(`cercando chiave: "${b.dbId}"`);
+      diag(`match: ${ciKeys.includes(b.dbId) ? 'SÌ ✓' : 'NO ✗'}`);
 
-      if (!b) {
-        panel.innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px;">
-          Prenotazione non trovata (id=${bid})<br>
-          <button class="btn" style="margin-top:8px" onclick="openCheckin()">Apri modulo check-in</button>
-        </div>`;
+      const content = renderDrawerCheckin(b);
+      if (!content || !content.trim()) {
+        diag(`❌ renderDrawerCheckin ha restituito stringa vuota`, '#c00');
         return;
       }
-
-      // Se b.dbId è null, il check-in non può essere salvato sul DB
-      if (!b.dbId) {
-        panel.innerHTML = `<div style="padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
-          ⚠ Questa prenotazione non è ancora sincronizzata con il database.<br>
-          Premi <strong>↻</strong> per sincronizzare, poi riprova.
-        </div>`;
-        return;
-      }
-
-      panel.innerHTML = renderDrawerCheckin(b);
+      // OK — sostituisci tutto con il contenuto reale
+      panel.innerHTML = content;
     }).catch(e => {
-      panel.innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px;">Errore: ${e.message}</div>`;
+      panel.innerHTML += `<div style="padding:8px;color:red;font-size:11px;">❌ loadCiData error: ${e.message}</div>`;
     });
   }
 }
