@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '3'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '4'; // ← incrementa ad ogni modifica
 
 function render() {
   const days = dim(curY, curM);
@@ -226,7 +226,16 @@ function selBook(id,e){
 function editBook(id){
   const b=bookings.find(x=>x.id===id); if(!b) return;
   editId=id;
-  document.getElementById('fRoom').value=b.r;
+  // Imposta il select (per saveBooking che legge fRoom.value)
+  const selR = document.getElementById('fRoom');
+  selR.value = b.r;
+  // Se il valore non è stato accettato (option non ancora presente), forza aggiornando le option
+  if (selR.value !== b.r) {
+    // buildRoomSelect potrebbe non essere ancora stato eseguito — ricostruiamo
+    buildRoomSelect();
+    selR.value = b.r;
+  }
+  syncLog(`editBook: b.r="${b.r}" sel.value="${selR.value}" opts=${selR.options.length}`, 'syn');
   document.getElementById('fName').value=b.n;
   document.getElementById('fIn').value=b.s.toISOString().slice(0,10);
   document.getElementById('fOut').value=b.e.toISOString().slice(0,10);
@@ -234,6 +243,8 @@ function editBook(id){
   selColor=b.c;
   // Parsa la stringa disposizione nei contatori
   bedCounts = parseBedString(b.d);
+  // Salva il nome camera per mostrarlo nel modal (non dipende dallo stato del select)
+  window._editCameraName = b.cameraName || roomName(b.r) || b.r;
   closeDrawer(); openModal(true);
 }
 
@@ -309,28 +320,30 @@ function openModal(isEdit=false){
   document.getElementById('mtitle').textContent=isEdit?'Modifica Prenotazione':'Nuova Prenotazione';
   rebuildBeds(isEdit ? bedCounts : null); rebuildColors();
   document.getElementById('errmsg').classList.remove('show');
-  // In modalità modifica: forza la selezione della camera nel select
-  // (il valore può non essere visibile se le option non erano ancora pronte)
+  // Gestione campo camera
+  const sel = document.getElementById('fRoom');
+  const cameraFg = sel.closest('.fg');
+  const lbl = cameraFg?.querySelector('label.fl');
+  // Rimuovi eventuale div statico precedente
+  const oldStatic = cameraFg?.querySelector('.camera-static-display');
+  if (oldStatic) oldStatic.remove();
+
   if (isEdit) {
-    const sel = document.getElementById('fRoom');
-    const val = sel.value;
-    // Cerca e seleziona l'option corrispondente
-    const opt = sel.querySelector(`option[value="${val}"]`);
-    if (opt) {
-      opt.selected = true;
-      // Mostra nome camera nel label (per evitare campo apparentemente vuoto su mobile)
-      const lbl = sel.closest('.fg')?.querySelector('label.fl');
-      if (lbl) lbl.textContent = 'Camera: ' + opt.textContent;
-    }
-    // Blocca il select in modifica (la camera non si cambia su una prenotazione esistente)
-    sel.disabled = true;
-    sel.style.opacity = '0.6';
+    // In modifica: mostra la camera come testo statico (non select)
+    // Usiamo il nome salvato in editBook, indipendente dallo stato delle option
+    const camName = window._editCameraName || sel.value || '—';
+    sel.style.display = 'none'; // nascondi select
+    const staticDiv = document.createElement('div');
+    staticDiv.className = 'fi camera-static-display';
+    staticDiv.style.cssText = 'opacity:0.7;cursor:default;user-select:none;';
+    staticDiv.textContent = camName;
+    sel.after(staticDiv);
+    if (lbl) lbl.textContent = 'Camera';
   } else {
-    // In nuova prenotazione: select abilitato e label normale
-    const sel = document.getElementById('fRoom');
+    // In nuova prenotazione: mostra il select normale
+    sel.style.display = '';
     sel.disabled = false;
     sel.style.opacity = '';
-    const lbl = sel.closest('.fg')?.querySelector('label.fl');
     if (lbl) lbl.textContent = 'Camera';
   }
   document.getElementById('mov').classList.add('open');
@@ -340,12 +353,17 @@ function closeModal(){
   editId=null;
   document.getElementById('fIn').value='';
   document.getElementById('fOut').value='';
-  // Riabilita il select camera (potrebbe essere stato disabilitato in edit mode)
+  // Ripristina select camera (rimuovi eventuale div statico da edit mode)
   const sel = document.getElementById('fRoom');
+  sel.style.display = '';
   sel.disabled = false;
   sel.style.opacity = '';
-  const lbl = sel.closest('.fg')?.querySelector('label.fl');
+  const cameraFg = sel.closest('.fg');
+  const oldStatic = cameraFg?.querySelector('.camera-static-display');
+  if (oldStatic) oldStatic.remove();
+  const lbl = cameraFg?.querySelector('label.fl');
   if (lbl) lbl.textContent = 'Camera';
+  window._editCameraName = null;
 }
 function movClick(e){ if(e.target===document.getElementById('mov')) closeModal(); }
 
