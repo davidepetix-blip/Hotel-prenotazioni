@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '5'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '6'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -120,6 +120,9 @@ async function rigenera() {
     } catch(e2) {}
     // Se arriviamo qui, la Web App non ha risposto correttamente
     showToast('⚠ Web App non ha risposto — verifica il deploy in Apps Script (Distribuisci → Gestisci distribuzioni → Accesso: Chiunque)', 'warning');
+  } catch(e) {
+    console.warn('[rigenera] errore:', e.message);
+    showToast('❌ Errore Web App: ' + e.message, 'error');
   }
 }
 
