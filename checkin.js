@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '12'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '13'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -778,75 +778,69 @@ async function ciHandleDocImage(input) {
  * Gestisce sia i tab esistenti (drTabInfo, drTabBill) che drTabCI.
  */
 function drTab(el, tabId, bookingId) {
+  showToast('drTab chiamata: ' + tabId, 'info');
+
   const tabsContainer = el.closest('.dr-bill-tabs');
-  if (!tabsContainer) return;
+  if (!tabsContainer) { showToast('ERR: no tabsContainer', 'error'); return; }
   tabsContainer.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
 
-  const parent = tabsContainer.parentElement;
-  if (!parent) return;
+  const drbody = document.getElementById('drbody');
+  if (!drbody) { showToast('ERR: no drbody', 'error'); return; }
 
-  parent.querySelectorAll('[id^="drTab"]').forEach(p => p.style.display = 'none');
-  const panel = parent.querySelector('#' + tabId);
-  if (panel) panel.style.display = 'block';
-
-  if (tabId !== 'drTabCI') return;
-
-  // Pannello debug: scritto DIRETTAMENTE nel drbody, sempre visibile
-  let debugEl = document.getElementById('ciTabDebug');
-  if (!debugEl) {
-    debugEl = document.createElement('div');
-    debugEl.id = 'ciTabDebug';
-    debugEl.style.cssText = 'position:sticky;top:0;background:#0f0f1a;color:#4a86e8;font-size:9px;font-family:monospace;padding:4px 8px;z-index:9999;line-height:1.6;';
-    parent.insertBefore(debugEl, tabsContainer.nextSibling);
-  }
-  const log = msg => { debugEl.innerHTML += msg + '<br>'; console.log('[CI-TAB]', msg); };
-  debugEl.innerHTML = '';
-
-  if (!panel) {
-    log('❌ panel #drTabCI NOT FOUND');
-    log('parent id=' + (parent.id||'no-id') + ' children=' + parent.children.length);
+  if (tabId !== 'drTabCI') {
+    // Per Dettagli e Conto: nascondi/mostra pannelli normalmente
+    const parent = tabsContainer.parentElement;
+    if (!parent) return;
+    parent.querySelectorAll('[id^="drTab"]').forEach(p => p.style.display = 'none');
+    const panel = parent.querySelector('#' + tabId);
+    if (panel) panel.style.display = 'block';
     return;
   }
 
-  const bid = bookingId !== undefined ? bookingId : panel.dataset.bookingId;
-  log('bid=' + bid + ' panel.connected=' + panel.isConnected);
-
+  // ── TAB CHECK-IN: riscrivi drbody direttamente ──
+  const bid = bookingId !== undefined ? bookingId : '';
   const allBooks = typeof bookings !== 'undefined' ? bookings : [];
   const b = allBooks.find(x => String(x.id) === String(bid));
-  log('booking=' + (b ? '"'+b.n+'" dbId='+b.dbId : 'NOT FOUND tot='+allBooks.length));
+
+  showToast('bid=' + bid + ' trovato=' + (b ? b.n : 'NO'), 'info');
 
   if (!b) {
-    panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Booking non trovato (id=${bid})</div>`;
+    drbody.innerHTML = tabsContainer.outerHTML +
+      `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;margin-top:12px;">
+        ⚠ Booking non trovato (id=${bid}, tot=${allBooks.length})
+      </div>`;
+    // Riattiva il tab selezionato
+    drbody.querySelector('.dr-bill-tabs .dr-bill-tab:nth-child(3)')?.classList.add('active');
     return;
   }
 
-  let html;
+  let ciHtml;
   try {
-    html = renderDrawerCheckin(b);
-    log('html.len=' + html.length);
+    ciHtml = renderDrawerCheckin(b);
   } catch(e) {
-    log('❌ renderDrawerCheckin threw: ' + e.message);
-    html = `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Errore render: ${e.message}</div>`;
+    ciHtml = `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Errore render: ${e.message}</div>`;
+  }
+  if (!ciHtml || !ciHtml.trim()) {
+    ciHtml = `<div style="padding:12px;background:#fff7ed;border-radius:8px;font-size:12px;color:#9a3412;">⚠ renderDrawerCheckin restituito vuoto — b.dbId=${b.dbId||'null'}</div>`;
   }
 
-  if (!html || !html.trim()) {
-    log('⚠ html EMPTY');
-    html = `<div style="padding:12px;background:#fff7ed;border-radius:8px;font-size:12px;color:#9a3412;">⚠ renderDrawerCheckin restituito vuoto</div>`;
-  }
+  drbody.innerHTML = tabsContainer.outerHTML + ciHtml;
+  // Riattiva il tab Check-in
+  const tabs3 = drbody.querySelectorAll('.dr-bill-tab');
+  if (tabs3.length >= 3) tabs3[2].classList.add('active');
 
-  panel.innerHTML = html;
-  log('innerHTML SET ok. panel.offsetHeight=' + panel.offsetHeight);
-
+  // Refresh dopo loadCiData
   if (typeof loadCiData === 'function') {
     loadCiData().then(() => {
-      if (panel.isConnected) {
+      try {
         const updated = renderDrawerCheckin(b);
         if (updated && updated.trim()) {
-          panel.innerHTML = updated;
-          log('refreshed after loadCiData');
+          drbody.innerHTML = tabsContainer.outerHTML + updated;
+          const t3 = drbody.querySelectorAll('.dr-bill-tab');
+          if (t3.length >= 3) t3[2].classList.add('active');
         }
-      }
+      } catch(e) {}
     }).catch(() => {});
   }
 }
