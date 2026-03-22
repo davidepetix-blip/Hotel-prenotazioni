@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '7'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '8'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -765,64 +765,61 @@ async function ciHandleDocImage(input) {
  * Gestisce sia i tab esistenti (drTabInfo, drTabBill) che drTabCI.
  */
 function drTab(el, tabId, bookingId) {
-  const tabs = el.closest('.dr-bill-tabs');
-  if (tabs) tabs.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
+  // Switch active tab
+  const tabsContainer = el.closest('.dr-bill-tabs');
+  if (!tabsContainer) return;
+  tabsContainer.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  ['drTabInfo','drTabBill','drTabCI'].forEach(id => {
-    const p = document.getElementById(id);
-    if (p) p.style.display = 'none';
-  });
-  const panel = document.getElementById(tabId);
+
+  // Trova i pannelli nel parent (drbody) — querySelector locale, non getElementById
+  const parent = tabsContainer.parentElement;
+  if (!parent) return;
+
+  // Nascondi tutti i pannelli
+  parent.querySelectorAll('[id^="drTab"]').forEach(p => p.style.display = 'none');
+
+  // Mostra il pannello target
+  const panel = parent.querySelector('#' + tabId);
   if (panel) panel.style.display = '';
 
-  if (tabId === 'drTabCI' && panel) {
-    const bid = bookingId !== undefined ? bookingId : panel.dataset.bookingId;
-
-    // ── DIAGNOSTICA VISIBILE ──
-    const diag = (msg, color) => {
-      panel.innerHTML += `<div style="font-size:10px;font-family:monospace;padding:2px 8px;color:${color||'#666'}">${msg}</div>`;
-    };
-    panel.innerHTML = `<div style="padding:12px;background:#f8f9fa;border-radius:8px;margin:8px;font-size:10px;font-family:monospace;color:#444;">
-      <strong>DEBUG CHECK-IN</strong><br>bookingId passato: <b>${bid}</b></div>`;
-
-    // Controlla bookings in memoria
-    const allBooks = typeof bookings !== 'undefined' ? bookings : [];
-    diag(`bookings in memoria: ${allBooks.length}`);
-
-    const b = allBooks.find(x => String(x.id) === String(bid));
-    if (!b) {
-      diag(`❌ booking con id=${bid} NON trovato`, '#c00');
-      diag(`IDs disponibili: ${allBooks.slice(0,5).map(x=>x.id).join(', ')}…`);
+  // ── Lazy render Check-in ──
+  if (tabId === 'drTabCI') {
+    if (!panel) {
+      // Pannello non trovato — crea al volo come ultimo figlio
+      const fallback = document.createElement('div');
+      fallback.id = 'drTabCI';
+      fallback.style.padding = '12px';
+      fallback.innerHTML = '<div style="color:red;font-size:12px;">Errore: pannello check-in non trovato nel DOM</div>';
+      parent.appendChild(fallback);
       return;
     }
-    diag(`✓ booking trovato: "${b.n}"`, '#060');
-    diag(`dbId: ${b.dbId || 'NULL'}`);
 
-    if (!b.dbId) {
-      panel.innerHTML = `<div style="padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin:8px;font-size:12px;color:#9a3412;">
-        ⚠ Prenotazione non ancora nel database (dbId mancante).<br>Premi <strong>↻</strong> per sincronizzare, poi riprova.
+    const bid = bookingId !== undefined ? bookingId : panel.dataset.bookingId;
+    panel.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">⏳ Caricamento…</div>';
+
+    const allBooks = typeof bookings !== 'undefined' ? bookings : [];
+    const b = allBooks.find(x => String(x.id) === String(bid));
+
+    if (!b) {
+      panel.innerHTML = `<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;">
+        ⚠ Prenotazione non trovata (id=${bid})<br>
+        <small>Prenotazioni in memoria: ${allBooks.length}</small><br>
+        <button class="btn" style="margin-top:8px" onclick="openCheckin()">Apri modulo check-in</button>
       </div>`;
       return;
     }
 
-    diag(`ciData prima del load: ${Object.keys(typeof ciData!=='undefined'?ciData:{}).length} record`);
+    if (!b.dbId) {
+      panel.innerHTML = `<div style="padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
+        ⚠ Prenotazione non ancora nel database.<br>Premi <strong>↻</strong> per sincronizzare, poi riprova.
+      </div>`;
+      return;
+    }
 
     loadCiData().then(() => {
-      const ciKeys = Object.keys(typeof ciData!=='undefined'?ciData:{});
-      diag(`ciData dopo load: ${ciKeys.length} record`);
-      diag(`chiavi ciData: ${ciKeys.slice(0,3).join(', ')||'nessuna'}`);
-      diag(`cercando chiave: "${b.dbId}"`);
-      diag(`match: ${ciKeys.includes(b.dbId) ? 'SÌ ✓' : 'NO ✗'}`);
-
-      const content = renderDrawerCheckin(b);
-      if (!content || !content.trim()) {
-        diag(`❌ renderDrawerCheckin ha restituito stringa vuota`, '#c00');
-        return;
-      }
-      // OK — sostituisci tutto con il contenuto reale
-      panel.innerHTML = content;
+      panel.innerHTML = renderDrawerCheckin(b);
     }).catch(e => {
-      panel.innerHTML += `<div style="padding:8px;color:red;font-size:11px;">❌ loadCiData error: ${e.message}</div>`;
+      panel.innerHTML = `<div style="padding:12px;color:red;font-size:12px;">Errore: ${e.message}</div>`;
     });
   }
 }
