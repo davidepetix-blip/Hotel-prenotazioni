@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '6'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '2'; // ← incrementa ad ogni modifica
 
 function render() {
   const days = dim(curY, curM);
@@ -185,7 +185,6 @@ function selBook(id,e){
     <div class="dr-bill-tabs">
       <div class="dr-bill-tab active" onclick="drTab(this,'drTabInfo')">📋 Dettagli</div>
       <div class="dr-bill-tab" onclick="drTab(this,'drTabBill')">💶 Conto</div>
-      <div class="dr-bill-tab" onclick="drTabCheckin(this,${b.id})">🛎 Check-in</div>
     </div>
     <div id="drTabInfo">
     <div class="dcard">
@@ -220,9 +219,6 @@ function selBook(id,e){
     </div>
     <div id="drTabBill" style="display:none;">
       ${renderDrawerBill(b)}
-    </div>
-    <div id="drTabCI" style="display:none;" data-booking-id="${b.id}">
-      <div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">Caricamento…</div>
     </div>`;
   openDrawer();
 }
@@ -245,6 +241,9 @@ async function delBook(id){
   const b=bookings.find(x=>x.id===id); if(!b) return;
   if(!confirm(`Eliminare la prenotazione di "${b.n}"?\nQuesto rimuoverà anche i colori dal foglio Google.`)) return;
   closeDrawer();
+  // Blacklist locale subito: impedisce al bgSync di riportare la prenotazione
+  // prima che il DB venga aggiornato
+  if (b.dbId) markDeletedLocally(b.dbId);
   showLoading('Rimozione…');
   try {
     // Rimuovi dal foglio Google sempre (bidirezionale)

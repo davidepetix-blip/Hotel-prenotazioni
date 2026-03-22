@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '1'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '2'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -592,8 +592,21 @@ async function dbUpsert(b, fonte = 'app') {
 }
 
 async function dbDelete(b, reason = 'cancellata dal foglio') {
-  if (!b.dbRow) return;
-  try { await archiviaInCestino([b], reason); } catch(e) { console.warn('[dbDelete]:', e.message); }
+  // Se manca dbRow ma abbiamo dbId, recupera la riga dal DB prima di archiviare
+  let target = b;
+  if (!b.dbRow && b.dbId && DATABASE_SHEET_ID) {
+    try {
+      const all = await readDatabase();
+      const found = all.find(r => r.dbId === b.dbId);
+      if (found) target = found;
+    } catch(e) { console.warn('[dbDelete] lookup dbId:', e.message); }
+  }
+  if (!target.dbRow) {
+    // Nessuna riga DB trovata — segna comunque deleted=true via update diretto per dbId
+    console.warn('[dbDelete] dbRow mancante, impossibile archiviare:', b.dbId || b.id);
+    return;
+  }
+  try { await archiviaInCestino([target], reason); } catch(e) { console.warn('[dbDelete]:', e.message); }
 }
 
 async function archiviaInCestino(lista, reason) {
@@ -992,6 +1005,21 @@ function clearSyncLog(e) {
 
 let _bgSyncTimer   = null;
 let _bgSyncRunning = false;
+// Blacklist locale: dbId cancellati localmente, ignorati dal bgSync
+// per evitare il "ghost reappearance" prima che il DB si aggiorni
+const _deletedLocally = new Map(); // dbId → timestamp cancellazione
+const _DELETED_TTL = 60 * 60 * 1000; // 1 ora
+
+function markDeletedLocally(dbId) {
+  if (dbId) _deletedLocally.set(String(dbId), Date.now());
+}
+function isDeletedLocally(dbId) {
+  if (!dbId) return false;
+  const t = _deletedLocally.get(String(dbId));
+  if (!t) return false;
+  if (Date.now() - t > _DELETED_TTL) { _deletedLocally.delete(String(dbId)); return false; }
+  return true;
+}
 
 function startBgSync() {
   if (_bgSyncTimer) clearInterval(_bgSyncTimer);
@@ -1021,7 +1049,7 @@ async function bgSync() {
   try {
     if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
     const dbFresh = await readDatabase();
-    const active  = dbFresh.filter(b => !b.deleted);
+    const active  = dbFresh.filter(b => !b.deleted && !isDeletedLocally(b.dbId));
 
     const prevCount = bookings.length;
     let changed = active.length !== prevCount;
