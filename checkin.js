@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '14'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '16'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -235,7 +235,7 @@ function renderCiToday() {
           <strong>${completatiTot} check-in</strong> pronti per Alloggiati Web<br>
           Genera il file .txt da caricare sul portale della Polizia di Stato
         </div>
-        <button class="btn primary" style="flex-shrink:0" onclick="exportAlloggiati('today')">⬇ Genera .txt</button>
+        <button class="btn primary" style="flex-shrink:0" onclick="exportAlloggiati('48h')">⬇ Genera .txt</button>
       </div>`;
   }
 
@@ -532,10 +532,12 @@ async function saveCiCheckin() {
 // Ref: specifiche tecniche Polizia di Stato – tracciato record tipo 20
 // --- TABELLE ALLOGGIATI WEB build 18.7.1 ---
 
-function exportAlloggiati(scope='today'){
+function exportAlloggiati(scope='48h'){
   const today=new Date().toISOString().slice(0,10);
+  const yesterday=new Date(Date.now()-864e5).toISOString().slice(0,10);
   let items;
   if(scope==='today'){items=Object.values(ciData).filter(ci=>ci.data===today);}
+  else if(scope==='48h'){items=Object.values(ciData).filter(ci=>ci.data===today||ci.data===yesterday);}
   else{items=Object.values(ciData).filter(ci=>{if(!_ciHistSearch)return true;const q=_ciHistSearch.toLowerCase();const cap=ci.guests[0]||{};return ci.camera.toLowerCase().includes(q)||((cap.cognome||'')+' '+(cap.nome||'')).toLowerCase().includes(q)||ci.data.includes(q);});}
   if(items.length===0){showToast('Nessun check-in da esportare','error');return;}
   const comuniMancanti=[],visti=new Set();
@@ -780,7 +782,6 @@ async function ciHandleDocImage(input) {
 // drTabCheckin — gestisce SOLO il tab 🛎 Check-in nel drawer.
 // Nome univoco per evitare conflitti con drTab di billing.js
 function drTabCheckin(el, bookingId) {
-  showToast('CI tab: bid=' + bookingId, 'success');
 
   // Attiva il tab visivamente
   const tabsContainer = el.closest('.dr-bill-tabs');
