@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '2'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '3'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1375,7 +1375,7 @@ function renderContiLista() {
       </div>
       ${lista.map(c => {
         const ci  = new Date(c.checkin), co = new Date(c.checkout);
-        const dot = bookings.find(b=>b.id===c.bookingId)?.c || '#ccc';
+        const dot = pastello(bookings.find(b=>b.id===c.bookingId)?.c || '#ccc');
         const cfg = STATO_CFG[c.status] || STATO_CFG.bozza;
         const isGruppo = c.groupId != null;
         const metaExtra = [
@@ -1686,7 +1686,7 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
     });
 
     return `<div class="sr-item" style="cursor:default">
-      <div class="sr-dot" style="background:${b.c}"></div>
+      <div class="sr-dot" style="background:${pastello(b.c)}"></div>
       <div class="sr-body">
         <div class="sr-name">${room?.name||roomName(b.r)}</div>
         <div class="sr-meta">

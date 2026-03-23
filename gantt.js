@@ -7,15 +7,7 @@
 
 const BLIP_VER_GANTT = '6'; // ← incrementa ad ogni modifica
 
-let _billingPreloaded = false;
 function render() {
-  // Al primo render con DATABASE_SHEET_ID disponibile, precarica i dati di conto.
-  // preloadContoDati() è asincrona: chiama render() di nuovo al completamento.
-  if (!_billingPreloaded && typeof preloadContoDati === 'function' && typeof DATABASE_SHEET_ID !== 'undefined' && DATABASE_SHEET_ID) {
-    _billingPreloaded = true;
-    preloadContoDati(); // async — ri-renderizza da sola al completamento
-  }
-
   const days = dim(curY, curM);
   const now  = new Date();
   const isNow = now.getFullYear()===curY && now.getMonth()===curM;
@@ -65,14 +57,16 @@ function render() {
         const vs=b.s<ms?ms:b.s, ve=b.e>me?me:b.e;
         const sd=vs.getDate(), ed=ve.getDate();
         const lx=(sd-1)*CW+1, w=(ed-sd+1)*CW-2;
-        const tc=light(b.c)?'#1a1916':'#e8e4dc';
+        const pc=pastello(b.c);       // versione pastello del colore (HUE preservato)
+        const tc='#1a1916';            // testo sempre scuro — pastello garantisce lum>190
         const adj=adjConflict(b).length>0;
         // 'continues' = prenotazione continua nel mese successivo → no striscia checkout
         const continues = b.e > me;
-        const _billBorder = (typeof billingBorderColor === 'function') ? billingBorderColor(b.id) : null;
-        const _borderStyle = _billBorder ? `border-left:3px solid ${_billBorder};` : '';
+        // Bordo sinistro = stato pagamento (da billing.js)
+        const _bBorder = (typeof billingBorderColor==='function') ? billingBorderColor(b.id) : null;
+        const _bStyle  = _bBorder ? `border-left:3px solid ${_bBorder};` : '';
         bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
-          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};${_borderStyle}"
+          style="left:${lx}px;width:${w}px;background:${pc};color:${tc};${_bStyle}"
           onclick="selBook(${b.id},event)"
           onmouseenter="showTT(event,${b.id})" onmouseleave="hideTT()">
           ${b.n}<span class="bdisp">${b.d}</span></div>`;
@@ -198,7 +192,7 @@ function selBook(id,e){
     </div>
     <div id="drTabInfo">
     <div class="dcard">
-      <div class="dcname"><span class="cpill" style="background:${b.c}"></span>${b.n}</div>
+      <div class="dcname"><span class="cpill" style="background:${pastello(b.c)}"></span>${b.n}</div>
       <div class="drow"><span class="dkey">Camera</span><span class="dval">${roomName(b.r)}</span></div>
       <div class="drow"><span class="dkey">Gruppo</span><span class="dval">${roomGroup(b.r)}</span></div>
       <div class="drow"><span class="dkey">Check-in</span><span class="dval">${fmt(b.s)}</span></div>
@@ -316,7 +310,7 @@ function openRoomDrawer(roomId) {
   const ms=new Date(curY,curM,1), me=new Date(curY,curM+1,0);
   const rbs=bookings.filter(b=>b.r===roomId&&b.s<=me&&b.e>=ms);
   let bhtml='';
-  rbs.forEach(b=>{ bhtml+=`<div style="background:${b.c};padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:12px;"><strong>${b.n}</strong><br><span style="font-size:10px;">${fmt(b.s)} → ${fmt(b.e)}</span>${b.d?'<br><span style="font-size:10px;">'+b.d+'</span>':''}</div>`; });
+  rbs.forEach(b=>{ const _pc=pastello(b.c); bhtml+=`<div style="background:${_pc};padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:12px;color:#1a1916;"><strong>${b.n}</strong><br><span style="font-size:10px;">${fmt(b.s)} → ${fmt(b.e)}</span>${b.d?'<br><span style="font-size:10px;">'+b.d+'</span>':''}</div>`; });
   document.getElementById('drbody').innerHTML = stateHtml + (bhtml||'<div class="empty" style="padding:20px 0;"><div style="font-size:11px;color:var(--text3);">Nessuna prenotazione questo mese</div></div>');
   openDrawer();
 }
@@ -999,7 +993,7 @@ function renderSearchResults(lista, q) {
     }
 
     return header + `<div class="sr-item" onclick="goToBooking(${b.id})">
-      <div class="sr-dot" style="background:${b.c}"></div>
+      <div class="sr-dot" style="background:${pastello(b.c)}"></div>
       <div class="sr-body">
         <div class="sr-name">${_highlight(b.n, q)}</div>
         <div class="sr-meta">
