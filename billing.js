@@ -439,6 +439,8 @@ async function preloadContoDati() {
       _contiDatiCache[id] = dati;
     });
     console.log(`[CONTI] Precaricati ${rows.length} record`);
+    // Re-render Gantt per mostrare i bordi stato conto sulle barre
+    if (typeof render === 'function') render();
   } catch(e) { console.warn('[CONTI] preload:', e.message); }
 }
 

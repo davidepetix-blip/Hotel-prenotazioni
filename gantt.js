@@ -5,9 +5,17 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '5'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '6'; // ← incrementa ad ogni modifica
 
+let _billingPreloaded = false;
 function render() {
+  // Al primo render con DATABASE_SHEET_ID disponibile, precarica i dati di conto.
+  // preloadContoDati() è asincrona: chiama render() di nuovo al completamento.
+  if (!_billingPreloaded && typeof preloadContoDati === 'function' && typeof DATABASE_SHEET_ID !== 'undefined' && DATABASE_SHEET_ID) {
+    _billingPreloaded = true;
+    preloadContoDati(); // async — ri-renderizza da sola al completamento
+  }
+
   const days = dim(curY, curM);
   const now  = new Date();
   const isNow = now.getFullYear()===curY && now.getMonth()===curM;
