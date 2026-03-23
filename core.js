@@ -6,7 +6,7 @@
 
 // ── Error handler globale per debug mobile ──
 
-const BLIP_VER_CORE = '1'; // ← incrementa ad ogni modifica
+const BLIP_VER_CORE = '3'; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
   console.log(msg);
@@ -274,6 +274,10 @@ const dim       = (y,m) => new Date(y,m+1,0).getDate();
 const fmt       = d => d.toLocaleDateString('it-IT');
 const nights    = (a,b) => Math.round((new Date(b.getFullYear(),b.getMonth(),b.getDate()) - new Date(a.getFullYear(),a.getMonth(),a.getDate()))/86400000);
 const light     = h => { if(!h||h.length<7) return true; const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16); return (r*299+g*587+b*114)/1000>150; };
+// Normalizza qualsiasi colore hex verso il pastello mescolandolo con il bianco.
+// Preserva l'HUE (riconoscibilità), uniforma luminosità e saturazione.
+// mix=0 → colore originale, mix=1 → bianco puro. Default 0.68 → pastello deciso.
+const pastello  = (h, mix=0.68) => { if(!h||h.length<7) return h||'#D9D9D9'; const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16); const nr=Math.round(r+(255-r)*mix),ng=Math.round(g+(255-g)*mix),nb=Math.round(b+(255-b)*mix); return '#'+[nr,ng,nb].map(v=>v.toString(16).padStart(2,'0').toUpperCase()).join(''); };
 const overlaps  = (b,s,e,xid) => b.id!==xid && b.s<e && b.e>s;
 const roomName  = rid => ROOMS.find(r=>r.id===rid)?.name || rid;
 const roomGroup = rid => ROOMS.find(r=>r.id===rid)?.g || '';
