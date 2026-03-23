@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '1'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '2'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -376,6 +376,27 @@ function saveConti(contiArray) {
     else _contiDatiCache[bid] = { extra:[], override:null, appartMode:null, contoEmesso:doc, dbRow:null };
     saveContoDati(bid, { contoEmesso: doc });
   });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// HELPER: stato conto per una prenotazione (usato dal Gantt)
+// Legge solo la cache in-memory — nessuna chiamata API, sempre sincrono.
+// Ritorna: null | 'bozza' | 'emesso' | 'fatturato' | 'pagato'
+// ─────────────────────────────────────────────────────────────────
+function getBillingStatusForBooking(bid) {
+  const dati = _contiDatiCache[bid];
+  if (!dati?.contoEmesso) return null;
+  return dati.contoEmesso.status || 'bozza';
+}
+
+// Colore bordo sinistro Gantt per stato conto
+function billingBorderColor(bid) {
+  const stato = getBillingStatusForBooking(bid);
+  if (stato === 'pagato')    return '#34a853'; // verde
+  if (stato === 'fatturato') return '#4285f4'; // blu
+  if (stato === 'emesso')    return '#fa7b17'; // arancione
+  if (stato === 'bozza')     return '#9e9e9e'; // grigio
+  return null; // nessun conto → nessun bordo
 }
 
 // Settings billing (async)
