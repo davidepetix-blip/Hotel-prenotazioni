@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '4'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '5'; // ← incrementa ad ogni modifica
 
 function render() {
   const days = dim(curY, curM);
@@ -61,8 +61,10 @@ function render() {
         const adj=adjConflict(b).length>0;
         // 'continues' = prenotazione continua nel mese successivo → no striscia checkout
         const continues = b.e > me;
+        const _billBorder = (typeof billingBorderColor === 'function') ? billingBorderColor(b.id) : null;
+        const _borderStyle = _billBorder ? `border-left:3px solid ${_billBorder};` : '';
         bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
-          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};"
+          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};${_borderStyle}"
           onclick="selBook(${b.id},event)"
           onmouseenter="showTT(event,${b.id})" onmouseleave="hideTT()">
           ${b.n}<span class="bdisp">${b.d}</span></div>`;
