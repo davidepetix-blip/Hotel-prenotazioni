@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '3'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '4'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -356,7 +356,7 @@ function toggleAppartMode(bid) {
   if (_contiDatiCache[bid]) _contiDatiCache[bid].appartMode = next;
   else _contiDatiCache[bid] = { extra:[], override:null, appartMode:next, contoEmesso:null, dbRow:null };
   saveContoDati(bid, { appartMode: next });
-  showBookingDetail(bid);
+  refreshBillTab(bid);
 }
 
 // Conti emessi: salvati nella riga del conto specifica
@@ -846,6 +846,29 @@ function prefillExtraPrice(bid) {
   }
 }
 
+// Aggiorna il tab Conto in-place senza ricostruire l'intero drawer
+// Preserva il tab attivo e lo scroll position del drawer
+function refreshBillTab(bid) {
+  const b = bookings.find(x=>x.id===bid);
+  if (!b) return;
+  const tabEl = document.getElementById('drTabBill');
+  if (tabEl) {
+    const scrollTop = tabEl.scrollTop;
+    tabEl.innerHTML = renderDrawerBill(b);
+    tabEl.scrollTop = scrollTop;
+    // Assicurati che il tab Conto sia visibile
+    tabEl.style.display = '';
+    document.getElementById('drTabInfo') && (document.getElementById('drTabInfo').style.display = 'none');
+    // Aggiorna label tab attivo
+    document.querySelectorAll('.dr-bill-tab').forEach(t => {
+      t.classList.toggle('active', t.textContent.includes('Conto'));
+    });
+  } else {
+    // Drawer non aperto — ricostruisci normalmente
+    if (typeof selBook === 'function') selBook(bid, null);
+  }
+}
+
 function addExtraVoce(bid) {
   const cfg   = loadBillSettings();
   const sel   = document.getElementById(`extraType_${bid}`);
@@ -859,7 +882,7 @@ function addExtraVoce(bid) {
   const extras = getExtraForBooking(bid);
   extras.push({ label, qty, unitPrice:price, unita });
   setExtraForBooking(bid, extras);
-  showBookingDetail(bid);
+  refreshBillTab(bid);
 }
 
 function addExtraLibero(bid) {
@@ -870,7 +893,7 @@ function addExtraLibero(bid) {
   const extras = getExtraForBooking(bid);
   extras.push({ label, qty, unitPrice:price, unita:'' });
   setExtraForBooking(bid, extras);
-  showBookingDetail(bid);
+  refreshBillTab(bid);
 }
 
 function aggiungiConsumi(bid) {
@@ -895,15 +918,14 @@ function aggiungiConsumi(bid) {
     extras.push({ label:'💧 Consumo idrico', qty:diff, unitPrice:price, unita:'m³' });
   }
   setExtraForBooking(bid, extras);
-  showBookingDetail(bid);
+  refreshBillTab(bid);
 }
 
 function removeExtra(bid, idx) {
   const extras = getExtraForBooking(bid);
   extras.splice(idx, 1);
   setExtraForBooking(bid, extras);
-  const b = bookings.find(x=>x.id===bid);
-  if (b) showBookingDetail(bid);
+  refreshBillTab(bid);
 }
 
 // ── Tab switcher nel drawer ──
