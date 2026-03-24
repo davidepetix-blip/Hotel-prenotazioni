@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '8'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '9'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -917,6 +917,19 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   const toUpdateInDB  = [];
   const toArchive     = [];
   const seenDbIds     = new Set();
+
+  // GUARD: se il DB è quasi vuoto rispetto al foglio (es. dopo pulizia manuale),
+  // blocca il re-import automatico — è quasi sempre distruttivo e lento.
+  // Il forceSync (🔄) bypassa questo guard e reimporta tutto intenzionalmente.
+  const dbWasEmpty = dbActive.length < sheetBookings.length * 0.1 && sheetBookings.length > 50;
+  if (dbWasEmpty && !forceFullSync) {
+    syncLog(`⚠ DB ha solo ${dbActive.length} righe vs ${sheetBookings.length} nel foglio — import bloccato. Premi 🔄 per reimportare tutto.`, 'wrn');
+    showToast(`⚠ DB quasi vuoto (${dbActive.length} righe vs ${sheetBookings.length} nel foglio). Premi 🔄 per reimportare.`, 'warning');
+    return dbActive;
+  }
+  if (dbWasEmpty && forceFullSync) {
+    syncLog(`🔄 Force sync: reimport completo (${sheetBookings.length} prenotazioni dal foglio)`, 'syn');
+  }
 
   // FASE 1: Foglio → verità assoluta
   for (const sheet of sheetBookings) {
