@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '16'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '17'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -285,10 +285,10 @@ function renderCiHistory() {
         const cap = ci.guests[0] || {};
         const nomeCapo = cap.cognome ? cap.cognome+' '+cap.nome : '—';
         html += `
-          <div class="ci-history-row" onclick="openCiModalFromCi('${ci.preId}')">
+          <div class="ci-history-row" onclick="openCiModalFromCi('${ci.ciId}')">
             <div>
               <div class="ci-history-name">${nomeCapo}</div>
-              <div class="ci-history-sub">Camera ${ci.camera} · ${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · ${ci.preId ? 'Prenotazione: '+ci.preId.slice(-5) : ''}</div>
+              <div class="ci-history-sub">Camera ${ci.camera} · ${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · ${ci.data ? ci.data.split('-').reverse().join('/') : ''}</div>
             </div>
             <div class="ci-history-cam">${ci.camera}</div>
           </div>`;
@@ -328,8 +328,43 @@ function openCiModal(bookingDbId) {
   document.getElementById('ciPanel').scrollTop = 0;
 }
 
-function openCiModalFromCi(preId) {
-  openCiModal(preId);
+function openCiModalFromCi(ciId) {
+  // Trova il record CI per ciId
+  const ci = Object.values(ciData).find(c => c.ciId === ciId);
+  if (!ci) { showToast('Scheda check-in non trovata', 'error'); return; }
+
+  // Prova a trovare il booking abbinato (per titolo panel)
+  let b = bookings.find(x => x.dbId && x.dbId === ci.preId);
+  if (!b) {
+    // Fallback: cerca per camera + data arrivo
+    b = bookings.find(x => {
+      const room = ROOMS.find(r => r.id === x.r);
+      const camName = room?.name || x.cameraName || '';
+      const d = x.s instanceof Date ? x.s : new Date(x.s);
+      const dataB = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      return String(camName) === String(ci.camera) && dataB === ci.data;
+    });
+  }
+
+  // Imposta l'ID editing — usa preId se disponibile, altrimenti ciId come chiave
+  _ciEditBookingId = ci.preId || ('CI-DIRECT-' + ciId);
+  _ciEditGuests = JSON.parse(JSON.stringify(ci.guests));
+
+  // Titolo panel
+  const room = b ? (ROOMS.find(r => r.id === b.r)) : null;
+  const camLabel = room?.name || ci.camera;
+  document.getElementById('ciPanelTitle').textContent = `Check-in · Camera ${camLabel}`;
+
+  if (b) {
+    document.getElementById('ciPanelSub').textContent = `${b.n} · ${fmtDate(b.s)} → ${fmtDate(b.e)}`;
+  } else {
+    const dataFmt = ci.data ? ci.data.split('-').reverse().join('/') : '—';
+    document.getElementById('ciPanelSub').textContent = `Camera ${ci.camera} · ${dataFmt} · ${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''}`;
+  }
+
+  renderCiGuests();
+  document.getElementById('ciOverlay').classList.add('open');
+  document.getElementById('ciPanel').scrollTop = 0;
 }
 
 function closeCiModal() {
@@ -491,18 +526,35 @@ async function saveCiCheckin() {
     return;
   }
 
-  // Trova booking: per dbId o per id numerico (chiave LOCAL-)
-  const b = bookings.find(x => x.dbId === _ciEditBookingId)
-         || bookings.find(x => ('LOCAL-' + x.id) === _ciEditBookingId);
+  // Trova booking: per dbId, LOCAL- o CI-DIRECT- (da storico)
+  let b = bookings.find(x => x.dbId === _ciEditBookingId)
+       || bookings.find(x => ('LOCAL-' + x.id) === _ciEditBookingId);
+  let existingCi = ciData[_ciEditBookingId];
+  if (!existingCi && _ciEditBookingId.startsWith('CI-DIRECT-')) {
+    const rawCiId = _ciEditBookingId.replace('CI-DIRECT-', '');
+    existingCi = Object.values(ciData).find(c => c.ciId === rawCiId);
+    if (existingCi && !b) {
+      b = bookings.find(x => {
+        const room2 = ROOMS.find(r => r.id === x.r);
+        const cam2 = room2?.name || x.cameraName || '';
+        const d2 = x.s instanceof Date ? x.s : new Date(x.s);
+        const date2 = d2.getFullYear()+'-'+String(d2.getMonth()+1).padStart(2,'0')+'-'+String(d2.getDate()).padStart(2,'0');
+        return String(cam2) === String(existingCi.camera) && date2 === existingCi.data;
+      });
+    }
+  }
   const room = ROOMS.find(r => r.id === b?.r);
-  const existing = ciData[_ciEditBookingId];
+  const existing = existingCi || {};
 
-  const ciId    = existing?.ciId || 'CI-' + Date.now().toString(36).toUpperCase();
-  const ciRow   = existing?.ciRow || null;
-  const data    = new Date(b.s).toISOString().slice(0,10);
+  const ciId    = existing.ciId || 'CI-' + Date.now().toString(36).toUpperCase();
+  const ciRow   = existing.ciRow || null;
+  const localD  = d => { const dt = d instanceof Date ? d : new Date(d); return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); };
+  const data    = existing.data || (b ? localD(b.s) : localD(new Date()));
+  const camera  = existing.camera || room?.name || b?.cameraName || '—';
+  const preId   = b?.dbId || existing.preId || '';
   const record  = {
-    ciId, preId: _ciEditBookingId,
-    camera: room?.name || b?.cameraName || '—',
+    ciId, preId,
+    camera,
     data,
     numOspiti: _ciEditGuests.length,
     guests: _ciEditGuests,
