@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '9'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '10'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -975,6 +975,20 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
 
     // GUARD re-import massiccio: non cestinare se il foglio porta >50% nuove
     if (toAddToDB.length > sheetBookings.length * 0.5 && sheetBookings.length > 20) {
+      result.push(db); continue;
+    }
+
+    // GUARD mesi futuri: il JSON_ANNUALE potrebbe non coprire mesi oltre l'anno corrente
+    // o mesi per cui la Web App non ha ancora rigenerato il JSON.
+    // Non cestinare prenotazioni future se il foglio non ha dati per quel mese.
+    const dbMonth = db.s ? new Date(db.s).getMonth() : -1;
+    const dbYear  = db.s ? new Date(db.s).getFullYear() : 0;
+    const sheetHasMonth = sheetBookings.some(s =>
+      s.s && new Date(s.s).getFullYear() === dbYear && new Date(s.s).getMonth() === dbMonth
+    );
+    if (!sheetHasMonth && db.s && db.s > new Date()) {
+      // Il foglio non ha nessuna prenotazione in quel mese futuro — probabilmente
+      // il JSON_ANNUALE non copre ancora quel mese. Teniamo la prenotazione.
       result.push(db); continue;
     }
 
