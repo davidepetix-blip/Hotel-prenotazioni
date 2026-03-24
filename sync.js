@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '6'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '8'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -559,7 +559,7 @@ function syncRoomSettingsFromStates() {
 // ═══════════════════════════════════════════════════════════════════
 
 async function readDatabase() {
-  const data = await dbGet(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:N9999`);
+  const data = await dbGet(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:N3000`); // max 3000 righe DB
   const rows = data.values || [];
   dbRowCache = [];
   const result = [];
@@ -634,23 +634,52 @@ async function archiviaInCestino(lista, reason) {
   const urlAppend = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
   await apiFetch(urlAppend, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({values:righe}) });
 
-  const conRiga = lista.filter(b => b.dbRow);
+  // Elimina fisicamente le righe dal foglio PRENOTAZIONI
+  // (invece di aggiornarle con DELETED=true, che le fa accumulare infinitamente)
+  const conRiga = lista.filter(b => b.dbRow).sort((a,b) => b.dbRow - a.dbRow); // ordine decrescente!
   if (conRiga.length > 0) {
-    const data = conRiga.map(b => {
-      const row = bookingToDbRow(b, b.fonte || 'app');
-      row[DB_COLS.DELETED-1] = 'true'; row[DB_COLS.TS-1] = ts; row[12] = ts; row[13] = reason;
-      const lastCol = String.fromCharCode(64 + row.length);
-      return { range: `${DB_SHEET_NAME}!A${b.dbRow}:${lastCol}${b.dbRow}`, values: [row] };
-    });
-    for (let i = 0; i < data.length; i += 1000) {
-      const chunk = data.slice(i, i+1000);
-      await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchUpdate`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ valueInputOption:'RAW', data:chunk })
+    // Ottieni lo sheetId numerico del foglio PRENOTAZIONI
+    let sheetNumId = null;
+    try {
+      const meta = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=sheets.properties`);
+      const metaJson = await meta.json();
+      const sheet = (metaJson.sheets||[]).find(s => s.properties.title === DB_SHEET_NAME);
+      sheetNumId = sheet?.properties?.sheetId ?? null;
+    } catch(e) { console.warn('[CESTINO] sheetId lookup:', e.message); }
+
+    if (sheetNumId !== null) {
+      // Raggruppa le righe adiacenti in range per minimizzare le chiamate API
+      // Ordine decrescente per evitare che la cancellazione sposti gli indici
+      const deleteRequests = conRiga.map(b => ({
+        deleteDimension: {
+          range: { sheetId: sheetNumId, dimension: 'ROWS',
+                   startIndex: b.dbRow - 1, endIndex: b.dbRow }
+        }
+      }));
+      for (let i = 0; i < deleteRequests.length; i += 500) {
+        const chunk = deleteRequests.slice(i, i+500);
+        await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ requests: chunk })
+        });
+      }
+    } else {
+      // Fallback: aggiorna con DELETED=true se non riusciamo a ottenere lo sheetId
+      const data = conRiga.map(b => {
+        const row = bookingToDbRow(b, b.fonte || 'app');
+        row[DB_COLS.DELETED-1] = 'true'; row[DB_COLS.TS-1] = ts; row[12] = ts; row[13] = reason;
+        const lastCol = String.fromCharCode(64 + row.length);
+        return { range: `${DB_SHEET_NAME}!A${b.dbRow}:${lastCol}${b.dbRow}`, values: [row] };
       });
+      for (let i = 0; i < data.length; i += 1000) {
+        await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchUpdate`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ valueInputOption:'RAW', data: data.slice(i, i+1000) })
+        });
+      }
     }
   }
-  console.log(`[CESTINO] ${lista.length} righe archiviate`);
+  console.log(`[CESTINO] ${lista.length} righe archiviate e rimosse dal DB`);
 }
 
 let _cestinoHeadersChecked = false;
@@ -815,7 +844,7 @@ function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
 // ═══════════════════════════════════════════════════════════════════
 
 const DB_CACHE_KEY    = 'hotelDbCache';
-const DB_CACHE_TTL_MS = 60 * 60 * 1000;
+const DB_CACHE_TTL_MS = 8 * 60 * 60 * 1000; // 8 ore — ricalcola solo se la cache è davvero vecchia
 const BATCH_SIZE      = 50;
 const DAY_MS          = 86400000;
 
@@ -863,9 +892,14 @@ function findMatch(target, list) {
 }
 
 async function cleanupDeletedFromDb(dbRows) {
+  // Con il nuovo archiviaInCestino che elimina fisicamente le righe dal DB,
+  // non dovrebbero più esistere righe DELETED nel foglio PRENOTAZIONI.
+  // Questa funzione è mantenuta come safety net ma non fa più niente di default.
   const alreadyDeleted = dbRows.filter(b => b.deleted && b.dbRow);
   if (alreadyDeleted.length === 0) return 0;
-  try { await archiviaInCestino(alreadyDeleted, 'Pulizia avvio — era già marcata DELETED'); } catch(e) {}
+  // Se troviamo righe DELETED residue (es. da prima del fix), le eliminiamo
+  syncLog(`⚠ Trovate ${alreadyDeleted.length} righe DELETED residue — pulizia…`, 'wrn');
+  try { await archiviaInCestino(alreadyDeleted, 'Pulizia residui DELETED'); } catch(e) {}
   return alreadyDeleted.length;
 }
 
