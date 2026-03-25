@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '10'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '11'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -345,20 +345,21 @@ function bookingToDbRow(b, fonte = 'app') {
     : (b.al || '');
   const anno = b.s instanceof Date ? b.s.getFullYear() : (b.anno || new Date().getFullYear());
   const arr = new Array(12).fill('');
-  arr[DB_COLS.ID-1]      = b.dbId || b.id || genBookingId(anno);
-  arr[DB_COLS.CAMERA-1]  = b.cameraName || roomName(b.r) || '';
-  arr[DB_COLS.NOME-1]    = b.n || '';
-  arr[DB_COLS.DAL-1]     = dal;
-  arr[DB_COLS.AL-1]      = al;
-  arr[DB_COLS.DISP-1]    = b.d || '';
-  arr[DB_COLS.NOTE-1]    = b.note || '';
-  arr[DB_COLS.COLORE-1]  = b.c || '#D9D9D9';
-  arr[DB_COLS.ANNO-1]    = String(anno);
-  arr[DB_COLS.FONTE-1]   = fonte;
-  arr[DB_COLS.TS-1]      = b.ts || nowISO();
-  arr[DB_COLS.DELETED-1] = b.deleted ? 'true' : '';
-  arr[12] = b.deletedAt || '';
-  arr[13] = b.deleteReason || '';
+  arr[DB_COLS.ID-1]         = b.dbId || b.id || genBookingId(anno);
+  arr[DB_COLS.CAMERA-1]     = b.cameraName || roomName(b.r) || '';
+  arr[DB_COLS.NOME-1]       = b.n || '';
+  arr[DB_COLS.DAL-1]        = dal;
+  arr[DB_COLS.AL-1]         = al;
+  arr[DB_COLS.DISP-1]       = b.d || '';
+  arr[DB_COLS.NOTE-1]       = b.note || '';
+  arr[DB_COLS.COLORE-1]     = b.c || '#D9D9D9';
+  arr[DB_COLS.ANNO-1]       = String(anno);
+  arr[DB_COLS.FONTE-1]      = fonte;
+  arr[DB_COLS.TS-1]         = b.ts || nowISO();
+  arr[DB_COLS.DELETED-1]    = b.deleted ? 'true' : '';
+  arr[12]                   = b.deletedAt || '';
+  arr[13]                   = b.deleteReason || '';
+  arr[DB_COLS.CLIENTE_ID-1] = b.clienteId || '';
   return arr;
 }
 
@@ -391,6 +392,7 @@ function dbRowToBooking(row, rowNum) {
     fonte:      get(DB_COLS.FONTE),
     ts:         get(DB_COLS.TS),
     deleted:    get(DB_COLS.DELETED) === 'true',
+    clienteId:  get(DB_COLS.CLIENTE_ID) || null,
     fromSheet:  true,
     fromDb:     true,
     sheetName:  null,
@@ -559,7 +561,7 @@ function syncRoomSettingsFromStates() {
 // ═══════════════════════════════════════════════════════════════════
 
 async function readDatabase() {
-  const data = await dbGet(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:N3000`); // max 3000 righe DB
+  const data = await dbGet(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:O3000`); // A-O: 15 col (incl. CLIENTE_ID)
   const rows = data.values || [];
   dbRowCache = [];
   const result = [];

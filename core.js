@@ -6,7 +6,7 @@
 
 // ── Error handler globale per debug mobile ──
 
-const BLIP_VER_CORE = '3'; // ← incrementa ad ogni modifica
+const BLIP_VER_CORE = '4'; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
   console.log(msg);
@@ -31,18 +31,19 @@ const DEFAULT_ANNUAL_SHEETS = [
 let DATABASE_SHEET_ID = '';
 
 const DB_COLS = {
-  ID:      1,  // A
-  CAMERA:  2,  // B
-  NOME:    3,  // C
-  DAL:     4,  // D — dd/MM/yyyy
-  AL:      5,  // E — dd/MM/yyyy
-  DISP:    6,  // F
-  NOTE:    7,  // G
-  COLORE:  8,  // H
-  ANNO:    9,  // I
-  FONTE:   10, // J — "app" | "manuale"
-  TS:      11, // K — timestamp ISO
-  DELETED: 12, // L — "true" se eliminata
+  ID:         1,  // A
+  CAMERA:     2,  // B
+  NOME:       3,  // C
+  DAL:        4,  // D — dd/MM/yyyy
+  AL:         5,  // E — dd/MM/yyyy
+  DISP:       6,  // F
+  NOTE:       7,  // G
+  COLORE:     8,  // H
+  ANNO:       9,  // I
+  FONTE:      10, // J — "app" | "manuale"
+  TS:         11, // K — timestamp ISO
+  DELETED:    12, // L — "true" se eliminata
+  CLIENTE_ID: 13, // M — collegamento anagrafica CLI-xxxx
 };
 const DB_SHEET_NAME      = 'PRENOTAZIONI';
 const CESTINO_SHEET_NAME = 'CESTINO';
@@ -222,13 +223,36 @@ function saveDbSheetIdLS(id) {
 annualSheets = loadAnnualSheets();
 
 // ═══════════════════════════════════════════════════════════════════
-// HELPERS — generatori e formatters
 // ═══════════════════════════════════════════════════════════════════
-let _idSeq = 0;
+// HELPERS — generatori ID e formatters
+// ═══════════════════════════════════════════════════════════════════
+
+function _randSuffix(n = 4) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from(crypto.getRandomValues(new Uint8Array(n)))
+    .map(b => chars[b % chars.length]).join('');
+}
+function _tsBase36() {
+  return Math.floor(Date.now() / 1000).toString(36).toUpperCase();
+}
+// PRE-{anno}-{ts6}-{rand4}  es. PRE-2026-MN4H0T-X7K2
 function genBookingId(year) {
-  _idSeq++;
-  const ts = Date.now().toString(36).toUpperCase();
-  return `PRE-${year}-${ts}-${String(_idSeq).padStart(3,'0')}`;
+  return `PRE-${year}-${_tsBase36()}-${_randSuffix(4)}`;
+}
+// CLI-{anno}-{ts6}-{rand4}
+function genClienteId(year) {
+  year = year || new Date().getFullYear();
+  return `CLI-${year}-${_tsBase36()}-${_randSuffix(4)}`;
+}
+// CON-{anno}-{ts6}-{rand4}
+function genContoId(year) {
+  year = year || new Date().getFullYear();
+  return `CON-${year}-${_tsBase36()}-${_randSuffix(4)}`;
+}
+// PAG-{anno}-{ts6}-{rand4}
+function genPagamentoId(year) {
+  year = year || new Date().getFullYear();
+  return `PAG-${year}-${_tsBase36()}-${_randSuffix(4)}`;
 }
 
 function nowISO() { return new Date().toISOString(); }

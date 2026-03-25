@@ -317,11 +317,26 @@ function closeDrawer(){ document.getElementById('drawer').classList.remove('open
 function openModal(isEdit=false){
   if(!isEdit){ editId=null; document.getElementById('fName').value=''; document.getElementById('fNotes').value=''; if(!document.getElementById('fIn').value){ const t=new Date(); document.getElementById('fIn').value=t.toISOString().slice(0,10); const t2=new Date(t);t2.setDate(t2.getDate()+1);document.getElementById('fOut').value=t2.toISOString().slice(0,10); } bedCounts={m:0,ms:0,s:0,c:0,aff:0}; }
   document.getElementById('mtitle').textContent=isEdit?'Modifica Prenotazione':'Nuova Prenotazione';
+  // Anagrafica: precarica clienti e preimposta se in edit mode
+  if (typeof initAnagraficaModal === 'function') initAnagraficaModal();
+  if (isEdit && editId) {
+    const _eb = bookings.find(x=>x.id===editId);
+    if (_eb?.clienteId && typeof preimpostaClienteModal === 'function') preimpostaClienteModal(_eb.clienteId);
+    else if (typeof resetAnagraficaModal === 'function') resetAnagraficaModal();
+  } else {
+    if (typeof resetAnagraficaModal === 'function') resetAnagraficaModal();
+  }
   rebuildBeds(isEdit ? bedCounts : null); rebuildColors();
   document.getElementById('errmsg').classList.remove('show');
   document.getElementById('mov').classList.add('open');
 }
-function closeModal(){ document.getElementById('mov').classList.remove('open'); editId=null; document.getElementById('fIn').value=''; document.getElementById('fOut').value=''; }
+function closeModal(){
+  document.getElementById('mov').classList.remove('open');
+  editId=null;
+  document.getElementById('fIn').value='';
+  document.getElementById('fOut').value='';
+  if (typeof resetAnagraficaModal === 'function') resetAnagraficaModal();
+}
 function movClick(e){ if(e.target===document.getElementById('mov')) closeModal(); }
 
 function rebuildBeds(initCounts) {
@@ -455,16 +470,24 @@ async function saveBooking(){
   const bedStr = buildBedString(bedCounts);
   // Preserva dbId/dbRow se stiamo modificando una prenotazione esistente
   const existingB = editId ? bookings.find(b=>b.id===editId) : null;
+
+  // Gestione anagrafica cliente (async, non blocca il salvataggio)
+  let _clienteId = existingB?.clienteId || null;
+  if (typeof gestisciClienteAlSalvataggio === 'function') {
+    try { _clienteId = await gestisciClienteAlSalvataggio(name) || _clienteId; } catch(e) { console.warn('[anagrafica]:', e.message); }
+  }
+
   const newB = {
     id: editId || nid++, r: rid, n: name, d: bedStr, c: selColor,
     s: sd, e: ed, note, fromSheet: false,
     sheetName: sheetName(sd.getFullYear(), sd.getMonth()),
     cameraName: room?.name || rid,
     pending: true,
-    dbId:  existingB?.dbId  || null,
-    dbRow: existingB?.dbRow || null,
-    ts:    existingB?.ts    || null,
-    fonte: 'app',
+    dbId:      existingB?.dbId      || null,
+    dbRow:     existingB?.dbRow     || null,
+    ts:        existingB?.ts        || null,
+    fonte:     'app',
+    clienteId: _clienteId,
   };
 
   // Aggiorna stato locale immediatamente (ottimistic UI)

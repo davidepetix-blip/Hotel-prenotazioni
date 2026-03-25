@@ -8,12 +8,13 @@
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- Moduli Blip -->
-<script src="core.js?v=18.10.1"></script>
-<script src="sync.js?v=18.10.1"></script>
-<script src="billing.js?v=18.10.1"></script>
-<script src="gantt.js?v=18.10.1"></script>
-<script src="alloggiati-data.js?v=18.10.1"></script>
-<script src="checkin.js?v=18.10.1"></script>
+<script src="core.js?v=18.11.0"></script>
+<script src="sync.js?v=18.11.0"></script>
+<script src="gantt.js?v=18.11.0"></script>
+<script src="clienti.js?v=18.11.0"></script>
+<script src="alloggiati-data.js?v=18.11.0"></script>
+<script src="checkin.js?v=18.11.0"></script>
+<script src="billing.js?v=18.11.0"></script>
 <style>
 :root {
   --bg: #f8f7f5; --surface: #ffffff; --surface2: #f2f1ef;
@@ -396,7 +397,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 #checkinPage.open { display:flex; }
 
 /* ── DRAWER CHECK-IN TAB ── */
-.ci-dr-done-badge { background:#d1fae5; color:#065f46; border-radius:8px; padding:8px 12px; font-size:12px; font-weight:600; margin-bottom:8px; }
+.ci-dr-done-badge { background:#d1fae5; color:#065f46; border-radius:8px; padding:8px 12px; font-size:12px; font-weight:600; margin-bottom:10px; }
 .ci-dr-guests-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
 .ci-dr-guest-row { display:flex; justify-content:space-between; align-items:baseline; padding:4px 0; border-bottom:1px solid var(--border); }
 .ci-dr-guest-row:last-of-type { border-bottom:none; }
@@ -407,25 +408,6 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .ci-dr-alert.warn  { background:#fff7ed; color:#9a3412; border:1px solid #fed7aa; }
 .ci-dr-alert.danger{ background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }
 .ci-dr-future { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:13px; color:var(--text2); line-height:1.5; text-align:center; }
-/* Card espandibili ospiti */
-.ci-dr-cards { display:flex; flex-direction:column; gap:6px; margin-bottom:4px; }
-.ci-dr-card { background:var(--bg); border:1px solid var(--border); border-radius:8px; overflow:hidden; cursor:pointer; }
-.ci-dr-card-hdr { display:flex; align-items:center; justify-content:space-between; padding:9px 12px; }
-.ci-dr-card-label { font-size:9px; color:var(--text3); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
-.ci-dr-card-name { font-size:13px; font-weight:600; color:var(--text); }
-.ci-dr-card-arrow { font-size:12px; color:var(--text3); flex-shrink:0; margin-left:8px; }
-.ci-dr-card-body { padding:4px 12px 10px; border-top:1px solid var(--border); background:var(--surface2); }
-.ci-dr-card-row { display:flex; justify-content:space-between; padding:4px 0; font-size:11px; border-bottom:1px solid var(--border); }
-.ci-dr-card-row:last-child { border-bottom:none; }
-.ci-dr-card-row span:first-child { color:var(--text3); flex-shrink:0; margin-right:8px; }
-.ci-dr-card-row span:last-child { color:var(--text); text-align:right; font-weight:500; }
-/* Modale anteprima TXT */
-.ci-prev-row { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
-.ci-prev-row-hdr { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
-.ci-prev-fields { display:flex; gap:6px; flex-wrap:wrap; margin-top:5px; }
-.ci-prev-inp { padding:5px 8px; border:1px solid var(--border); border-radius:6px; font-size:12px; background:var(--bg); color:var(--text); min-width:0; flex:1; }
-.ci-prev-inp:focus { outline:none; border-color:var(--accent); }
-
 
 .ci-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); padding:0 16px; background:var(--surface); flex-shrink:0; }
 .ci-tab  { padding:10px 16px; font-size:12px; font-weight:500; color:var(--text3); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; transition:color .15s,border-color .15s; }
@@ -759,6 +741,27 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .doc-total-row td { font-size:14px; font-weight:700; color:#2d6a4f; border-top:2px solid #2d6a4f; padding-top:10px; }
 .doc-footer { margin-top:28px; border-top:1px solid #e0e0e0; padding-top:14px; font-size:11px; color:#888; text-align:center; line-height:1.8; }
 
+
+/* ── Anagrafica clienti — dropdown e badge ── */
+.clienti-dropdown { position:absolute; top:100%; left:0; right:0; background:var(--surface);
+  border:1.5px solid var(--border); border-radius:var(--radius); box-shadow:0 4px 16px rgba(0,0,0,.12);
+  z-index:1000; max-height:220px; overflow-y:auto; }
+.cdd-item { padding:10px 12px; cursor:pointer; border-bottom:1px solid var(--border); transition:background .1s; }
+.cdd-item:last-child { border-bottom:none; }
+.cdd-item:hover { background:var(--accent-light); }
+.cdd-nome { font-size:13px; font-weight:600; color:var(--text); }
+.cdd-meta { font-size:11px; color:var(--text3); margin-top:2px; }
+.cdd-empty { padding:10px 12px; font-size:12px; color:var(--text3); font-style:italic; }
+.cliente-badge { display:none; align-items:center; gap:8px; margin-top:6px; padding:8px 10px;
+  background:var(--accent-light); border:1px solid rgba(45,106,79,.2); border-radius:var(--radius);
+  font-size:12px; }
+.cb-icon { font-size:16px; flex-shrink:0; }
+.cb-info { flex:1; display:flex; flex-wrap:wrap; gap:2px 8px; }
+.cb-info b { width:100%; font-size:13px; color:var(--text); }
+.cb-info span { color:var(--text3); font-size:11px; }
+.cb-clear { background:none; border:none; cursor:pointer; color:var(--text3); font-size:14px;
+  padding:2px 4px; border-radius:4px; flex-shrink:0; }
+.cb-clear:hover { color:var(--danger); background:rgba(220,53,69,.08); }
 </style>
 </head>
 <body>
@@ -935,7 +938,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     </div>
     <div class="fg">
       <label class="fl">Nome cliente</label>
-      <input type="text" class="fi" id="fName" placeholder="es. Rossi Mario" autocomplete="off">
+      <input type="text" class="fi" id="fName" placeholder="es. Rossi Mario" autocomplete="off" oninput="onFNameInput(event)">
     </div>
     <div class="frow">
       <div class="fg"><label class="fl">Check-in</label><input type="date" class="fi" id="fIn" oninput="(function(){var i=document.getElementById('fIn'),o=document.getElementById('fOut');if(!i.value)return;var d=new Date(i.value);d.setDate(d.getDate()+1);var nx=d.toISOString().slice(0,10);if(!o.value||o.value<=i.value)o.value=nx;})()"></div>
@@ -991,7 +994,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div class="spage-bar">
     <button class="btn btn-icon" onclick="closeCheckin()">←</button>
     <div class="spage-title">🛎 Check-in</div>
-    <button class="btn" onclick="ciPreviewAlloggiati('72h')" title="Anteprima e scarica Alloggiati Web — ultimi 3 giorni">⬇ Alloggiati 72h</button>
+    <button class="btn" onclick="exportAlloggiati('48h')" title="Genera file Alloggiati Web — ultime 48 ore">⬇ Alloggiati 48h</button>
   </div>
   <!-- Tabs -->
   <div class="ci-tabs">
@@ -1063,7 +1066,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Versione build ──
-const BLIP_BUILD = '18.10.1'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.11.0'; // ← build complessiva (major.minor.patch)
 
 // Assembla la versione completa dai moduli appena caricati
 function blipFullVersion() {
