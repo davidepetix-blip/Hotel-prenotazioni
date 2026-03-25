@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '17'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '18'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -596,7 +596,7 @@ function exportAlloggiati(scope='48h'){
   items.forEach(ci=>{ci.guests.forEach((g,gIdx)=>{
     const isIta=_alNorm(g.cittadinanza||'ITALIA').includes('ITAL');
     if(isIta&&g.luogoNascita&&!_alCodiceComune(g.luogoNascita)){const k=_alNorm(g.luogoNascita);if(!visti.has('N:'+k)){visti.add('N:'+k);comuniMancanti.push({nomeComune:g.luogoNascita,label:'nascita - '+cleanAl(g.cognome)+' '+cleanAl(g.nome)});}}
-    if(gIdx===0&&g.luogoRilascio&&!_alRisolviLuogo(g.luogoRilascio)){const k=_alNorm(g.luogoRilascio);if(!visti.has('R:'+k)){visti.add('R:'+k);comuniMancanti.push({nomeComune:g.luogoRilascio,label:'rilascio - '+cleanAl(g.cognome)+' '+cleanAl(g.nome)});}}
+    if(gIdx===0&&g.luogoRilascio&&!_alRisolviLuogo(g.luogoRilascio)&&!_alCodiceStato(g.luogoRilascio)){const k=_alNorm(g.luogoRilascio);if(!visti.has('R:'+k)){visti.add('R:'+k);comuniMancanti.push({nomeComune:g.luogoRilascio,label:'rilascio - '+cleanAl(g.cognome)+' '+cleanAl(g.nome)});}}
   });});
   if(comuniMancanti.length>0){_alChiediCodiciMancanti(comuniMancanti,()=>exportAlloggiati(scope));return;}
   const toFmt=s=>{if(!s)return'          ';const c=s.replace(/-/g,'').replace(/\//g,'');if(c.length!==8)return'          ';let gg,mm,aaaa;if(/^(19|20)\d{6}$/.test(c)){aaaa=c.slice(0,4);mm=c.slice(4,6);gg=c.slice(6,8);}else{gg=c.slice(0,2);mm=c.slice(2,4);aaaa=c.slice(4,8);}return`${gg}/${mm}/${aaaa}`;};
@@ -617,8 +617,11 @@ function exportAlloggiati(scope='48h'){
       const cittad=_alCodiceStato(g.cittadinanza||'ITALIA').padStart(9,'0');
       const tipoDoc=isCapo?padR(_alCodiceDoc(g.tipoDoc),5):'     ';
       const numDoc=isCapo?padR(cleanAl(g.numDoc||''),20):'                    ';
-      let luogoRil='         ';
-      if(isCapo&&g.luogoRilascio){const rl=_alRisolviLuogo(g.luogoRilascio);if(rl)luogoRil=rl.cod;}
+      let luogoRil='000000000';
+      if(isCapo&&g.luogoRilascio){
+        const rl=_alRisolviLuogo(g.luogoRilascio);
+        if(rl){luogoRil=rl.cod;}
+        else{const sc=_alCodiceStato(g.luogoRilascio);if(sc&&sc!=='000000100')luogoRil=sc.padStart(9,'0');}}
       const record=tipoAllog+toFmt(arrISO)+nGiorni(arrISO,parISO)+cognome+nome+sesso+dataN+comN+provN+statoN+cittad+tipoDoc+numDoc+luogoRil;
       if(record.length!==168)console.warn('[Alloggiati] len='+record.length,g.cognome);
       lines.push(record);
