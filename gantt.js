@@ -5,9 +5,16 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '7'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '8'; // ← incrementa ad ogni modifica
 
+let _billingPreloaded = false;
 function render() {
+  // Al primo render con DATABASE_SHEET_ID disponibile, precarica i dati di conto.
+  // preloadContoDati() è asincrona: chiama render() di nuovo al completamento.
+  if (!_billingPreloaded && typeof preloadContoDati === 'function' && typeof DATABASE_SHEET_ID !== 'undefined' && DATABASE_SHEET_ID) {
+    _billingPreloaded = true;
+    preloadContoDati(); // async — ri-renderizza da sola al completamento
+  }
   const days = dim(curY, curM);
   const now  = new Date();
   const isNow = now.getFullYear()===curY && now.getMonth()===curM;
@@ -61,8 +68,10 @@ function render() {
         const adj=adjConflict(b).length>0;
         // 'continues' = prenotazione continua nel mese successivo → no striscia checkout
         const continues = b.e > me;
+        const _billBorder = (typeof billingBorderColor === 'function') ? billingBorderColor(b.id) : null;
+        const _borderStyle = _billBorder ? `border-left:3px solid ${_billBorder};` : '';
         bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
-          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};"
+          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};${_borderStyle}"
           onclick="selBook(${b.id},event)"
           onmouseenter="showTT(event,${b.id})" onmouseleave="hideTT()">
           ${b.n}<span class="bdisp">${b.d}</span></div>`;
