@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '8'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '9'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -317,6 +317,29 @@ function closeDrawer(){ document.getElementById('drawer').classList.remove('open
 function openModal(isEdit=false){
   if(!isEdit){ editId=null; document.getElementById('fName').value=''; document.getElementById('fNotes').value=''; if(!document.getElementById('fIn').value){ const t=new Date(); document.getElementById('fIn').value=t.toISOString().slice(0,10); const t2=new Date(t);t2.setDate(t2.getDate()+1);document.getElementById('fOut').value=t2.toISOString().slice(0,10); } bedCounts={m:0,ms:0,s:0,c:0,aff:0}; }
   document.getElementById('mtitle').textContent=isEdit?'Modifica Prenotazione':'Nuova Prenotazione';
+
+  // Gestione campo camera
+  const _selRoom = document.getElementById('fRoom');
+  const _cameraFg = _selRoom?.closest('.fg');
+  const _cameraLbl = _cameraFg?.querySelector('label.fl');
+  // Rimuovi eventuale div statico da sessione edit precedente
+  _cameraFg?.querySelector('.camera-static-display')?.remove();
+  if (isEdit) {
+    // In modifica: mostra il nome camera come testo statico
+    const _camName = window._editCameraName || _selRoom?.value || '—';
+    if (_selRoom) _selRoom.style.display = 'none';
+    const _staticDiv = document.createElement('div');
+    _staticDiv.className = 'fi camera-static-display';
+    _staticDiv.style.cssText = 'opacity:0.7;cursor:default;';
+    _staticDiv.textContent = _camName;
+    _selRoom?.after(_staticDiv);
+    if (_cameraLbl) _cameraLbl.textContent = 'Camera';
+  } else {
+    // In nuova prenotazione: select visibile e abilitato
+    if (_selRoom) { _selRoom.style.display = ''; _selRoom.disabled = false; _selRoom.style.opacity = ''; }
+    if (_cameraLbl) _cameraLbl.textContent = 'Camera';
+  }
+
   // Anagrafica: precarica clienti e preimposta se in edit mode
   if (typeof initAnagraficaModal === 'function') initAnagraficaModal();
   if (isEdit && editId) {
@@ -335,6 +358,13 @@ function closeModal(){
   editId=null;
   document.getElementById('fIn').value='';
   document.getElementById('fOut').value='';
+  // Ripristina select camera
+  const _s = document.getElementById('fRoom');
+  if (_s) { _s.style.display = ''; _s.disabled = false; _s.style.opacity = ''; }
+  document.getElementById('fRoom')?.closest('.fg')?.querySelector('.camera-static-display')?.remove();
+  const _lbl = document.getElementById('fRoom')?.closest('.fg')?.querySelector('label.fl');
+  if (_lbl) _lbl.textContent = 'Camera';
+  window._editCameraName = null;
   if (typeof resetAnagraficaModal === 'function') resetAnagraficaModal();
 }
 function movClick(e){ if(e.target===document.getElementById('mov')) closeModal(); }
@@ -1693,6 +1723,8 @@ async function testDbConnection() {
 
 function buildRoomSelect(){
   const sel=document.getElementById('fRoom');
+  if (!sel) return;
+  sel.innerHTML = ''; // svuota prima — idempotente
   const groups=[...new Set(ROOMS.map(r=>r.g))];
   groups.forEach(g=>{
     const og=document.createElement('optgroup'); og.label=g;
