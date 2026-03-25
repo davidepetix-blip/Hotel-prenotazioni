@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '18'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '20'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -235,7 +235,7 @@ function renderCiToday() {
           <strong>${completatiTot} check-in</strong> pronti per Alloggiati Web<br>
           Genera il file .txt da caricare sul portale della Polizia di Stato
         </div>
-        <button class="btn primary" style="flex-shrink:0" onclick="exportAlloggiati('48h')">⬇ Genera .txt</button>
+        <button class="btn primary" style="flex-shrink:0" onclick="ciPreviewAlloggiati('72h')">⬇ Alloggiati</button>
       </div>`;
   }
 
@@ -584,12 +584,13 @@ async function saveCiCheckin() {
 // Ref: specifiche tecniche Polizia di Stato – tracciato record tipo 20
 // --- TABELLE ALLOGGIATI WEB build 18.7.1 ---
 
-function exportAlloggiati(scope='48h'){
-  const today=new Date().toISOString().slice(0,10);
-  const yesterday=new Date(Date.now()-864e5).toISOString().slice(0,10);
+function exportAlloggiati(scope='72h'){
+  // Date locali (no UTC shift)
+  const localDate = n => { const d=new Date(Date.now()-n*864e5); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+  const today=localDate(0), ieri=localDate(1), altroieri=localDate(2);
   let items;
   if(scope==='today'){items=Object.values(ciData).filter(ci=>ci.data===today);}
-  else if(scope==='48h'){items=Object.values(ciData).filter(ci=>ci.data===today||ci.data===yesterday);}
+  else if(scope==='48h'||scope==='72h'){items=Object.values(ciData).filter(ci=>ci.data===today||ci.data===ieri||ci.data===altroieri);}
   else{items=Object.values(ciData).filter(ci=>{if(!_ciHistSearch)return true;const q=_ciHistSearch.toLowerCase();const cap=ci.guests[0]||{};return ci.camera.toLowerCase().includes(q)||((cap.cognome||'')+' '+(cap.nome||'')).toLowerCase().includes(q)||ci.data.includes(q);});}
   if(items.length===0){showToast('Nessun check-in da esportare','error');return;}
   const comuniMancanti=[],visti=new Set();
@@ -820,6 +821,181 @@ async function ciHandleDocImage(input) {
     if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '\ud83d\udcf7 Scansiona documento d\u2019identit\u00e0'; }
   }
 }
+
+// ── Toggle card ospite nel drawer ──
+function ciDrToggle(cardId) {
+  const body = document.getElementById(cardId);
+  const arr  = document.getElementById(cardId + '_arr');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (arr) arr.textContent = open ? '▸' : '▾';
+}
+
+// ── Anteprima TXT Alloggiati — modale con riga per ospite editabile ──
+function ciPreviewAlloggiati(bookingIdOrScope) {
+  // Determina gli items da mostrare
+  const localDate = n => { const d=new Date(Date.now()-n*864e5); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+  const today=localDate(0), ieri=localDate(1), altroieri=localDate(2);
+
+  let items;
+  if (bookingIdOrScope === 'filtered' || bookingIdOrScope === '72h' || bookingIdOrScope === '48h') {
+    items = Object.values(ciData).filter(ci => ci.data===today||ci.data===ieri||ci.data===altroieri);
+  } else {
+    // bookingId numerico — trova il check-in abbinato
+    const b = (typeof bookings !== 'undefined') ? bookings.find(x => String(x.id)===String(bookingIdOrScope)) : null;
+    if (b) {
+      const room = typeof ROOMS !== 'undefined' ? ROOMS.find(r => r.id === b.r) : null;
+      const camName = room?.name || b.cameraName || '';
+      const localD = d => { const dt=d instanceof Date?d:new Date(d); return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); };
+      const dataArr = localD(b.s);
+      items = [ciData[b.dbId] || ciData['cam:'+camName+':'+dataArr]].filter(Boolean);
+    }
+    if (!items || !items.length) items = Object.values(ciData).filter(ci => ci.data===today||ci.data===ieri||ci.data===altroieri);
+  }
+
+  if (!items || items.length === 0) { showToast('Nessun check-in da esportare', 'error'); return; }
+
+  // Costruisce la struttura dati editabile: array di righe ospite
+  const rows = [];
+  items.forEach(ci => {
+    const b = typeof bookings !== 'undefined' ? bookings.find(bk => bk.dbId === ci.preId) : null;
+    const nGiorni = b ? String(Math.min(Math.max(Math.round((new Date(b.e)-new Date(b.s))/86400000),1),30)).padStart(2,'0') : '01';
+    ci.guests.forEach((g, gIdx) => {
+      rows.push({
+        ciId:      ci.ciId,
+        isCapo:    gIdx === 0,
+        gIdx,
+        cognome:   g.cognome || '',
+        nome:      g.nome || '',
+        sesso:     g.sesso || 'M',
+        dataNascita: g.dataNascita || '',
+        luogoNascita: g.luogoNascita || '',
+        provNascita:  g.provNascita || '',
+        statoEsteroNascita: g.statoEsteroNascita || '',
+        cittadinanza: g.cittadinanza || '',
+        tipoDoc:   g.tipoDoc || '',
+        numDoc:    g.numDoc || '',
+        luogoRilascio: g.luogoRilascio || '',
+        dataArrivo: ci.data || today,
+        nGiorni,
+        camera:    ci.camera || '',
+      });
+    });
+  });
+
+  // Costruisce HTML modale
+  const rowsHtml = rows.map((r, idx) => {
+    const isCapoLabel = r.isCapo ? '<span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px;">CAPO</span>' : '<span style="font-size:9px;color:var(--text3);">fam.</span>';
+    const docFields = r.isCapo ? `
+      <input class="ci-prev-inp" placeholder="Tipo doc" value="${r.tipoDoc}" oninput="_ciPrevRows[${idx}].tipoDoc=this.value" style="width:60px">
+      <input class="ci-prev-inp" placeholder="N° documento" value="${r.numDoc}" oninput="_ciPrevRows[${idx}].numDoc=this.value" style="flex:2">
+      <input class="ci-prev-inp" placeholder="Luogo rilascio" value="${r.luogoRilascio}" oninput="_ciPrevRows[${idx}].luogoRilascio=this.value" style="flex:1.5">
+    ` : `<span style="color:var(--text3);font-size:11px;padding:0 4px;">—</span>`;
+
+    return `<div class="ci-prev-row">
+      <div class="ci-prev-row-hdr">
+        ${isCapoLabel}
+        <strong style="font-size:12px;">${r.cognome} ${r.nome}</strong>
+        <span style="font-size:11px;color:var(--text3);">Camera ${r.camera} · ${r.dataArrivo.split('-').reverse().join('/')}</span>
+      </div>
+      <div class="ci-prev-fields">
+        <input class="ci-prev-inp" placeholder="Cognome *" value="${r.cognome}" oninput="_ciPrevRows[${idx}].cognome=this.value" style="flex:2">
+        <input class="ci-prev-inp" placeholder="Nome *" value="${r.nome}" oninput="_ciPrevRows[${idx}].nome=this.value" style="flex:2">
+        <select class="ci-prev-inp" onchange="_ciPrevRows[${idx}].sesso=this.value" style="width:70px">
+          <option value="M" ${r.sesso==='M'?'selected':''}>M</option>
+          <option value="F" ${r.sesso==='F'?'selected':''}>F</option>
+        </select>
+        <input class="ci-prev-inp" type="date" value="${r.dataNascita}" oninput="_ciPrevRows[${idx}].dataNascita=this.value" style="width:130px">
+      </div>
+      <div class="ci-prev-fields">
+        <input class="ci-prev-inp" placeholder="Comune nascita" value="${r.luogoNascita}" oninput="_ciPrevRows[${idx}].luogoNascita=this.value" style="flex:2">
+        <input class="ci-prev-inp" placeholder="Prov." value="${r.provNascita}" oninput="_ciPrevRows[${idx}].provNascita=this.value.toUpperCase();this.value=this.value.toUpperCase()" maxlength="2" style="width:50px">
+        <input class="ci-prev-inp" placeholder="Cittadinanza" value="${r.cittadinanza}" oninput="_ciPrevRows[${idx}].cittadinanza=this.value.toUpperCase();this.value=this.value.toUpperCase()" style="flex:1.5">
+        ${docFields}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Crea/mostra overlay anteprima
+  let overlay = document.getElementById('ciPrevOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'ciPrevOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;display:flex;flex-direction:column;';
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);flex:1;overflow-y:auto;padding:16px;max-width:600px;width:100%;margin:0 auto;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <button class="btn btn-icon" onclick="document.getElementById('ciPrevOverlay').style.display='none'">←</button>
+        <div style="flex:1;font-family:'Playfair Display',serif;font-size:16px;font-weight:600;">Anteprima Alloggiati</div>
+        <span style="font-size:11px;color:var(--text3);">${rows.length} ospiti</span>
+      </div>
+      <div id="ciPrevRows">${rowsHtml}</div>
+    </div>
+    <div style="background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;gap:10px;max-width:600px;width:100%;margin:0 auto;">
+      <button class="btn" style="flex:1;justify-content:center;" onclick="document.getElementById('ciPrevOverlay').style.display='none'">Annulla</button>
+      <button class="btn primary" style="flex:2;justify-content:center;" onclick="ciPrevGenerate()">⬇ Genera e scarica TXT</button>
+    </div>`;
+
+  window._ciPrevRows = rows;
+  overlay.style.display = 'flex';
+}
+
+// Genera il TXT dall'anteprima editata
+function ciPrevGenerate() {
+  const rows = window._ciPrevRows;
+  if (!rows || !rows.length) return;
+
+  const toFmt = s => {
+    if (!s) return '          ';
+    const c = s.replace(/-/g,'').replace(/\//g,'');
+    if (c.length !== 8) return '          ';
+    if (/^(19|20)\d{6}$/.test(c)) return `${c.slice(6,8)}/${c.slice(4,6)}/${c.slice(0,4)}`;
+    return `${c.slice(0,2)}/${c.slice(2,4)}/${c.slice(4,8)}`;
+  };
+
+  const lines = [];
+  rows.forEach(r => {
+    const isCapo    = r.isCapo;
+    const tipoAllog = isCapo ? (rows.filter(x => x.ciId===r.ciId).length > 1 ? '17' : '16') : '19';
+    const cognome   = padR(cleanAl(r.cognome), 50);
+    const nome      = padR(cleanAl(r.nome), 30);
+    const sesso     = (r.sesso||'M').toUpperCase() === 'F' ? '2' : '1';
+    const dataN     = toFmt(r.dataNascita);
+    const isIta     = _alNorm(r.cittadinanza||'ITALIA').includes('ITAL');
+    let comN = '000000000', provN = '  ';
+    if (isIta && r.luogoNascita) { const f=_alCodiceComune(r.luogoNascita); if(f){comN=f.cod;provN=padR(f.prov,2);} }
+    const statoN = _alCodiceStato(isIta?'ITALIA':(r.statoEsteroNascita||r.cittadinanza||'ITALIA')).padStart(9,'0');
+    const cittad = _alCodiceStato(r.cittadinanza||'ITALIA').padStart(9,'0');
+    const tipoDoc = isCapo ? padR(_alCodiceDoc(r.tipoDoc), 5) : '     ';
+    const numDoc  = isCapo ? padR(cleanAl(r.numDoc||''), 20) : ' '.repeat(20);
+    let luogoRil = '000000000';
+    if (isCapo && r.luogoRilascio) {
+      const rl = _alRisolviLuogo(r.luogoRilascio);
+      if (rl) { luogoRil = rl.cod; }
+      else { const sc = _alCodiceStato(r.luogoRilascio); if (sc && sc !== '000000100') luogoRil = sc.padStart(9,'0'); }
+    }
+    const arrivo = r.dataArrivo.split('-').reverse().join('/').replace(/-/g,'/');
+    const arrFmt = arrivo.length===10 ? arrivo : '          ';
+    const record = tipoAllog + arrFmt + r.nGiorni + cognome + nome + sesso + dataN + comN + provN + statoN + cittad + tipoDoc + numDoc + luogoRil;
+    if (record.length !== 168) console.warn('[Preview] len='+record.length, r.cognome);
+    lines.push(record);
+  });
+
+  const content = lines.join('\r\n');
+  const today = new Date(); const dd=String(today.getDate()).padStart(2,'0'), mm=String(today.getMonth()+1).padStart(2,'0'), yyyy=today.getFullYear();
+  const blob = new Blob([content], {type:'text/plain;charset=utf-8'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `alloggiati_${yyyy}-${mm}-${dd}.txt`; a.click();
+  URL.revokeObjectURL(url);
+  document.getElementById('ciPrevOverlay').style.display = 'none';
+  showToast('✓ File generato · ' + lines.length + ' record', 'success');
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // GESTIONE FOGLI ANNUALI NELLE IMPOSTAZIONI
 // ═══════════════════════════════════════════════════════════════════
@@ -925,30 +1101,50 @@ function renderDrawerCheckin(b) {
     const arrival = isNaN(arrDate.getTime()) ? now : arrDate.getTime();
     const hoursToArrival = (arrival - now) / 36e5;
 
-  // ── Check-in già fatto ──
+  // ── Check-in già fatto — card espandibili ──
   if (ci && ci.guests && ci.guests.length > 0) {
-    const capo   = ci.guests[0];
-    const nomeCapo = [capo.cognome, capo.nome].filter(Boolean).join(' ') || '—';
-    const accomp = ci.guests.slice(1);
+    const dataFmt = (ci.ts||'').slice(0,10).split('-').reverse().join('/');
 
-    const guestRows = ci.guests.map((g, i) => {
-      const nome  = [g.cognome, g.nome].filter(Boolean).join(' ') || '—';
-      const label = i === 0 ? 'Capogruppo' : `Accompagnatore ${i}`;
-      return `<div class="ci-dr-guest-row">
-        <span class="ci-dr-guest-label">${label}</span>
-        <span class="ci-dr-guest-name">${nome}</span>
-      </div>`;
+    const cards = ci.guests.map((g, i) => {
+      const isCapo = i === 0;
+      const nomeDisplay = [g.cognome, g.nome].filter(Boolean).join(' ') || '—';
+      const label = isCapo ? '👤 Capogruppo' : `👤 Accompagnatore ${i}`;
+      const cardId = `ciDrCard_${b.id}_${i}`;
+
+      const cittLabel = g.cittadinanza || '—';
+      const nascitaLabel = g.luogoNascita
+        ? (g.provNascita ? `${g.luogoNascita} (${g.provNascita})` : g.luogoNascita)
+        : (g.statoEsteroNascita || '—');
+      const dnFmt = g.dataNascita ? g.dataNascita.split('-').reverse().join('/') : '—';
+
+      const docSection = isCapo ? `
+        <div class="ci-dr-card-row"><span>Documento</span><span>${g.tipoDoc||'—'} ${g.numDoc||''}</span></div>
+        <div class="ci-dr-card-row"><span>Rilasciato a</span><span>${g.luogoRilascio||'—'}</span></div>` : '';
+
+      return `
+        <div class="ci-dr-card" onclick="ciDrToggle('${cardId}')">
+          <div class="ci-dr-card-hdr">
+            <div>
+              <div class="ci-dr-card-label">${label}</div>
+              <div class="ci-dr-card-name">${nomeDisplay}</div>
+            </div>
+            <span class="ci-dr-card-arrow" id="${cardId}_arr">▸</span>
+          </div>
+          <div class="ci-dr-card-body" id="${cardId}" style="display:none;">
+            <div class="ci-dr-card-row"><span>Data nascita</span><span>${dnFmt}</span></div>
+            <div class="ci-dr-card-row"><span>Luogo nascita</span><span>${nascitaLabel}</span></div>
+            <div class="ci-dr-card-row"><span>Cittadinanza</span><span>${cittLabel}</span></div>
+            ${docSection}
+          </div>
+        </div>`;
     }).join('');
 
     return `
-      <div class="ci-dr-done-badge">✓ Check-in registrato</div>
-      <div class="ci-dr-guests-box">
-        ${guestRows}
-        <div class="ci-dr-meta">${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · registrato il ${(ci.ts||'').slice(0,10).split('-').reverse().join('/')}</div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px;">
+      <div class="ci-dr-done-badge">✓ Check-in · ${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · ${dataFmt}</div>
+      <div class="ci-dr-cards">${cards}</div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
         <button class="btn" style="flex:1;justify-content:center;" onclick="openCiModal('${b.id}')">✎ Modifica</button>
-        <button class="btn" style="flex:1;justify-content:center;" onclick="exportAlloggiati('filtered')">⬇ Alloggiati</button>
+        <button class="btn primary" style="flex:1;justify-content:center;" onclick="ciPreviewAlloggiati('${b.id}')">⬇ Alloggiati</button>
       </div>`;
   }
 
