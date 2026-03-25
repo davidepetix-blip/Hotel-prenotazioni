@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '6'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '7'; // ← incrementa ad ogni modifica
 
 function render() {
   const days = dim(curY, curM);
@@ -57,16 +57,12 @@ function render() {
         const vs=b.s<ms?ms:b.s, ve=b.e>me?me:b.e;
         const sd=vs.getDate(), ed=ve.getDate();
         const lx=(sd-1)*CW+1, w=(ed-sd+1)*CW-2;
-        const pc=pastello(b.c);       // versione pastello del colore (HUE preservato)
-        const tc='#1a1916';            // testo sempre scuro — pastello garantisce lum>190
+        const tc=light(b.c)?'#1a1916':'#e8e4dc';
         const adj=adjConflict(b).length>0;
         // 'continues' = prenotazione continua nel mese successivo → no striscia checkout
         const continues = b.e > me;
-        // Bordo sinistro = stato pagamento (da billing.js)
-        const _bBorder = (typeof billingBorderColor==='function') ? billingBorderColor(b.id) : null;
-        const _bStyle  = _bBorder ? `border-left:3px solid ${_bBorder};` : '';
         bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
-          style="left:${lx}px;width:${w}px;background:${pc};color:${tc};${_bStyle}"
+          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};"
           onclick="selBook(${b.id},event)"
           onmouseenter="showTT(event,${b.id})" onmouseleave="hideTT()">
           ${b.n}<span class="bdisp">${b.d}</span></div>`;
@@ -189,10 +185,11 @@ function selBook(id,e){
     <div class="dr-bill-tabs">
       <div class="dr-bill-tab active" onclick="drTab(this,'drTabInfo')">📋 Dettagli</div>
       <div class="dr-bill-tab" onclick="drTab(this,'drTabBill')">💶 Conto</div>
+      <div class="dr-bill-tab" onclick="drTabCheckin(this,${b.id})">🛎 Check-in</div>
     </div>
     <div id="drTabInfo">
     <div class="dcard">
-      <div class="dcname"><span class="cpill" style="background:${pastello(b.c)}"></span>${b.n}</div>
+      <div class="dcname"><span class="cpill" style="background:${b.c}"></span>${b.n}</div>
       <div class="drow"><span class="dkey">Camera</span><span class="dval">${roomName(b.r)}</span></div>
       <div class="drow"><span class="dkey">Gruppo</span><span class="dval">${roomGroup(b.r)}</span></div>
       <div class="drow"><span class="dkey">Check-in</span><span class="dval">${fmt(b.s)}</span></div>
@@ -223,6 +220,9 @@ function selBook(id,e){
     </div>
     <div id="drTabBill" style="display:none;">
       ${renderDrawerBill(b)}
+    </div>
+    <div id="drTabCI" style="display:none;" data-booking-id="${b.id}">
+      <div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">Caricamento…</div>
     </div>`;
   openDrawer();
 }
@@ -230,16 +230,7 @@ function selBook(id,e){
 function editBook(id){
   const b=bookings.find(x=>x.id===id); if(!b) return;
   editId=id;
-  // Imposta il select (per saveBooking che legge fRoom.value)
-  const selR = document.getElementById('fRoom');
-  selR.value = b.r;
-  // Se il valore non è stato accettato (option non ancora presente), forza aggiornando le option
-  if (selR.value !== b.r) {
-    // buildRoomSelect potrebbe non essere ancora stato eseguito — ricostruiamo
-    buildRoomSelect();
-    selR.value = b.r;
-  }
-  syncLog(`editBook: b.r="${b.r}" sel.value="${selR.value}" opts=${selR.options.length}`, 'syn');
+  document.getElementById('fRoom').value=b.r;
   document.getElementById('fName').value=b.n;
   document.getElementById('fIn').value=b.s.toISOString().slice(0,10);
   document.getElementById('fOut').value=b.e.toISOString().slice(0,10);
@@ -247,8 +238,6 @@ function editBook(id){
   selColor=b.c;
   // Parsa la stringa disposizione nei contatori
   bedCounts = parseBedString(b.d);
-  // Salva il nome camera per mostrarlo nel modal (non dipende dallo stato del select)
-  window._editCameraName = b.cameraName || roomName(b.r) || b.r;
   closeDrawer(); openModal(true);
 }
 
@@ -256,9 +245,6 @@ async function delBook(id){
   const b=bookings.find(x=>x.id===id); if(!b) return;
   if(!confirm(`Eliminare la prenotazione di "${b.n}"?\nQuesto rimuoverà anche i colori dal foglio Google.`)) return;
   closeDrawer();
-  // Blacklist locale subito: impedisce al bgSync di riportare la prenotazione
-  // prima che il DB venga aggiornato
-  if (b.dbId) markDeletedLocally(b.dbId);
   showLoading('Rimozione…');
   try {
     // Rimuovi dal foglio Google sempre (bidirezionale)
@@ -310,7 +296,7 @@ function openRoomDrawer(roomId) {
   const ms=new Date(curY,curM,1), me=new Date(curY,curM+1,0);
   const rbs=bookings.filter(b=>b.r===roomId&&b.s<=me&&b.e>=ms);
   let bhtml='';
-  rbs.forEach(b=>{ const _pc=pastello(b.c); bhtml+=`<div style="background:${_pc};padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:12px;color:#1a1916;"><strong>${b.n}</strong><br><span style="font-size:10px;">${fmt(b.s)} → ${fmt(b.e)}</span>${b.d?'<br><span style="font-size:10px;">'+b.d+'</span>':''}</div>`; });
+  rbs.forEach(b=>{ bhtml+=`<div style="background:${b.c};padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:12px;"><strong>${b.n}</strong><br><span style="font-size:10px;">${fmt(b.s)} → ${fmt(b.e)}</span>${b.d?'<br><span style="font-size:10px;">'+b.d+'</span>':''}</div>`; });
   document.getElementById('drbody').innerHTML = stateHtml + (bhtml||'<div class="empty" style="padding:20px 0;"><div style="font-size:11px;color:var(--text3);">Nessuna prenotazione questo mese</div></div>');
   openDrawer();
 }
@@ -324,51 +310,9 @@ function openModal(isEdit=false){
   document.getElementById('mtitle').textContent=isEdit?'Modifica Prenotazione':'Nuova Prenotazione';
   rebuildBeds(isEdit ? bedCounts : null); rebuildColors();
   document.getElementById('errmsg').classList.remove('show');
-  // Gestione campo camera
-  const sel = document.getElementById('fRoom');
-  const cameraFg = sel.closest('.fg');
-  const lbl = cameraFg?.querySelector('label.fl');
-  // Rimuovi eventuale div statico precedente
-  const oldStatic = cameraFg?.querySelector('.camera-static-display');
-  if (oldStatic) oldStatic.remove();
-
-  if (isEdit) {
-    // In modifica: mostra la camera come testo statico (non select)
-    // Usiamo il nome salvato in editBook, indipendente dallo stato delle option
-    const camName = window._editCameraName || sel.value || '—';
-    sel.style.display = 'none'; // nascondi select
-    const staticDiv = document.createElement('div');
-    staticDiv.className = 'fi camera-static-display';
-    staticDiv.style.cssText = 'opacity:0.7;cursor:default;user-select:none;';
-    staticDiv.textContent = camName;
-    sel.after(staticDiv);
-    if (lbl) lbl.textContent = 'Camera';
-  } else {
-    // In nuova prenotazione: mostra il select normale
-    sel.style.display = '';
-    sel.disabled = false;
-    sel.style.opacity = '';
-    if (lbl) lbl.textContent = 'Camera';
-  }
   document.getElementById('mov').classList.add('open');
 }
-function closeModal(){
-  document.getElementById('mov').classList.remove('open');
-  editId=null;
-  document.getElementById('fIn').value='';
-  document.getElementById('fOut').value='';
-  // Ripristina select camera (rimuovi eventuale div statico da edit mode)
-  const sel = document.getElementById('fRoom');
-  sel.style.display = '';
-  sel.disabled = false;
-  sel.style.opacity = '';
-  const cameraFg = sel.closest('.fg');
-  const oldStatic = cameraFg?.querySelector('.camera-static-display');
-  if (oldStatic) oldStatic.remove();
-  const lbl = cameraFg?.querySelector('label.fl');
-  if (lbl) lbl.textContent = 'Camera';
-  window._editCameraName = null;
-}
+function closeModal(){ document.getElementById('mov').classList.remove('open'); editId=null; document.getElementById('fIn').value=''; document.getElementById('fOut').value=''; }
 function movClick(e){ if(e.target===document.getElementById('mov')) closeModal(); }
 
 function rebuildBeds(initCounts) {
@@ -993,7 +937,7 @@ function renderSearchResults(lista, q) {
     }
 
     return header + `<div class="sr-item" onclick="goToBooking(${b.id})">
-      <div class="sr-dot" style="background:${pastello(b.c)}"></div>
+      <div class="sr-dot" style="background:${b.c}"></div>
       <div class="sr-body">
         <div class="sr-name">${_highlight(b.n, q)}</div>
         <div class="sr-meta">
@@ -1717,7 +1661,6 @@ async function testDbConnection() {
 
 function buildRoomSelect(){
   const sel=document.getElementById('fRoom');
-  sel.innerHTML = ''; // svuota prima di ricostruire (idempotente)
   const groups=[...new Set(ROOMS.map(r=>r.g))];
   groups.forEach(g=>{
     const og=document.createElement('optgroup'); og.label=g;
