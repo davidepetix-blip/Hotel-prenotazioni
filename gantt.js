@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '9'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '10'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -1745,12 +1745,12 @@ window.addEventListener('load', () => {
   // Controlla subito il token nel fragment — non aspettare GSI
   // (il redirect flow non ha bisogno di google.accounts)
   handleOAuthRedirect();
+  // Inizializza UI — DOM è pronto a questo punto
+  dbg('▶ buildRoomSelect'); buildRoomSelect();
+  dbg('▶ checkW'); checkW();
+  dbg('▶ render'); render();
+  dbg('✓ avvio ok');
 });
-
-dbg('▶ buildRoomSelect'); buildRoomSelect();
-dbg('▶ checkW'); checkW();
-dbg('▶ render'); render();
-dbg('✓ avvio ok');
 
 // ═══════════════════════════════════════════════════════════════════
 // MODULO FATTURAZIONE — CONTI & TARIFFE
