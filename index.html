@@ -8,13 +8,13 @@
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- Moduli Blip -->
-<script src="core.js?v=18.11.0"></script>
-<script src="sync.js?v=18.11.0"></script>
-<script src="gantt.js?v=18.11.0"></script>
-<script src="clienti.js?v=18.11.0"></script>
-<script src="alloggiati-data.js?v=18.11.0"></script>
-<script src="checkin.js?v=18.11.0"></script>
-<script src="billing.js?v=18.11.0"></script>
+<script src="core.js?v=18.11.1"></script>
+<script src="sync.js?v=18.11.1"></script>
+<script src="gantt.js?v=18.11.1"></script>
+<script src="clienti.js?v=18.11.1"></script>
+<script src="alloggiati-data.js?v=18.11.1"></script>
+<script src="checkin.js?v=18.11.1"></script>
+<script src="billing.js?v=18.11.1"></script>
 <style>
 :root {
   --bg: #f8f7f5; --surface: #ffffff; --surface2: #f2f1ef;
@@ -762,6 +762,32 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .cb-clear { background:none; border:none; cursor:pointer; color:var(--text3); font-size:14px;
   padding:2px 4px; border-radius:4px; flex-shrink:0; }
 .cb-clear:hover { color:var(--danger); background:rgba(220,53,69,.08); }
+
+/* ── Sezione pagamenti nel drawer ── */
+.pagamenti-section { margin:12px 0 8px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.pag-header { display:flex; align-items:center; justify-content:space-between; padding:8px 12px;
+  background:var(--surface2); border-bottom:1px solid var(--border); }
+.pag-title { font-size:12px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.04em; }
+.pag-riepilogo { font-size:11px; color:var(--text3); }
+.pag-residuo { color:var(--danger) !important; }
+.pag-saldato { color:var(--success) !important; }
+.pag-row { display:flex; align-items:center; gap:6px; padding:7px 12px;
+  border-bottom:1px solid var(--border); font-size:12px; flex-wrap:wrap; }
+.pag-row:last-of-type { border-bottom:none; }
+.pag-data { color:var(--text3); min-width:60px; }
+.pag-tipo { font-size:10px; font-weight:700; padding:2px 6px; border-radius:10px; text-transform:uppercase; }
+.pag-tipo-acconto { background:#fff3cd; color:#856404; }
+.pag-tipo-saldo   { background:#d1e7dd; color:#0f5132; }
+.pag-tipo-extra   { background:#cfe2ff; color:#084298; }
+.pag-importo { font-weight:700; color:var(--text); margin-left:auto; }
+.pag-metodo { color:var(--text3); font-size:11px; }
+.pag-doc { font-size:13px; }
+.pag-rif { color:var(--text3); font-size:10px; font-style:italic; }
+.pag-del { background:none; border:none; cursor:pointer; color:var(--text3); font-size:13px;
+  padding:2px 4px; border-radius:4px; flex-shrink:0; }
+.pag-del:hover { color:var(--danger); background:rgba(220,53,69,.1); }
+.pag-add-btn { display:block; width:calc(100% - 24px); margin:8px 12px; text-align:center;
+  font-size:12px; color:var(--accent); border-color:var(--accent); }
 </style>
 </head>
 <body>
@@ -1066,7 +1092,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Versione build ──
-const BLIP_BUILD = '18.11.0'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.11.1'; // ← build complessiva (major.minor.patch)
 
 // Assembla la versione completa dai moduli appena caricati
 function blipFullVersion() {

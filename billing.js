@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '4'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '5'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -103,7 +103,28 @@ function billSettingsDefault() {
 
 const IMPOSTAZIONI_SHEET = 'IMPOSTAZIONI';
 const CONTI_SHEET        = 'CONTI';
+const PAGAMENTI_SHEET    = 'PAGAMENTI';
 const BILL_DB_TTL        = 5 * 60 * 1000; // cache 5 minuti
+
+// Colonne foglio PAGAMENTI
+const PAG_COLS = {
+  ID:           1,  // A  PAG-2026-XXXXXX
+  CONTO_ID:     2,  // B
+  BOOKING_ID:   3,  // C
+  DATA:         4,  // D  gg/mm/aaaa
+  IMPORTO:      5,  // E  numero
+  TIPO:         6,  // F  acconto/saldo/extra
+  METODO:       7,  // G  contanti/carta/bonifico/assegno/altro
+  RIFERIMENTO:  8,  // H  es. "Visa *4521"
+  CON_DOCUMENTO:9,  // I  true/false
+  NOTE:         10, // J
+  TS:           11, // K
+};
+
+// Cache pagamenti in-memory
+let _pagamentiCache = null;
+let _pagamentiCacheTs = 0;
+let _pagamentiSheetReady = false;
 
 // ── Cache keys (localStorage, solo temporanea) ──
 const _C_SETTINGS = 'hotelBillSettingsCache';
@@ -217,6 +238,145 @@ async function ensureContiSheet() {
         body: JSON.stringify({ values:[['BOOKING_ID','EXTRA_JSON','OVERRIDE_JSON','APPART_MODE','CONTO_EMESSO_JSON','TS']] }) });
     }
   } catch(e) { console.warn('[CONTI] ensure:', e.message); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FOGLIO PAGAMENTI — setup + CRUD
+// ─────────────────────────────────────────────────────────────────
+async function ensurePagamentiSheet() {
+  if (_pagamentiSheetReady || !DATABASE_SHEET_ID) return;
+  _pagamentiSheetReady = true;
+  try {
+    const meta = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}?fields=sheets.properties.title`);
+    const mj = await meta.json();
+    if (!(mj.sheets||[]).some(s => s.properties.title === PAGAMENTI_SHEET)) {
+      await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}:batchUpdate`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ requests:[{ addSheet:{ properties:{ title:PAGAMENTI_SHEET } } }] })
+      });
+    }
+    const hd = await dbGet(`${PAGAMENTI_SHEET}!A1:K1`);
+    if (!hd.values?.[0]?.[0]) {
+      const u = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(PAGAMENTI_SHEET+'!A1:K1')}?valueInputOption=RAW`;
+      await apiFetch(u, { method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ values:[['PAG_ID','CONTO_ID','BOOKING_ID','DATA','IMPORTO','TIPO','METODO','RIFERIMENTO','CON_DOCUMENTO','NOTE','TS']] })
+      });
+    }
+  } catch(e) { console.warn('[PAGAMENTI] ensure:', e.message); }
+}
+
+async function loadPagamentiPerBooking(bid) {
+  if (!DATABASE_SHEET_ID) return [];
+  // Usa cache se fresca (5 min)
+  if (_pagamentiCache && Date.now() - _pagamentiCacheTs < BILL_DB_TTL) {
+    return (_pagamentiCache || []).filter(p => p.bookingId === bid);
+  }
+  try {
+    await ensurePagamentiSheet();
+    const d = await dbGet(`${PAGAMENTI_SHEET}!A2:K9999`);
+    const rows = d.values || [];
+    _pagamentiCache = rows.map((row, i) => ({
+      id:           (row[PAG_COLS.ID-1]||'').trim(),
+      contoId:      (row[PAG_COLS.CONTO_ID-1]||'').trim(),
+      bookingId:    parseInt(row[PAG_COLS.BOOKING_ID-1])||0,
+      data:         (row[PAG_COLS.DATA-1]||'').trim(),
+      importo:      parseFloat(row[PAG_COLS.IMPORTO-1])||0,
+      tipo:         (row[PAG_COLS.TIPO-1]||'saldo').trim(),
+      metodo:       (row[PAG_COLS.METODO-1]||'Contanti').trim(),
+      riferimento:  (row[PAG_COLS.RIFERIMENTO-1]||'').trim(),
+      conDocumento: (row[PAG_COLS.CON_DOCUMENTO-1]||'').trim() === 'true',
+      note:         (row[PAG_COLS.NOTE-1]||'').trim(),
+      ts:           (row[PAG_COLS.TS-1]||'').trim(),
+      dbRow:        i + 2,
+    })).filter(p => p.id && p.importo > 0);
+    _pagamentiCacheTs = Date.now();
+    return _pagamentiCache.filter(p => p.bookingId === bid);
+  } catch(e) {
+    console.warn('[PAGAMENTI] load:', e.message);
+    return [];
+  }
+}
+
+function getPagamentiPerBookingSync(bid) {
+  if (!_pagamentiCache) return [];
+  return _pagamentiCache.filter(p => p.bookingId === bid);
+}
+
+function getTotalePagatoPerBooking(bid) {
+  return getPagamentiPerBookingSync(bid).reduce((acc, p) => acc + p.importo, 0);
+}
+
+async function registraPagamento(pag) {
+  if (!DATABASE_SHEET_ID) throw new Error('DATABASE_SHEET_ID non configurato');
+  await ensurePagamentiSheet();
+  const anno = new Date().getFullYear();
+  const id = pag.id || genPagamentoId(anno);
+  const oggi = new Date().toLocaleDateString('it-IT');
+  const row = [
+    id,
+    pag.contoId    || '',
+    String(pag.bookingId || ''),
+    pag.data       || oggi,
+    String(pag.importo   || 0),
+    pag.tipo       || 'saldo',
+    pag.metodo     || 'Contanti',
+    pag.riferimento|| '',
+    pag.conDocumento ? 'true' : 'false',
+    pag.note       || '',
+    nowISO(),
+  ];
+  const u = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(PAGAMENTI_SHEET)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+  const r = await apiFetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ values:[row] }) });
+  if (!r.ok) throw new Error(`Registrazione pagamento fallita (${r.status})`);
+  // Aggiorna cache
+  if (!_pagamentiCache) _pagamentiCache = [];
+  _pagamentiCache.push({ ...pag, id, dbRow: _pagamentiCache.length + 2 });
+  _pagamentiCacheTs = Date.now();
+  return id;
+}
+
+function eliminaPagamentoUI(pagId, bid) {
+  if (!confirm('Eliminare questo pagamento?')) return;
+  eliminaPagamento(pagId).then(() => {
+    // Ricarica la sezione pagamenti nel drawer
+    if (typeof refreshBillTab === 'function') refreshBillTab(bid);
+    // Se il conto era 'pagato' e abbiamo rimosso un pagamento, torna a 'emesso'
+    const conti = loadConti();
+    const conto = conti.find(c => c.bookingId === bid);
+    if (conto && conto.status === 'pagato') {
+      const rimasto = getTotalePagatoPerBooking(bid);
+      if (rimasto < (conto.totale||0) - 0.01) {
+        const idx = conti.findIndex(c => c.bookingId === bid);
+        if (idx >= 0) { conti[idx] = { ...conti[idx], status:'emesso', ts:nowISO() }; saveConti(conti); }
+        if (typeof render === 'function') render();
+      }
+    }
+  }).catch(e => showToast('Errore eliminazione: '+e.message, 'error'));
+}
+
+async function eliminaPagamento(pagId) {
+  if (!_pagamentiCache) return;
+  const idx = _pagamentiCache.findIndex(p => p.id === pagId);
+  if (idx < 0) return;
+  const pag = _pagamentiCache[idx];
+  // Elimina riga dal foglio
+  if (pag.dbRow && DATABASE_SHEET_ID) {
+    try {
+      const meta = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}?fields=sheets.properties`);
+      const mj = await meta.json();
+      const sheet = (mj.sheets||[]).find(s => s.properties.title === PAGAMENTI_SHEET);
+      const sheetNumId = sheet?.properties?.sheetId ?? null;
+      if (sheetNumId !== null) {
+        await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}:batchUpdate`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ requests:[{ deleteDimension: { range: { sheetId:sheetNumId, dimension:'ROWS', startIndex:pag.dbRow-1, endIndex:pag.dbRow } } }] })
+        });
+      }
+    } catch(e) { console.warn('[PAGAMENTI] elimina:', e.message); }
+  }
+  _pagamentiCache.splice(idx, 1);
+  // Riaggiusta dbRow nei pagamenti successivi
+  _pagamentiCache.forEach((p, i) => { if (p.dbRow > pag.dbRow) p.dbRow--; });
 }
 
 // Cache in-memory per la sessione (riduce letture DB durante la stessa sessione)
@@ -441,6 +601,21 @@ async function preloadContoDati() {
     console.log(`[CONTI] Precaricati ${rows.length} record`);
     // Re-render Gantt per mostrare i bordi stato conto sulle barre
     if (typeof render === 'function') render();
+    // Precarica anche i pagamenti in background
+    ensurePagamentiSheet().then(() =>
+      dbGet(`${PAGAMENTI_SHEET}!A2:K9999`).then(d => {
+        const rows = d.values || [];
+        _pagamentiCache = rows.map((row, i) => ({
+          id: (row[0]||'').trim(), contoId:(row[1]||'').trim(),
+          bookingId:parseInt(row[2])||0, data:(row[3]||'').trim(),
+          importo:parseFloat(row[4])||0, tipo:(row[5]||'saldo').trim(),
+          metodo:(row[6]||'Contanti').trim(), riferimento:(row[7]||'').trim(),
+          conDocumento:(row[8]||'').trim()==='true', note:(row[9]||'').trim(),
+          ts:(row[10]||'').trim(), dbRow:i+2,
+        })).filter(p => p.id && p.importo > 0);
+        _pagamentiCacheTs = Date.now();
+      }).catch(() => {})
+    ).catch(() => {});
   } catch(e) { console.warn('[CONTI] preload:', e.message); }
 }
 
@@ -810,6 +985,32 @@ function renderDrawerBill(b) {
         <span style="color:var(--text3);flex:1">Salvato · ${_ce.totale?.toFixed(2)}€</span>
         ${_ce.numDoc?`<span style="font-size:10px;color:var(--text3)">📄 ${_ce.numDoc}</span>`:''}
       </div>` : '';
+    })()}
+    ${(()=>{
+      const _pags = (typeof getPagamentiPerBookingSync==='function') ? getPagamentiPerBookingSync(b.id) : [];
+      const _tot  = _ce ? (_ce.totale||0) : 0;
+      const _pagato = _pags.reduce((s,p)=>s+p.importo,0);
+      const _residuo = Math.max(0,_tot-_pagato);
+      if (_pags.length===0 && !_ce) return '';
+      const tipoClass = t => ({'acconto':'pag-tipo-acconto','saldo':'pag-tipo-saldo','extra':'pag-tipo-extra'}[t]||'');
+      return `<div class="pagamenti-section">
+        <div class="pag-header">
+          <span class="pag-title">💳 Pagamenti</span>
+          ${_tot>0?`<span class="pag-riepilogo">Tot €${_tot.toFixed(2)} · Pagato €${_pagato.toFixed(2)}${_residuo>0.01?` · <b class="pag-residuo">Residuo €${_residuo.toFixed(2)}</b>`:' <b class=\'pag-saldato\'>✓ Saldato</b>'}</span>`:''}
+        </div>
+        ${_pags.map(p=>`
+          <div class="pag-row">
+            <span class="pag-data">${p.data}</span>
+            <span class="pag-tipo ${tipoClass(p.tipo)}">${p.tipo}</span>
+            <span class="pag-importo">€${p.importo.toFixed(2)}</span>
+            <span class="pag-metodo">${p.metodo}</span>
+            ${p.conDocumento?'<span class="pag-doc" title="Con documento">📄</span>':''}
+            ${p.riferimento?`<span class="pag-rif">${p.riferimento}</span>`:''}
+            <button class="pag-del" onclick="eliminaPagamentoUI('${p.id}',${b.id})" title="Elimina">✕</button>
+          </div>
+        `).join('')}
+        <button class="btn pag-add-btn" onclick="apriDialogPagamento('${_ce?.id||''}',${_residuo.toFixed(2)})">+ Pagamento</button>
+      </div>`;
     })()}
     <div style="display:flex;gap:8px;margin-top:10px">
       <button class="btn primary" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;">📄 Emetti conto</button>
@@ -1503,55 +1704,122 @@ function confermaFatturazione(contoId, tipoDoc, numDoc) {
   renderContiTab('lista');
 }
 
-function apriDialogPagamento(contoId) {
+function apriDialogPagamento(contoId, prefillImporto) {
+  const conti = loadConti();
+  const conto = conti.find(c => c.id === contoId);
+  if (!conto) return;
+  const totaleConto = conto.totale || 0;
+  const giaPagato   = getTotalePagatoPerBooking(conto.bookingId);
+  const residuo     = Math.max(0, totaleConto - giaPagato).toFixed(2);
+  const importoSuggerito = prefillImporto !== undefined ? prefillImporto : residuo;
+
   const ov = document.createElement('div');
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
-  ov.innerHTML = `<div style="background:var(--surface);border-radius:16px;padding:24px;max-width:340px;width:100%">
-    <div style="font-weight:700;font-size:15px;margin-bottom:16px">💶 Registra pagamento</div>
+  ov.innerHTML = `<div style="background:var(--surface);border-radius:16px;padding:24px;max-width:360px;width:100%">
+    <div style="font-weight:700;font-size:15px;margin-bottom:4px">💶 Registra pagamento</div>
+    ${giaPagato > 0 ? `<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Già pagato: €${giaPagato.toFixed(2)} · Residuo: €${residuo}</div>` : '<div style="margin-bottom:14px"></div>'}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div>
+        <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Importo €</label>
+        <input id="_pImporto" type="number" step="0.01" min="0.01" value="${importoSuggerito}"
+          style="width:100%;box-sizing:border-box;border:1.5px solid var(--accent);border-radius:8px;padding:9px;font-size:14px;font-weight:600;background:var(--surface2);color:var(--text)">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Tipo</label>
+        <select id="_pTipo" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
+          <option value="saldo">Saldo</option>
+          <option value="acconto">Acconto</option>
+          <option value="extra">Extra</option>
+        </select>
+      </div>
+    </div>
     <div style="margin-bottom:10px">
-      <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Modalità pagamento</label>
+      <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Metodo</label>
       <select id="_pMod" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
         <option value="Contanti">Contanti</option>
         <option value="Carta di credito">Carta di credito</option>
         <option value="Bancomat">Bancomat</option>
         <option value="Bonifico">Bonifico</option>
         <option value="Assegno">Assegno</option>
+        <option value="Altro">Altro</option>
       </select>
     </div>
-    <div style="margin-bottom:16px">
-      <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Data pagamento</label>
-      <input id="_pData" type="date" value="${new Date().toISOString().slice(0,10)}"
-        style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div>
+        <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Data</label>
+        <input id="_pData" type="date" value="${new Date().toISOString().slice(0,10)}"
+          style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text3);text-transform:uppercase;display:block;margin-bottom:4px">Riferimento</label>
+        <input id="_pRif" placeholder="es. Visa *4521" style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;background:var(--surface2);color:var(--text)">
+      </div>
+    </div>
+    <div style="margin-bottom:16px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="_pDoc" style="width:16px;height:16px;cursor:pointer">
+      <label for="_pDoc" style="font-size:13px;color:var(--text2);cursor:pointer">Con documento fiscale (scontrino/fattura)</label>
     </div>
     <div style="display:flex;gap:8px">
       <button onclick="
+        const imp=parseFloat(document.getElementById('_pImporto').value)||0;
+        const tipo=document.getElementById('_pTipo').value;
         const mod=document.getElementById('_pMod').value;
         const data=document.getElementById('_pData').value;
-        confermaPagamento('${contoId}',mod,data);
-        this.closest('div[style*=fixed]').remove()
-      " style="flex:1;background:#1e8449;color:#fff;border:none;border-radius:8px;padding:10px;font-weight:600;cursor:pointer;font-size:13px">
-        ✓ Pagato
+        const rif=document.getElementById('_pRif').value.trim();
+        const doc=document.getElementById('_pDoc').checked;
+        if(imp<=0){alert('Inserisci un importo valido');return;}
+        confermaPagamento('${contoId}',imp,tipo,mod,data,rif,doc);
+        this.closest('div[style*=fixed]').remove();
+      " style="flex:1;background:#1e8449;color:#fff;border:none;border-radius:8px;padding:11px;font-weight:600;cursor:pointer;font-size:13px">
+        ✓ Registra pagamento
       </button>
       <button onclick="this.closest('div[style*=fixed]').remove()"
-        style="background:none;border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;font-size:13px;color:var(--text2)">
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:11px;cursor:pointer;font-size:13px;color:var(--text2)">
         Annulla
       </button>
     </div>
   </div>`;
   document.body.appendChild(ov);
   ov.addEventListener('click', e => { if(e.target===ov) ov.remove(); });
+  setTimeout(() => document.getElementById('_pImporto')?.select(), 100);
 }
 
-function confermaPagamento(contoId, modalita, dataStr) {
+function confermaPagamento(contoId, importo, tipo, modalita, dataStr, riferimento, conDocumento) {
   const conti = loadConti();
   const idx = conti.findIndex(c => c.id === contoId);
   if (idx < 0) return;
-  conti[idx] = { ...conti[idx], status:'pagato', modalitaPag: modalita,
+  const conto = conti[idx];
+  const totaleConto = conto.totale || 0;
+  const giaPagato   = getTotalePagatoPerBooking(conto.bookingId);
+  const nuovoTotale = giaPagato + importo;
+
+  // Registra il pagamento nel foglio PAGAMENTI
+  const dataFmt = dataStr
+    ? new Date(dataStr).toLocaleDateString('it-IT')
+    : new Date().toLocaleDateString('it-IT');
+  registraPagamento({
+    contoId, bookingId: conto.bookingId,
+    data: dataFmt, importo, tipo, metodo: modalita,
+    riferimento, conDocumento,
+  }).catch(e => console.warn('[PAGAMENTI] registra:', e.message));
+
+  // Aggiorna stato del conto
+  const nuovoStato = nuovoTotale >= totaleConto - 0.01 ? 'pagato' : 'emesso';
+  conti[idx] = {
+    ...conto, status: nuovoStato,
+    modalitaPag: modalita,
     pagatoIl: dataStr ? new Date(dataStr).toISOString() : new Date().toISOString(),
-    ts: new Date().toISOString() };
+    ts: new Date().toISOString(),
+  };
   saveConti(conti);
-  showToast('✓ Pagamento registrato', 'success');
+
+  if (nuovoStato === 'pagato') {
+    showToast('✓ Pagamento completato — conto saldato', 'success');
+  } else {
+    showToast(`✓ Acconto €${importo.toFixed(2)} registrato — residuo €${(totaleConto-nuovoTotale).toFixed(2)}`, 'success');
+  }
   renderContiTab('lista');
+  if (typeof render === 'function') render();
 }
 
 function riapriFoglio(bid) {
