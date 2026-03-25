@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '20'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '21'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -573,6 +573,15 @@ async function saveCiCheckin() {
     hideLoading();
     showToast('✓ Check-in salvato', 'success');
     renderCiTab();
+    // Aggiorna il tab CI nel drawer se è aperto
+    const drPanel = document.getElementById('drTabCI');
+    if (drPanel && drPanel.style.display !== 'none') {
+      const booking = bookings.find(x => x.dbId === b?.dbId)
+                   || bookings.find(x => ('LOCAL-' + x.id) === _ciEditBookingId);
+      if (booking) {
+        try { drPanel.innerHTML = renderDrawerCheckin(booking); } catch(e) {}
+      }
+    }
   } catch(e) {
     hideLoading();
     showToast('Errore: ' + e.message, 'error');
