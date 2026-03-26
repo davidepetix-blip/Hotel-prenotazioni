@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '14'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '15'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -255,7 +255,7 @@ function renderCheckinDrawerTab(bookingNumId) {
   if (!tabEl) return;
   const b = bookings.find(x => x.id === bookingNumId);
   if (!b) { tabEl.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Prenotazione non trovata</div>'; return; }
-  const ci = (typeof ciData !== 'undefined') ? ciData[b.dbId] : null;
+  const ci = (typeof getCiForBooking === 'function') ? getCiForBooking(b) : (typeof ciData !== 'undefined' ? ciData[b.dbId] : null);
   const oggi = new Date().toISOString().slice(0,10);
   const checkinDate = b.s.toISOString().slice(0,10);
   const isLate = checkinDate < oggi;

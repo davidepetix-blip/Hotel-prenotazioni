@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '1'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '2'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -82,20 +82,26 @@ async function readCiSheet() {
     const rows = d.values || [];
     const result = {};
     rows.forEach((row, i) => {
-      const preId = row[1] || '';
-      if (!preId) return;
+      const preId = (row[1] || '').trim();
+      const ciId  = (row[0] || '').trim();
+      // Usa preId come chiave principale; fallback su ciId per righe senza preId
+      const key = preId || ciId;
+      if (!key) return;
       try {
-        result[preId] = {
-          ciId:   row[0] || '',
-          preId:  row[1] || '',
-          camera: row[2] || '',
-          data:   row[3] || '',
+        const rec = {
+          ciId,
+          preId,
+          camera:    row[2] || '',
+          data:      row[3] || '',
           numOspiti: parseInt(row[4]) || 0,
-          guests: JSON.parse(row[5] || '[]'),
-          ts:     row[6] || '',
-          utente: row[7] || '',
-          ciRow:  i + 2,
+          guests:    JSON.parse(row[5] || '[]'),
+          ts:        row[6] || '',
+          utente:    row[7] || '',
+          ciRow:     i + 2,
         };
+        result[key] = rec;
+        // Indicizza anche per ciId se diverso dalla chiave principale
+        if (preId && ciId && ciId !== preId) result[ciId] = rec;
       } catch(e) {}
     });
     return result;
@@ -155,22 +161,33 @@ function renderCiToday() {
   const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
 
   // Arrivi di oggi e ieri
-  const arriviOggi = bookings.filter(b => {
+  // De-duplica per (camera + data arrivo) — evita doppioni da multi-month o import
+  const _dedup = (arr) => {
+    const seen = new Set();
+    return arr.filter(b => {
+      const key = (b.r || '') + '|' + (b.s?.toISOString()?.slice(0,10) || '');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const arriviOggi = _dedup(bookings.filter(b => {
     const s = new Date(b.s); s.setHours(0,0,0,0);
     return s.getTime() === today.getTime();
-  });
-  const arriviIeri = bookings.filter(b => {
+  }));
+  const arriviIeri = _dedup(bookings.filter(b => {
     const s = new Date(b.s); s.setHours(0,0,0,0);
-    return s.getTime() === yesterday.getTime() && !ciData[b.dbId]; // ieri solo se non ancora registrati
-  });
+    const key = b.dbId || b.id;
+    return s.getTime() === yesterday.getTime() && !ciData[key]; // ieri solo se non ancora registrati
+  }));
   const tuttiArrivi = [...arriviOggi, ...arriviIeri];
 
   // Contatori riepilogo (solo oggi per i contatori principali)
   const totArrivi   = arriviOggi.length;
-  const completati  = arriviOggi.filter(b => ciData[b.dbId]).length;
+  const completati  = arriviOggi.filter(b => getCiForBooking(b)).length;
   const daFare      = totArrivi - completati;
   const totOspiti   = arriviOggi.reduce((sum,b) => {
-    const ci = ciData[b.dbId];
+    const ci = getCiForBooking(b);
     return sum + (ci ? ci.numOspiti : 0);
   }, 0);
 
@@ -186,11 +203,11 @@ function renderCiToday() {
   } else {
     // Raggruppa: prima ieri (da fare), poi oggi (da fare), poi oggi (completati)
     const ieriDaFare  = arriviIeri; // già filtrati solo non registrati
-    const oggiDaFare  = arriviOggi.filter(b => !ciData[b.dbId]);
-    const oggiDone    = arriviOggi.filter(b =>  ciData[b.dbId]);
+    const oggiDaFare  = arriviOggi.filter(b => !getCiForBooking(b));
+    const oggiDone    = arriviOggi.filter(b =>  getCiForBooking(b));
 
     const renderCard = (b, isYesterday) => {
-      const ci      = ciData[b.dbId];
+      const ci      = getCiForBooking(b);
       const done    = !!ci;
       const room    = ROOMS.find(r => r.id === b.r);
       const roomName= room?.name || b.cameraName || '—';
@@ -301,10 +318,22 @@ function renderCiHistory() {
 }
 
 // ── Modale check-in ──
+// Helper: cerca il check-in per una prenotazione provando più chiavi
+function getCiForBooking(b) {
+  if (!b) return null;
+  return ciData[b.dbId] || ciData[String(b.id)] || null;
+}
+
 function openCiModal(bookingDbId) {
-  const b = bookings.find(b => b.dbId === bookingDbId);
+  // Cerca prima per dbId (stringa PRE-...), poi per id numerico come stringa
+  let b = bookings.find(b => b.dbId === bookingDbId);
+  if (!b && bookingDbId) {
+    const numId = parseInt(bookingDbId);
+    if (!isNaN(numId)) b = bookings.find(x => x.id === numId);
+  }
   if (!b) { showToast('Prenotazione non trovata', 'error'); return; }
-  _ciEditBookingId = bookingDbId;
+  // Usa sempre il dbId reale come chiave; fallback su id numerico come stringa
+  _ciEditBookingId = b.dbId || String(b.id);
   const room = ROOMS.find(r => r.id === b.r);
   document.getElementById('ciPanelTitle').textContent = `Check-in · Camera ${room?.name||b.cameraName}`;
   document.getElementById('ciPanelSub').textContent = `${b.n} · ${fmtDate(b.s)} → ${fmtDate(b.e)}`;
@@ -482,7 +511,7 @@ async function saveCiCheckin() {
 
   const b = bookings.find(b => b.dbId === _ciEditBookingId);
   const room = ROOMS.find(r => r.id === b?.r);
-  const existing = ciData[_ciEditBookingId];
+  const existing = ciData[_ciEditBookingId] || ciData[b ? String(b.id) : ''] || null;
 
   const ciId    = existing?.ciId || 'CI-' + Date.now().toString(36).toUpperCase();
   const ciRow   = existing?.ciRow || null;
