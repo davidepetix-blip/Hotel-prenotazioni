@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '11'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '12'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -73,7 +73,9 @@ function render() {
         bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
           style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};${_borderStyle}"
           onclick="selBook(${b.id},event)"
-          onmouseenter="showTT(event,${b.id})" onmouseleave="hideTT()">
+          data-bid="${b.id}"
+          onmouseenter="if(!('ontouchstart' in window))showTT(event,${b.id})"
+          onmouseleave="hideTT()">
           ${b.n}<span class="bdisp">${b.d}</span></div>`;
       });
       let tv='';
@@ -172,6 +174,7 @@ function goToday(){ const t=new Date(); curM=t.getMonth(); curY=t.getFullYear();
 // ═══════════════════════════════════════════════════════════════════
 function selBook(id,e){
   e&&e.stopPropagation();
+  hideTT(); // forza chiusura tooltip prima di qualsiasi altra operazione
   const b=bookings.find(x=>x.id===id); if(!b) return;
   const adj=adjConflict(b);
   let adjHtml='';
@@ -283,11 +286,14 @@ function cellClick(rid,day){
 // DRAWER
 // ═══════════════════════════════════════════════════════════════════
 function openDrawer(){
-  hideTT();
+  // Nascondi tooltip con forza — su Android il tap può triggerare mouseenter dopo click
+  const tt = document.getElementById('tt');
+  if (tt) { tt.style.display = 'none'; tt.style.opacity = '0'; }
   document.getElementById('drawer').classList.add('open');
   document.getElementById('dov').classList.add('open');
-  // Previeni scroll del body quando il drawer è aperto su mobile
   document.body.style.overflow = 'hidden';
+  // Su mobile: dopo 100ms nascondi ancora il tooltip (race condition Android)
+  if ('ontouchstart' in window) setTimeout(() => { if(tt) tt.style.display='none'; }, 100);
 }
 
 function openRoomDrawer(roomId) {

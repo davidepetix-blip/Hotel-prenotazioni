@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '5'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '6'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -988,7 +988,9 @@ function renderDrawerBill(b) {
     })()}
     ${(()=>{
       const _pags = (typeof getPagamentiPerBookingSync==='function') ? getPagamentiPerBookingSync(b.id) : [];
-      const _tot  = _ce ? (_ce.totale||0) : 0;
+      const _contiList2 = loadConti();
+      const _ce2 = _contiList2.find(x=>x.bookingId===b.id);
+      const _tot  = _ce2 ? (_ce2.totale||0) : 0;
       const _pagato = _pags.reduce((s,p)=>s+p.importo,0);
       const _residuo = Math.max(0,_tot-_pagato);
       if (_pags.length===0 && !_ce) return '';
@@ -1009,7 +1011,7 @@ function renderDrawerBill(b) {
             <button class="pag-del" onclick="eliminaPagamentoUI('${p.id}',${b.id})" title="Elimina">✕</button>
           </div>
         `).join('')}
-        <button class="btn pag-add-btn" onclick="apriDialogPagamento('${_ce?.id||''}',${_residuo.toFixed(2)})">+ Pagamento</button>
+        <button class="btn pag-add-btn" onclick="apriDialogPagamento('${_ce2?.id||''}',${_residuo.toFixed(2)})">+ Pagamento</button>
       </div>`;
     })()}
     <div style="display:flex;gap:8px;margin-top:10px">
