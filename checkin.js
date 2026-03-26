@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '3'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '4'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -391,7 +391,23 @@ function renderCiHistory() {
 // Helper: cerca il check-in per una prenotazione provando più chiavi
 function getCiForBooking(b) {
   if (!b) return null;
-  return ciData[b.dbId] || ciData[String(b.id)] || null;
+  // 1. Cerca per dbId (es. PRE-2026-XXXXXX)
+  if (b.dbId && ciData[b.dbId]) return ciData[b.dbId];
+  // 2. Cerca per id numerico come stringa
+  if (ciData[String(b.id)]) return ciData[String(b.id)];
+  // 3. Fallback: cerca per camera + data arrivo (recupera check-in orfani senza preId)
+  const camName = b.cameraName || (typeof roomName === 'function' ? roomName(b.r) : '') || '';
+  const arrivo  = b.s instanceof Date ? b.s.toISOString().slice(0,10) : '';
+  if (camName && arrivo) {
+    const found = Object.values(ciData).find(ci =>
+      ci.camera === camName && ci.data === arrivo
+    );
+    if (found) {
+      if (typeof syncLog === 'function') syncLog('CI trovato per camera+data: ' + camName + ' ' + arrivo, 'ok');
+      return found;
+    }
+  }
+  return null;
 }
 
 function openCiModal(bookingDbId) {

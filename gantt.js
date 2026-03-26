@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '15'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '17'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -255,7 +255,16 @@ function renderCheckinDrawerTab(bookingNumId) {
   if (!tabEl) return;
   const b = bookings.find(x => x.id === bookingNumId);
   if (!b) { tabEl.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Prenotazione non trovata</div>'; return; }
-  const ci = (typeof getCiForBooking === 'function') ? getCiForBooking(b) : (typeof ciData !== 'undefined' ? ciData[b.dbId] : null);
+  // Se ciData sembra vuota o non trova la prenotazione, forza ricaricamento
+  const _ciKeys = (typeof ciData !== 'undefined') ? Object.keys(ciData).length : 0;
+  if (typeof syncLog === 'function') syncLog('CI tab: id='+bookingNumId+' dbId='+(b.dbId||'null')+' ciData.keys='+_ciKeys, 'syn');
+  let ci = (typeof getCiForBooking === 'function') ? getCiForBooking(b) : null;
+  // Se non trovato e ciData ha dati, potrebbe essere problema di cache/chiavi
+  if (!ci && _ciKeys > 0 && b.dbId && typeof loadCiData === 'function') {
+    loadCiData(true).then(() => { renderCheckinDrawerTab(bookingNumId); });
+    return; // ri-render dopo reload
+  }
+  if (typeof syncLog === 'function') syncLog('CI trovato: '+(ci?'SI cam='+ci.camera+' data='+ci.data:'NO'), ci?'ok':'wrn');
   const oggi = new Date().toISOString().slice(0,10);
   const checkinDate = b.s.toISOString().slice(0,10);
   const isLate = checkinDate < oggi;
