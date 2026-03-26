@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '2'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '3'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -153,6 +153,75 @@ async function loadCiData(force=false) {
 }
 
 function invalidateCiCache() { localStorage.removeItem(CI_CACHE_KEY); }
+
+// ─────────────────────────────────────────────────────────────────
+// RICONCILIAZIONE — collega check-in orfani alle prenotazioni
+// Legge le righe CHECK-IN senza ID_PRENOTAZIONE e tenta di trovarla
+// per camera + data_checkin nel foglio PRENOTAZIONI
+// ─────────────────────────────────────────────────────────────────
+async function riconciliaCheckin() {
+  if (!DATABASE_SHEET_ID) { showToast('DB non configurato', 'error'); return; }
+  showLoading('Riconciliazione check-in…');
+  try {
+    const d = await dbGet(`${CI_SHEET_NAME}!A2:H9999`);
+    const rows = d.values || [];
+    const orfani = rows
+      .map((row, i) => ({ row, rowNum: i + 2 }))
+      .filter(({ row }) => !(row[1] || '').trim() && (row[0] || '').trim()); // preId vuoto, ciId presente
+
+    if (orfani.length === 0) {
+      hideLoading();
+      showToast('Nessun check-in orfano trovato', 'success');
+      return;
+    }
+
+    let fixed = 0, notFound = 0;
+    const updates = [];
+
+    for (const { row, rowNum } of orfani) {
+      const camera   = (row[2] || '').trim();
+      const dataCI   = (row[3] || '').trim(); // formato YYYY-MM-DD
+      if (!camera || !dataCI) { notFound++; continue; }
+
+      // Cerca prenotazione con stessa camera e data di arrivo
+      const booking = bookings.find(b => {
+        const camName = b.cameraName || roomName(b.r) || '';
+        const arrivo  = b.s instanceof Date ? b.s.toISOString().slice(0,10) : '';
+        return camName === camera && arrivo === dataCI;
+      });
+
+      if (!booking || !booking.dbId) { notFound++; continue; }
+
+      // Aggiorna colonna B con il dbId trovato
+      updates.push({
+        range: `${CI_SHEET_NAME}!B${rowNum}`,
+        values: [[booking.dbId]]
+      });
+      fixed++;
+    }
+
+    if (updates.length > 0) {
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values:batchUpdate`;
+      await apiFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valueInputOption: 'RAW', data: updates })
+      });
+      // Ricarica ciData
+      await loadCiData(true);
+    }
+
+    hideLoading();
+    const msg = `Riconciliati ${fixed} check-in` + (notFound > 0 ? `, ${notFound} non trovati` : '');
+    showToast(msg, fixed > 0 ? 'success' : 'warning');
+    syncLog(msg, fixed > 0 ? 'ok' : 'wrn');
+    renderCiTab();
+  } catch(e) {
+    hideLoading();
+    showToast('Errore riconciliazione: ' + e.message, 'error');
+    console.error('[riconcilia]', e);
+  }
+}
 
 // ── Render tab Oggi ──
 function renderCiToday() {
@@ -305,14 +374,15 @@ function renderCiHistory() {
     });
   }
 
-  // Export tutto
-  if (filtered.length > 0) {
-    html += `
-      <div class="ci-export-bar" style="margin-top:16px;">
-        <div class="ci-export-info">Genera file Alloggiati Web per tutti i check-in${_ciHistSearch?' filtrati':''}</div>
-        <button class="btn primary" style="flex-shrink:0" onclick="exportAlloggiati('filtered')">⬇ Genera .txt</button>
-      </div>`;
-  }
+  // Export tutto + riconcilia
+  html += `
+    <div class="ci-export-bar" style="margin-top:16px;">
+      <div class="ci-export-info">Genera file Alloggiati Web${_ciHistSearch?' (filtrati)':''}</div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        ${filtered.length > 0 ? `<button class="btn primary" onclick="exportAlloggiati('filtered')">⬇ .txt</button>` : ''}
+        <button class="btn" onclick="riconciliaCheckin()" title="Collega check-in orfani alle prenotazioni">🔗 Riconcilia</button>
+      </div>
+    </div>`;
 
   body.innerHTML = html;
 }
