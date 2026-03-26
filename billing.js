@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '7'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '8'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1135,7 +1135,7 @@ function removeExtra(bid, idx) {
 function drTab(el, showId) {
   el.closest('#drbody').querySelectorAll('.dr-bill-tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  ['drTabInfo','drTabBill'].forEach(id=>{
+  ['drTabInfo','drTabBill','drTabCI'].forEach(id=>{
     const d=document.getElementById(id);
     if(d) d.style.display = id===showId?'':'none';
   });

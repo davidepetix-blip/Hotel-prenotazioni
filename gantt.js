@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '13'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '14'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -237,6 +237,57 @@ function selBook(id,e){
       <div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">Caricamento…</div>
     </div>`;
   openDrawer();
+  setTimeout(() => { if (typeof renderCheckinDrawerTab === 'function') renderCheckinDrawerTab(b.id); }, 50);
+}
+
+function drTabCheckin(el, bookingNumId) {
+  el.closest('#drbody').querySelectorAll('.dr-bill-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  ['drTabInfo','drTabBill','drTabCI'].forEach(id=>{
+    const d=document.getElementById(id);
+    if(d) d.style.display = id==='drTabCI'?'':'none';
+  });
+  if (typeof renderCheckinDrawerTab === 'function') renderCheckinDrawerTab(bookingNumId);
+}
+
+function renderCheckinDrawerTab(bookingNumId) {
+  const tabEl = document.getElementById('drTabCI');
+  if (!tabEl) return;
+  const b = bookings.find(x => x.id === bookingNumId);
+  if (!b) { tabEl.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Prenotazione non trovata</div>'; return; }
+  const ci = (typeof ciData !== 'undefined') ? ciData[b.dbId] : null;
+  const oggi = new Date().toISOString().slice(0,10);
+  const checkinDate = b.s.toISOString().slice(0,10);
+  const isLate = checkinDate < oggi;
+  if (ci) {
+    const capo = ci.guests && ci.guests[0] ? ci.guests[0] : {};
+    tabEl.innerHTML =
+      '<div style="padding:14px">' +
+      '<div style="background:#d1e7dd;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#0f5132">' +
+      '✓ Check-in ' + ci.data + ' · ' + ci.numOspiti + ' ospite/i</div>' +
+      '<div style="font-size:13px;font-weight:600;margin-bottom:4px">' + escHtml(capo.cognome||'') + ' ' + escHtml(capo.nome||'') + '</div>' +
+      '<div style="font-size:11px;color:var(--text3);margin-bottom:6px">' + escHtml(capo.tipoDoc||'') + ' ' + escHtml(capo.numDoc||'') + '</div>' +
+      (ci.guests.length > 1 ? '<div style="font-size:11px;color:var(--text3);margin-bottom:8px">' + (ci.guests.length-1) + ' accompagnatore/i</div>' : '') +
+      '<div style="display:flex;gap:8px">' +
+      '<button class="btn primary" onclick="openCiModal(\'' + b.dbId + '\')" style="flex:1;justify-content:center">✎ Modifica</button>' +
+      '<button class="btn" onclick="exportAlloggiati(\'all\')" style="flex:1;justify-content:center">⬇ .txt</button>' +
+      '</div></div>';
+  } else if (checkinDate <= oggi) {
+    const giorni = Math.round((Date.now() - b.s.getTime()) / 86400000);
+    tabEl.innerHTML =
+      '<div style="padding:14px">' +
+      (isLate ? '<div style="background:#f8d7da;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#842029">' +
+        '⚠ Check-in in ritardo<br><span style="font-size:11px">Arrivo ' + giorni + ' giorno/i fa</span></div>' : '') +
+      '<button class="btn primary" onclick="openCiModal(\'' + b.dbId + '\')" style="width:100%;justify-content:center;margin-top:4px">' +
+      '🛎 Registra check-in ora</button></div>';
+  } else {
+    const giorni = Math.ceil((b.s.getTime() - Date.now()) / 86400000);
+    tabEl.innerHTML =
+      '<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">' +
+      '📅 Arrivo tra ' + giorni + ' giorno/i<br>' +
+      '<button class="btn" onclick="openCiModal(\'' + b.dbId + '\')" style="margin-top:10px">' +
+      '🛎 Pre-registra check-in</button></div>';
+  }
 }
 
 function editBook(id){
