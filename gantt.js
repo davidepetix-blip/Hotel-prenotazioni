@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '12'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '13'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -231,7 +231,7 @@ function selBook(id,e){
     </div>
     </div>
     <div id="drTabBill" style="display:none;">
-      ${renderDrawerBill(b)}
+      ${(()=>{ try { return renderDrawerBill(b); } catch(err) { syncLog('⚠ Conto: '+err.message,'wrn'); return '<div style="padding:12px;font-size:12px;color:var(--danger)">⚠ Errore caricamento conto: '+err.message+'</div>'; } })()}
     </div>
     <div id="drTabCI" style="display:none;" data-booking-id="${b.id}">
       <div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">Caricamento…</div>

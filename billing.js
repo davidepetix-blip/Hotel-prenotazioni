@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '6'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '7'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -993,7 +993,7 @@ function renderDrawerBill(b) {
       const _tot  = _ce2 ? (_ce2.totale||0) : 0;
       const _pagato = _pags.reduce((s,p)=>s+p.importo,0);
       const _residuo = Math.max(0,_tot-_pagato);
-      if (_pags.length===0 && !_ce) return '';
+      if (_pags.length===0 && !_ce2) return '';
       const tipoClass = t => ({'acconto':'pag-tipo-acconto','saldo':'pag-tipo-saldo','extra':'pag-tipo-extra'}[t]||'');
       return `<div class="pagamenti-section">
         <div class="pag-header">
