@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '10'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '11'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -282,7 +282,13 @@ function cellClick(rid,day){
 // ═══════════════════════════════════════════════════════════════════
 // DRAWER
 // ═══════════════════════════════════════════════════════════════════
-function openDrawer(){ hideTT(); document.getElementById('drawer').classList.add('open'); document.getElementById('dov').classList.add('open'); }
+function openDrawer(){
+  hideTT();
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('dov').classList.add('open');
+  // Previeni scroll del body quando il drawer è aperto su mobile
+  document.body.style.overflow = 'hidden';
+}
 
 function openRoomDrawer(roomId) {
   const room = ROOMS.find(r=>r.id===roomId);
@@ -309,7 +315,11 @@ function openRoomDrawer(roomId) {
   document.getElementById('drbody').innerHTML = stateHtml + (bhtml||'<div class="empty" style="padding:20px 0;"><div style="font-size:11px;color:var(--text3);">Nessuna prenotazione questo mese</div></div>');
   openDrawer();
 }
-function closeDrawer(){ document.getElementById('drawer').classList.remove('open'); document.getElementById('dov').classList.remove('open'); }
+function closeDrawer(){
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('dov').classList.remove('open');
+  document.body.style.overflow = '';
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // MODAL

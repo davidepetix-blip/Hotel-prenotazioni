@@ -8,13 +8,13 @@
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- Moduli Blip -->
-<script src="core.js?v=18.11.3"></script>
-<script src="sync.js?v=18.11.3"></script>
-<script src="gantt.js?v=18.11.3"></script>
-<script src="clienti.js?v=18.11.3"></script>
-<script src="alloggiati-data.js?v=18.11.3"></script>
-<script src="checkin.js?v=18.11.3"></script>
-<script src="billing.js?v=18.11.3"></script>
+<script src="core.js?v=18.11.4"></script>
+<script src="sync.js?v=18.11.4"></script>
+<script src="gantt.js?v=18.11.4"></script>
+<script src="clienti.js?v=18.11.4"></script>
+<script src="alloggiati-data.js?v=18.11.4"></script>
+<script src="checkin.js?v=18.11.4"></script>
+<script src="billing.js?v=18.11.4"></script>
 <style>
 :root {
   --bg: #f8f7f5; --surface: #ffffff; --surface2: #f2f1ef;
@@ -186,9 +186,9 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .tvline { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--today); opacity: .5; pointer-events: none; z-index: 4; }
 
 /* ── DRAWER ── */
-.doverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 80; backdrop-filter: blur(2px); }
+.doverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 190; backdrop-filter: blur(2px); }
 .doverlay.open { display: block; }
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 300px; background: var(--surface); border-left: 1px solid var(--border); z-index: 90; display: flex; flex-direction: column; transform: translateX(100%); transition: transform .25s cubic-bezier(.4,0,.2,1); box-shadow: -4px 0 24px rgba(0,0,0,.08); }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(340px, 96vw); background: var(--surface); border-left: 1px solid var(--border); z-index: 200; display: flex; flex-direction: column; transform: translateX(100%); transition: transform .25s cubic-bezier(.4,0,.2,1); box-shadow: -4px 0 24px rgba(0,0,0,.12); }
 .drawer.open { transform: translateX(0); }
 .drhdr { padding: 16px 16px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 10px; background: var(--surface2); }
 .drclose { width: 28px; height: 28px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text2); cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .15s; }
@@ -247,7 +247,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .toast.error { background: var(--danger); }
 
 /* ── TOOLTIP ── */
-.tooltip { position: fixed; background: var(--text); border: none; border-radius: var(--radius); padding: 8px 12px; font-size: 11px; color: #fff; pointer-events: none; z-index: 500; display: none; min-width: 150px; box-shadow: var(--shadow-md); }
+.tooltip { position: fixed; background: var(--text); border: none; border-radius: var(--radius); padding: 8px 12px; font-size: 11px; color: #fff; pointer-events: none; z-index: 50; display: none; min-width: 150px; box-shadow: var(--shadow-md); }
 .ttn { font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 4px; }
 .ttr { color: rgba(255,255,255,.75); line-height: 1.7; }
 
@@ -1092,7 +1092,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Versione build ──
-const BLIP_BUILD = '18.11.3'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.11.4'; // ← build complessiva (major.minor.patch)
 
 // Assembla la versione completa dai moduli appena caricati
 function blipFullVersion() {
