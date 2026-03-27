@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '8'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '9'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -335,7 +335,14 @@ let _ciHistSearch = '';
 let _exportDialogItems = []; // items temporanei per il dialog export
 function renderCiHistory() {
   const body = document.getElementById('ciBody');
-  const allCi = Object.values(ciData).sort((a,b) => b.data.localeCompare(a.data));
+  // De-duplica per ciId prima di mostrare lo storico
+  const _seenIds = new Set();
+  const allCi = Object.values(ciData).filter(ci => {
+    const k = ci.ciId || ci.preId;
+    if (!k || _seenIds.has(k)) return false;
+    _seenIds.add(k);
+    return true;
+  }).sort((a,b) => b.data.localeCompare(a.data));
   const filtered = _ciHistSearch
     ? allCi.filter(ci => {
         const q = _ciHistSearch.toLowerCase();
@@ -780,6 +787,7 @@ function exportAlloggiati(scope='today'){
 
 // Nucleo dell'export — prende items già filtrati/selezionati
 function _exportAlloggiatiItems(items){
+  const today=new Date().toISOString().slice(0,10);
   const comuniMancanti=[],visti=new Set();
   items.forEach(ci=>{ci.guests.forEach((g,gIdx)=>{
     const isIta=_alNorm(g.cittadinanza||'ITALIA').includes('ITAL');
