@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '7'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '8'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -422,21 +422,23 @@ function getCiForBooking(b) {
 }
 
 function openCiModal(bookingDbId) {
-  // Cerca prima per dbId (stringa PRE-...), poi per id numerico come stringa
   let b = bookings.find(b => b.dbId === bookingDbId);
   if (!b && bookingDbId) {
     const numId = parseInt(bookingDbId);
     if (!isNaN(numId)) b = bookings.find(x => x.id === numId);
   }
   if (!b) { showToast('Prenotazione non trovata', 'error'); return; }
-  // Usa sempre il dbId reale come chiave; fallback su id numerico come stringa
+  openCiModalWithBooking(b);
+}
+
+function openCiModalWithBooking(b) {
   _ciEditBookingId = b.dbId || String(b.id);
   const room = ROOMS.find(r => r.id === b.r);
-  document.getElementById('ciPanelTitle').textContent = `Check-in · Camera ${room?.name||b.cameraName}`;
+  document.getElementById('ciPanelTitle').textContent = `Check-in · Camera ${room?.name||b.cameraName||''}`;
   document.getElementById('ciPanelSub').textContent = `${b.n} · ${fmtDate(b.s)} → ${fmtDate(b.e)}`;
 
-  // Carica ospiti esistenti o crea capogruppo vuoto
-  const existing = ciData[bookingDbId];
+  // Carica ospiti: cerca con getCiForBooking per trovare anche check-in orfani
+  const existing = getCiForBooking(b);
   _ciEditGuests = existing ? JSON.parse(JSON.stringify(existing.guests)) : [emptyGuest(true)];
   renderCiGuests();
   document.getElementById('ciOverlay').classList.add('open');
@@ -444,7 +446,25 @@ function openCiModal(bookingDbId) {
 }
 
 function openCiModalFromCi(preId) {
-  openCiModal(preId);
+  // Cerca prima nel modo standard
+  let b = bookings.find(b => b.dbId === preId);
+  if (!b && preId) {
+    const numId = parseInt(preId);
+    if (!isNaN(numId)) b = bookings.find(x => x.id === numId);
+  }
+  // Fallback: cerca il ci in ciData e prova camera+data
+  if (!b) {
+    const ci = ciData[preId];
+    if (ci) {
+      b = bookings.find(bk => {
+        const camName = bk.cameraName || (typeof roomName==='function'?roomName(bk.r):'') || '';
+        const arrivo  = bk.s instanceof Date ? bk.s.toISOString().slice(0,10) : '';
+        return camName === ci.camera && arrivo === ci.data;
+      });
+    }
+  }
+  if (!b) { showToast('Prenotazione non trovata', 'error'); return; }
+  openCiModalWithBooking(b);
 }
 
 function closeCiModal() {
@@ -714,11 +734,25 @@ function apriDialogExportAlloggiati(items, scope) {
 }
 
 function apriModificaCiDaExport(key) {
-  // Chiudi dialog export e apri modal di modifica
   document.querySelectorAll('div[style*="position:fixed"][style*="9999"]').forEach(el => el.remove());
   const ci = ciData[key];
   if (!ci) { showToast('Check-in non trovato', 'error'); return; }
-  openCiModal(ci.preId || key);
+  // Cerca la prenotazione con tutti i metodi disponibili
+  let b = bookings.find(bk => bk.dbId === ci.preId);
+  if (!b && ci.preId) {
+    const numId = parseInt(ci.preId);
+    if (!isNaN(numId)) b = bookings.find(x => x.id === numId);
+  }
+  if (!b) {
+    // Fallback camera+data
+    b = bookings.find(bk => {
+      const camName = bk.cameraName || (typeof roomName==='function'?roomName(bk.r):'') || '';
+      const arrivo  = bk.s instanceof Date ? bk.s.toISOString().slice(0,10) : '';
+      return camName === ci.camera && arrivo === ci.data;
+    });
+  }
+  if (!b) { showToast('Prenotazione non trovata', 'error'); return; }
+  openCiModalWithBooking(b);
 }
 
 // Esporta direttamente una lista di ci già selezionata (chiamata dal dialog)
