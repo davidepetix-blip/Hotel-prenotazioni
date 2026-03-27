@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '6'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '7'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -152,6 +152,17 @@ async function loadCiData(force=false) {
 }
 
 function invalidateCiCache() { localStorage.removeItem(CI_CACHE_KEY); }
+
+// Invalida cache se la versione del modulo è cambiata
+(function() {
+  const cacheVerKey = 'hotelCiCacheVer';
+  const currentVer = typeof BLIP_VER_CHECKIN !== 'undefined' ? BLIP_VER_CHECKIN : '0';
+  const cachedVer = localStorage.getItem(cacheVerKey);
+  if (cachedVer !== currentVer) {
+    localStorage.removeItem(CI_CACHE_KEY);
+    localStorage.setItem(cacheVerKey, currentVer);
+  }
+})();
 
 // ─────────────────────────────────────────────────────────────────
 // RICONCILIAZIONE — collega check-in orfani alle prenotazioni
@@ -643,7 +654,16 @@ async function saveCiCheckin() {
 // --- TABELLE ALLOGGIATI WEB build 18.7.1 ---
 
 function apriDialogExportAlloggiati(items, scope) {
-  // Salva items in variabile globale — evita JSON.stringify gigantesco nell'onclick
+  // De-duplica per ciId (evita doppi in Object.values se ciData ha chiavi multiple)
+  const seenCiIds = new Set();
+  items = items.filter(ci => {
+    const k = ci.ciId || ci.preId;
+    if (!k || seenCiIds.has(k)) return false;
+    seenCiIds.add(k);
+    return true;
+  });
+  if (items.length === 0) { showToast('Nessun check-in da esportare', 'error'); return; }
+  // Salva in variabile globale — evita JSON.stringify gigantesco nell'onclick
   _exportDialogItems = items;
 
   const rows = items.map((ci, i) => {
@@ -732,7 +752,7 @@ function _exportAlloggiatiItems(items){
     if(isIta&&g.luogoNascita&&!_alCodiceComune(g.luogoNascita)){const k=_alNorm(g.luogoNascita);if(!visti.has('N:'+k)){visti.add('N:'+k);comuniMancanti.push({nomeComune:g.luogoNascita,label:'nascita - '+cleanAl(g.cognome)+' '+cleanAl(g.nome)});}}
     if(gIdx===0&&g.luogoRilascio&&!_alRisolviLuogo(g.luogoRilascio)){const k=_alNorm(g.luogoRilascio);if(!visti.has('R:'+k)){visti.add('R:'+k);comuniMancanti.push({nomeComune:g.luogoRilascio,label:'rilascio - '+cleanAl(g.cognome)+' '+cleanAl(g.nome)});}}
   });});
-  if(comuniMancanti.length>0){_alChiediCodiciMancanti(comuniMancanti,()=>exportAlloggiati(scope));return;}
+  if(comuniMancanti.length>0){_alChiediCodiciMancanti(comuniMancanti,()=>_exportAlloggiatiItems(items));return;}
   const toFmt=s=>{if(!s)return'          ';const c=s.replace(/-/g,'').replace(/\//g,'');if(c.length!==8)return'          ';let gg,mm,aaaa;if(/^(19|20)\d{6}$/.test(c)){aaaa=c.slice(0,4);mm=c.slice(4,6);gg=c.slice(6,8);}else{gg=c.slice(0,2);mm=c.slice(2,4);aaaa=c.slice(4,8);}return`${gg}/${mm}/${aaaa}`;};
   const nGiorni=(a,p)=>{try{const g=Math.round((new Date(p)-new Date(a))/86400000);return String(Math.min(Math.max(g,1),30)).padStart(2,'0');}catch{return'01';}};
   let lines=[];
