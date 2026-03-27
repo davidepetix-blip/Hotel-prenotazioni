@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '4'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '5'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -100,8 +100,7 @@ async function readCiSheet() {
           ciRow:     i + 2,
         };
         result[key] = rec;
-        // Indicizza anche per ciId se diverso dalla chiave principale
-        if (preId && ciId && ciId !== preId) result[ciId] = rec;
+        // NON indicizziamo per ciId separatamente: causerebbe duplicati in Object.values()
       } catch(e) {}
     });
     return result;
@@ -642,12 +641,77 @@ async function saveCiCheckin() {
 // Ref: specifiche tecniche Polizia di Stato – tracciato record tipo 20
 // --- TABELLE ALLOGGIATI WEB build 18.7.1 ---
 
+function apriDialogExportAlloggiati(items, scope) {
+  // Costruisce lista selezionabile con nome, camera, data, n.ospiti
+  const rows = items.map((ci, i) => {
+    const cap = ci.guests && ci.guests[0] ? ci.guests[0] : {};
+    const nome = cap.cognome ? cap.cognome + ' ' + cap.nome : '—';
+    const doc  = cap.numDoc || '—';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <input type="checkbox" id="exp_${i}" checked style="width:18px;height:18px;cursor:pointer;flex-shrink:0">
+      <label for="exp_${i}" style="flex:1;cursor:pointer">
+        <div style="font-weight:600;font-size:13px">${escHtml(nome)}</div>
+        <div style="font-size:11px;color:var(--text3)">Camera ${escHtml(ci.camera)} · ${ci.data} · ${ci.numOspiti} ospite/i · Doc: ${escHtml(doc)}</div>
+      </label>
+      <button onclick="apriModificaCiDaExport('${ci.ciId||ci.preId}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--text2)">✎ Modifica</button>
+    </div>`;
+  }).join('');
+
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-end;justify-content:center;padding:0';
+  ov.innerHTML = `<div style="background:var(--surface);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:500px;max-height:80vh;display:flex;flex-direction:column">
+    <div style="font-weight:700;font-size:15px;margin-bottom:4px">⬇ Esporta Alloggiati Web</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">${items.length} check-in selezionati — deseleziona quelli da escludere</div>
+    <div style="overflow-y:auto;flex:1;margin-bottom:12px">${rows}</div>
+    <div style="display:flex;gap:8px">
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="flex:1;background:none;border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;font-size:13px;color:var(--text2)">Annulla</button>
+      <button onclick="
+        const selected = Array.from(document.querySelectorAll('[id^=exp_]:checked')).map(cb => parseInt(cb.id.replace('exp_','')));
+        const toExport = ${JSON.stringify(items.map((_,i)=>i))}.filter(i => selected.includes(i)).map(i => (${JSON.stringify(items)})[i]);
+        this.closest('div[style*=fixed]').remove();
+        _esportaAlloggiatiDiretta(toExport, '${scope}');
+      " style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-weight:600;cursor:pointer;font-size:13px">
+        ⬇ Genera file (${items.length} ospiti)
+      </button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e => { if(e.target===ov) ov.remove(); });
+}
+
+function apriModificaCiDaExport(key) {
+  // Chiudi dialog export e apri modal di modifica
+  document.querySelectorAll('div[style*="position:fixed"][style*="9999"]').forEach(el => el.remove());
+  const ci = ciData[key];
+  if (!ci) { showToast('Check-in non trovato', 'error'); return; }
+  openCiModal(ci.preId || key);
+}
+
+// Esporta direttamente una lista di ci già selezionata (chiamata dal dialog)
+function _esportaAlloggiatiDiretta(items, scope) {
+  if (!items || items.length === 0) { showToast('Nessun check-in selezionato', 'error'); return; }
+  _exportAlloggiatiItems(items);
+}
+
 function exportAlloggiati(scope='today'){
   const today=new Date().toISOString().slice(0,10);
   let items;
   if(scope==='today'){items=Object.values(ciData).filter(ci=>ci.data===today);}
+  else if(scope==='48h'){
+    const cutoff=new Date(); cutoff.setHours(cutoff.getHours()-48);
+    const cutoffStr=cutoff.toISOString().slice(0,10);
+    items=Object.values(ciData).filter(ci=>ci.data>=cutoffStr);
+  }
   else{items=Object.values(ciData).filter(ci=>{if(!_ciHistSearch)return true;const q=_ciHistSearch.toLowerCase();const cap=ci.guests[0]||{};return ci.camera.toLowerCase().includes(q)||((cap.cognome||'')+' '+(cap.nome||'')).toLowerCase().includes(q)||ci.data.includes(q);});}
+  // Mostra dialog di selezione/preview prima di generare
+  if(items.length>0){ apriDialogExportAlloggiati(items, scope); return; }
   if(items.length===0){showToast('Nessun check-in da esportare','error');return;}
+  // Se arriviamo qui, il dialog è stato saltato — esegui direttamente
+  _exportAlloggiatiItems(items);
+}
+
+// Nucleo dell'export — prende items già filtrati/selezionati
+function _exportAlloggiatiItems(items){
   const comuniMancanti=[],visti=new Set();
   items.forEach(ci=>{ci.guests.forEach((g,gIdx)=>{
     const isIta=_alNorm(g.cittadinanza||'ITALIA').includes('ITAL');
