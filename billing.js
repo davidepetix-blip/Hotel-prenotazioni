@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '15'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '16'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1316,8 +1316,13 @@ function emettiConto(bid) {
   };
   if(idx>=0) conti[idx]=doc; else conti.unshift(doc);
   saveConti(conti);
-  apriPdf(bid);
-  showToast('✓ Conto salvato e emesso','success');
+  // Aggiorna subito il tab Conto nel drawer — mostra badge Emesso e totale
+  refreshBillTab(bid);
+  // Aggiorna il Gantt per il bordo colore billing
+  if (typeof render === 'function') render();
+  showToast('✓ Conto emesso · ' + conto.totale.toFixed(2) + '€', 'success');
+  // Apri PDF solo se esplicitamente richiesto (non automaticamente)
+  // apriPdf(bid);  ← commentato: il PDF si apre dal tasto apposito
 }
 
 let _currentPdfBid = null;
