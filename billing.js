@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '14'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '15'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -908,6 +908,40 @@ function salvaOverrideRiga(bid, idx, btn) {
   refreshBillTab(bid);
 }
 
+function rimuoviRigaPerLabel(bid, label) {
+  const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const room = ROOMS.find(r=>r.id===b.r);
+  const isA  = room?.g==='Appartamenti';
+  const ext  = getExtraForBooking(bid);
+  const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
+  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const idx  = ovs.findIndex(r => r.label === label);
+  if (idx < 0) { showToast('Voce non trovata', 'error'); return; }
+  // Rimuovi anche dagli extras se presente
+  const extras = getExtraForBooking(bid);
+  const ei = extras.findIndex(e => e.label === label);
+  if (ei >= 0) { extras.splice(ei, 1); setExtraForBooking(bid, extras); }
+  ovs.splice(idx, 1);
+  setContoOverrides(bid, ovs.length ? ovs : null);
+  refreshBillTab(bid);
+}
+
+function editRigaContoPerLabel(bid, label, isAuto) {
+  if (isAuto) { showToast('Sconto automatico — non modificabile manualmente', 'info'); return; }
+  const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const room = ROOMS.find(r=>r.id===b.r);
+  const isA  = room?.g==='Appartamenti';
+  const ext  = getExtraForBooking(bid);
+  const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
+  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const idx  = ovs.findIndex(r => r.label === label);
+  if (idx >= 0) { editRigaConto(bid, idx); return; }
+  // Non trovato in ovs — crea ovs dalla base e poi modifica
+  const baseOvs = base.righe.map(r=>({...r}));
+  const bi = baseOvs.findIndex(r => r.label === label);
+  if (bi >= 0) { setContoOverrides(bid, baseOvs); editRigaConto(bid, bi); }
+}
+
 function rimuoviOverrideRiga(bid, idx, btn) {
   const b    = bookings.find(x=>x.id===bid); if(!b) return;
   const room = ROOMS.find(r=>r.id===b.r);
@@ -955,13 +989,13 @@ function renderDrawerBill(b) {
   const rigaHtml = (r, idx) => {
     const neg = r.total < 0;
     const tot = `<span style="font-weight:600;${neg?'color:var(--danger)':''}">${neg?'':'+'}${r.total.toFixed(2)}€</span>`;
-    const canDel = r.tipo === 'extra' || r.tipo === 'sconto';
-    return `<div class="bill-row ${r.tipo==='sconto'?'discount':''}" style="display:flex;align-items:center;gap:4px;cursor:pointer" onclick="editRigaConto(${b.id},${idx})" title="Clicca per modificare/eliminare">
+    const canDel = (r.tipo === 'extra' || r.tipo === 'sconto') && !r._auto;
+    return `<div class="bill-row ${r.tipo==='sconto'?'discount':''}" style="display:flex;align-items:center;gap:4px;cursor:pointer" onclick="editRigaContoPerLabel(${b.id},'${r.label.replace(/'/g,"\\'")}',${r._auto?1:0})" title="Clicca per modificare/eliminare">
       <span class="bill-row-label" style="flex:1">${r.label}${r.badge?` <span class="rate-badge ${r.badge==='conv'?'conv':r.badge==='appart'?'appart':r.badge.startsWith('stagione')?'stagionale':'lunga'}">${r.badge}</span>`:''} <span style="font-size:9px;color:var(--text3);margin-left:3px">✏️</span></span>
       <span style="color:var(--text3);font-size:11px;white-space:nowrap">${r.qty!=null?r.qty+'×':''}</span>
       <span style="color:var(--text2);font-size:11px;white-space:nowrap">${r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':''}</span>
       ${tot}
-      ${canDel?`<button onclick="event.stopPropagation();rimuoviOverrideRiga(${b.id},${idx},this)" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0 4px;font-size:16px;line-height:1" title="Elimina">✕</button>`:''}
+      ${canDel?`<button onclick="event.stopPropagation();rimuoviRigaPerLabel(${b.id},this.dataset.label)" data-label="${r.label.replace(/"/g,'&quot;')}" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0 4px;font-size:16px;line-height:1" title="Elimina">✕</button>`:''}
     </div>`;
   };
 
