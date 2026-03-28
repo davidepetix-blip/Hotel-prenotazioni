@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '11'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '12'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -505,14 +505,16 @@ function setContoOverrides(bid, righe) {
 
 function getAppartMode(bid, notti) {
   const m = _contiDatiCache[bid]?.appartMode ?? localStorage.getItem(`appartMode_${bid}`);
-  if (m === 'giornaliera') return false;
-  if (m === 'mensile')     return true;
-  return notti >= 20;
+  if (m === 'giornaliera') return 'giornaliera';
+  if (m === 'mensile')     return 'mensile';
+  if (m === 'standard')    return 'standard';
+  return notti >= 20 ? 'mensile' : 'giornaliera';
 }
 function toggleAppartMode(bid) {
   const b = bookings.find(x=>x.id===bid); if(!b) return;
-  const cur  = getAppartMode(bid, nights(b.s,b.e));
-  const next = cur ? 'giornaliera' : 'mensile';
+  const cur = getAppartMode(bid, nights(b.s,b.e));
+  const ciclo = { 'giornaliera':'mensile', 'mensile':'standard', 'standard':'giornaliera' };
+  const next = ciclo[cur] || 'giornaliera';
   if (_contiDatiCache[bid]) _contiDatiCache[bid].appartMode = next;
   else _contiDatiCache[bid] = { extra:[], override:null, appartMode:next, contoEmesso:null, dbRow:null };
   saveContoDati(bid, { appartMode: next });
@@ -779,7 +781,14 @@ function calcolaContoAppart(b, room, extras) {
   const cfg    = loadBillSettings();
   const notti  = nights(b.s, b.e);
   const ov     = cfg.tariffeCamere?.[room.id] || {};
-  const usaM   = getAppartMode(b.id, notti);
+  const modo   = getAppartMode(b.id, notti); // 'giornaliera' | 'mensile' | 'standard'
+
+  // Modalità standard: usa disposizione letti come un normale albergo
+  if (modo === 'standard') {
+    return calcolaConto(b, extras); // delega al calcolo albergo
+  }
+
+  const usaM   = modo === 'mensile';
   const canone = usaM ? (ov.mensile||0) : (ov.giornaliera||0);
   const qty    = usaM ? parseFloat((notti/30).toFixed(2)) : notti;
   const unit   = usaM ? 'mese' : 'notte';
@@ -925,7 +934,16 @@ function renderDrawerBill(b) {
   const base     = isAppart ? calcolaContoAppart(b, room, ext) : calcolaConto(b, ext);
   // Applica override se presenti
   const ovs      = getContoOverrides(b.id);
-  const righe    = ovs || base.righe;
+  // Se ci sono ovs, includi anche gli extras non già presenti negli ovs
+  let righe;
+  if (ovs) {
+    const extrasInBase = base.righe.filter(r => r.tipo === 'extra' || r.tipo === 'sconto');
+    const ovsLabels = new Set(ovs.map(r => r.label));
+    const extrasExtra = extrasInBase.filter(r => !ovsLabels.has(r.label));
+    righe = [...ovs, ...extrasExtra];
+  } else {
+    righe = base.righe;
+  }
   const totale   = parseFloat(righe.reduce((s,r)=>s+r.total,0).toFixed(2));
   const hasOv    = ovs !== null;
 
@@ -940,19 +958,23 @@ function renderDrawerBill(b) {
     </div>`;
   };
 
-  // Per appartamenti: mostra toggle mensile/giornaliero
+  // Per appartamenti: mostra selettore modalità (giornaliero/mensile/standard)
   let toggleHtml = '';
   if (isAppart) {
     const notti  = nights(b.s, b.e);
-    const usaM   = getAppartMode(b.id, notti);
+    const modo   = getAppartMode(b.id, notti);
     const cfg    = loadBillSettings();
     const ov     = cfg.tariffeCamere?.[b.r]||{};
+    const modoLabel = { giornaliera:'Giornaliero', mensile:'Mensile', standard:'Std. letti' };
+    const modoNext  = { giornaliera:'mensile', mensile:'standard', standard:'giornaliera' };
+    const nextLabel = { giornaliera:`Mensile (${ov.mensile||0}€/mese)`, mensile:`Std. letti (tariffe camera)`, standard:`Giornaliero (${ov.giornaliera||0}€/notte)` };
+    const noTariffa = modo!=='standard' && !ov.giornaliera && !ov.mensile;
     toggleHtml = `<div style="font-size:11px;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <span>Modo: <b>${usaM?'Mensile':'Giornaliero'}</b></span>
+      <span>Modo: <b>${modoLabel[modo]||modo}</b></span>
       <button onclick="toggleAppartMode(${b.id})" style="border:1px solid var(--border);background:var(--surface2);padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer">
-        ↕ Usa ${usaM?'giornaliero ('+( ov.giornaliera||0)+'€/notte)':'mensile ('+(ov.mensile||0)+'€/mese)'}
+        ↕ Usa ${nextLabel[modo]||''}
       </button>
-      ${(!ov.giornaliera&&!ov.mensile)?'<span style="color:var(--danger);font-size:10px">⚠ Tariffa non impostata</span>':''}
+      ${noTariffa?'<span style="color:var(--danger);font-size:10px">⚠ Tariffa non impostata</span>':''}
     </div>`;
   }
 
@@ -1184,7 +1206,16 @@ function getContoEffettivo(bid) {
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
   const ovs  = getContoOverrides(bid);
   if (ovs) {
-    return { ...base, righe: ovs, totale: parseFloat(ovs.reduce((s,r)=>s+r.total,0).toFixed(2)) };
+    // Gli extras (sconto, voci libere) vengono da ext e sono già in base.righe
+    // ma NON sono in ovs (che contiene solo le righe modificate manualmente).
+    // Li aggiungiamo separatamente per non perderli nel totale.
+    const extrasInBase = base.righe.filter(r => r.tipo === 'extra' || r.tipo === 'sconto');
+    // Evita duplicati: non aggiungere extras già presenti in ovs
+    const ovsLabels = new Set(ovs.map(r => r.label));
+    const extrasExtra = extrasInBase.filter(r => !ovsLabels.has(r.label));
+    const righeFinali = [...ovs, ...extrasExtra];
+    const totale = parseFloat(righeFinali.reduce((s,r) => s + r.total, 0).toFixed(2));
+    return { ...base, righe: righeFinali, totale };
   }
   return base;
 }
