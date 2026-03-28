@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '10'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '11'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -786,6 +786,11 @@ function exportAlloggiati(scope='today'){
 }
 
 // Nucleo dell'export — prende items già filtrati/selezionati
+// Helper conversione ISO → nome stato (definiti FUORI dal loop)
+const _ISO_TO_NOME = {'IT':'ITALIA','DE':'GERMANIA','FR':'FRANCIA','ES':'SPAGNA','GB':'REGNO UNITO','AT':'AUSTRIA','CH':'SVIZZERA','BE':'BELGIO','NL':'PAESI BASSI','PL':'POLONIA','RO':'ROMANIA','PT':'PORTOGALLO','GR':'GRECIA','CZ':'REPUBBLICA CECA','HU':'UNGHERIA','SE':'SVEZIA','DK':'DANIMARCA','FI':'FINLANDIA','SK':'REPUBBLICA SLOVACCA','SI':'SLOVENIA','HR':'CROAZIA','BG':'BULGARIA','LT':'LITUANIA','LV':'LETTONIA','EE':'ESTONIA','LU':'LUSSEMBURGO','MT':'MALTA','IE':'IRLANDA','CY':'CIPRO','US':'STATI UNITI D AMERICA','RU':'FEDERAZIONE RUSSA','CN':'CINA','JP':'GIAPPONE','IN':'INDIA','BR':'BRASILE','LY':'LIBIA','TN':'TUNISIA','MA':'MAROCCO','EG':'EGITTO','NG':'NIGERIA','GH':'GHANA','SN':'SENEGAL','CM':'CAMERUN','ET':'ETIOPIA','UA':'UCRAINA','TR':'TURCHIA','AL':'ALBANIA','MK':'MACEDONIA DEL NORD','RS':'SERBIA','BA':'BOSNIA ED ERZEGOVINA','ME':'MONTENEGRO','KO':'KOSOVO','XK':'KOSOVO'};
+function _normCitNome(s) { const u=(s||'').toUpperCase().trim(); return _ISO_TO_NOME[u]||u; }
+function _normCitIsIta(s) { return _alNorm(_normCitNome(s||'ITALIA')).includes('ITAL'); }
+
 function _exportAlloggiatiItems(items){
   const today=new Date().toISOString().slice(0,10);
   const comuniMancanti=[],visti=new Set();
@@ -807,14 +812,11 @@ function _exportAlloggiatiItems(items){
       const cognome=padR(cleanAl(g.cognome),50),nome=padR(cleanAl(g.nome),30);
       const sesso=(_alNorm(g.sesso||'M').charAt(0)==='F')?'2':'1';
       const dataN=toFmt(g.dataNascita||'');
-      const isIta=(()=>{ const _c=_normCit(g.cittadinanza||'ITALIA'); return _alNorm(_c).includes('ITAL'); })();
+      const isIta=_normCitIsIta(g.cittadinanza||'ITALIA');
       let comN='         ',provN='  ';
       if(isIta&&g.luogoNascita){const found=_alCodiceComune(g.luogoNascita);if(found){comN=found.cod;provN=padR(found.prov,2);}}
-      // Converti codice ISO 2 lettere → nome per _alCodiceStato
-      const _isoToNome = {'IT':'ITALIA','DE':'GERMANIA','FR':'FRANCIA','ES':'SPAGNA','GB':'REGNO UNITO','AT':'AUSTRIA','CH':'SVIZZERA','BE':'BELGIO','NL':'PAESI BASSI','PL':'POLONIA','RO':'ROMANIA','PT':'PORTOGALLO','GR':'GRECIA','CZ':'REPUBBLICA CECA','HU':'UNGHERIA','SE':'SVEZIA','DK':'DANIMARCA','FI':'FINLANDIA','SK':'REPUBBLICA SLOVACCA','SI':'SLOVENIA','HR':'CROAZIA','BG':'BULGARIA','LT':'LITUANIA','LV':'LETTONIA','EE':'ESTONIA','LU':'LUSSEMBURGO','MT':'MALTA','IE':'IRLANDA','CY':'CIPRO','US':'STATI UNITI D AMERICA','RU':'FEDERAZIONE RUSSA','CN':'CINA','JP':'GIAPPONE','IN':'INDIA','BR':'BRASILE','LY':'LIBIA','TN':'TUNISIA','MA':'MAROCCO','EG':'EGITTO','NG':'NIGERIA','GH':'GHANA','SN':'SENEGAL','CM':'CAMERUN','ET':'ETIOPIA','UA':'UCRAINA','TR':'TURCHIA','AL':'ALBANIA','MK':'MACEDONIA DEL NORD','RS':'SERBIA','BA':'BOSNIA ED ERZEGOVINA','ME':'MONTENEGRO','MK':'MACEDONIA DEL NORD','KO':'KOSOVO','XK':'KOSOVO','LV':'LETTONIA','LV':'LETTONIA'};
-      const _normCit = s => { const u=(s||'').toUpperCase().trim(); return _isoToNome[u] || u; };
-      const statoN=_alCodiceStato(isIta?'ITALIA':_normCit(g.statoNascita||g.cittadinanza||'ITALIA')).padStart(9,'0');
-      const cittad=_alCodiceStato(_normCit(g.cittadinanza||'ITALIA')).padStart(9,'0');
+      const statoN=_alCodiceStato(isIta?'ITALIA':_normCitNome(g.statoNascita||g.cittadinanza||'ITALIA')).padStart(9,'0');
+      const cittad=_alCodiceStato(_normCitNome(g.cittadinanza||'ITALIA')).padStart(9,'0');
       const tipoDoc=isCapo?padR(_alCodiceDoc(g.tipoDoc),5):'     ';
       const numDoc=isCapo?padR(cleanAl(g.numDoc||''),20):'                    ';
       let luogoRil='         ';
