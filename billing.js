@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '10'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '11'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -877,12 +877,23 @@ function salvaOverrideRiga(bid, idx, btn) {
   const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
 
   const label    = document.getElementById('_ovLabel')?.value.trim() || ovs[idx].label;
-  const qty      = parseFloat(document.getElementById('_ovQty')?.value) || null;
-  const price    = parseFloat(document.getElementById('_ovPrice')?.value) || null;
-  const totalRaw = document.getElementById('_ovTotal')?.value;
-  const total    = totalRaw !== '' ? parseFloat(totalRaw) : (qty!=null&&price!=null ? qty*price : ovs[idx].total);
+  const qty      = parseFloat(document.getElementById('_ovQty')?.value);
+  const price    = parseFloat(document.getElementById('_ovPrice')?.value);
+  const totalRaw = parseFloat(document.getElementById('_ovTotal')?.value);
+  // Priorità: qty×price se entrambi validi (ignora totalRaw che parte da 0)
+  // Solo se qty o price mancano → usa totalRaw, altrimenti valore originale
+  let total;
+  if (!isNaN(qty) && !isNaN(price)) {
+    total = parseFloat((qty * price).toFixed(2));
+  } else if (!isNaN(totalRaw) && totalRaw !== 0) {
+    total = totalRaw;
+  } else {
+    total = ovs[idx].total;
+  }
+  const qtyFinal   = !isNaN(qty)   ? qty   : null;
+  const priceFinal = !isNaN(price) ? price : null;
 
-  ovs[idx] = { ...ovs[idx], label, qty, unitPrice:price, total: parseFloat(total.toFixed(2)) };
+  ovs[idx] = { ...ovs[idx], label, qty:qtyFinal, unitPrice:priceFinal, total: parseFloat(total.toFixed(2)) };
   setContoOverrides(bid, ovs);
   btn.closest('[style*=fixed]').remove();
   refreshBillTab(bid);
