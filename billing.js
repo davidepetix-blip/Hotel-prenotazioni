@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '12'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '13'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -915,9 +915,21 @@ function rimuoviOverrideRiga(bid, idx, btn) {
   const ext  = getExtraForBooking(bid);
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
   const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const riga = ovs[idx];
+  // Se la riga è un extra aggiunto manualmente, rimuovila anche da extras
+  if (riga && (riga.tipo === 'extra' || riga.tipo === 'sconto')) {
+    const extras = getExtraForBooking(bid);
+    const ei = extras.findIndex(e => e.label === riga.label);
+    if (ei >= 0) { extras.splice(ei, 1); setExtraForBooking(bid, extras); }
+  }
   ovs.splice(idx, 1);
-  setContoOverrides(bid, ovs);
-  btn.closest('[style*=fixed]').remove();
+  // Se rimane solo la riga base, togli gli ovs (torna al calcolo automatico)
+  if (ovs.length === 0) {
+    setContoOverrides(bid, null);
+  } else {
+    setContoOverrides(bid, ovs);
+  }
+  try { btn.closest('[style*=fixed]').remove(); } catch(e) {}
   refreshBillTab(bid);
 }
 
@@ -950,11 +962,13 @@ function renderDrawerBill(b) {
   const rigaHtml = (r, idx) => {
     const neg = r.total < 0;
     const tot = `<span style="font-weight:600;${neg?'color:var(--danger)':''}">${neg?'':'+'}${r.total.toFixed(2)}€</span>`;
-    return `<div class="bill-row ${r.tipo==='sconto'?'discount':''}" style="cursor:pointer" onclick="editRigaConto(${b.id},${idx})" title="Clicca per modificare">
-      <span class="bill-row-label">${r.label}${r.badge?` <span class="rate-badge ${r.badge==='conv'?'conv':r.badge==='appart'?'appart':r.badge.startsWith('stagione')?'stagionale':'lunga'}">${r.badge}</span>`:''} <span style="font-size:9px;color:var(--text3);margin-left:3px">✏️</span></span>
+    const canDel = r.tipo === 'extra' || r.tipo === 'sconto';
+    return `<div class="bill-row ${r.tipo==='sconto'?'discount':''}" style="display:flex;align-items:center;gap:4px;cursor:pointer" onclick="editRigaConto(${b.id},${idx})" title="Clicca per modificare/eliminare">
+      <span class="bill-row-label" style="flex:1">${r.label}${r.badge?` <span class="rate-badge ${r.badge==='conv'?'conv':r.badge==='appart'?'appart':r.badge.startsWith('stagione')?'stagionale':'lunga'}">${r.badge}</span>`:''} <span style="font-size:9px;color:var(--text3);margin-left:3px">✏️</span></span>
       <span style="color:var(--text3);font-size:11px;white-space:nowrap">${r.qty!=null?r.qty+'×':''}</span>
       <span style="color:var(--text2);font-size:11px;white-space:nowrap">${r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':''}</span>
       ${tot}
+      ${canDel?`<button onclick="event.stopPropagation();rimuoviOverrideRiga(${b.id},${idx},this)" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0 4px;font-size:16px;line-height:1" title="Elimina">✕</button>`:''}
     </div>`;
   };
 
@@ -1024,7 +1038,7 @@ function renderDrawerBill(b) {
     </div>
     ${toggleHtml}
     ${righe.map((r,i)=>rigaHtml(r,i)).join('')}
-    ${renderExtraRows(b.id)}
+    ${ovs ? '' : renderExtraRows(b.id)}
     <div class="conti-section-title" style="margin-top:14px">Aggiungi voce</div>
     ${extraAdder}
     ${consumiHtml}
