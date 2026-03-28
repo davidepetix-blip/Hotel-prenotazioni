@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '13'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '14'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -946,18 +946,11 @@ function renderDrawerBill(b) {
   const base     = isAppart ? calcolaContoAppart(b, room, ext) : calcolaConto(b, ext);
   // Applica override se presenti
   const ovs      = getContoOverrides(b.id);
-  // Se ci sono ovs, includi anche gli extras non già presenti negli ovs
-  let righe;
-  if (ovs) {
-    const extrasInBase = base.righe.filter(r => r.tipo === 'extra' || r.tipo === 'sconto');
-    const ovsLabels = new Set(ovs.map(r => r.label));
-    const extrasExtra = extrasInBase.filter(r => !ovsLabels.has(r.label));
-    righe = [...ovs, ...extrasExtra];
-  } else {
-    righe = base.righe;
-  }
-  const totale   = parseFloat(righe.reduce((s,r)=>s+r.total,0).toFixed(2));
-  const hasOv    = ovs !== null;
+  // Usa sempre getContoEffettivo per avere totale e righe corretti (incluso sconto ricalcolato)
+  const _eff   = ovs ? getContoEffettivo(b.id) : null;
+  const righe  = _eff ? _eff.righe : base.righe;
+  const totale = _eff ? _eff.totale : parseFloat(base.righe.reduce((s,r)=>s+r.total,0).toFixed(2));
+  const hasOv  = ovs !== null;
 
   const rigaHtml = (r, idx) => {
     const neg = r.total < 0;
@@ -1220,14 +1213,38 @@ function getContoEffettivo(bid) {
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
   const ovs  = getContoOverrides(bid);
   if (ovs) {
-    // Gli extras (sconto, voci libere) vengono da ext e sono già in base.righe
-    // ma NON sono in ovs (che contiene solo le righe modificate manualmente).
-    // Li aggiungiamo separatamente per non perderli nel totale.
-    const extrasInBase = base.righe.filter(r => r.tipo === 'extra' || r.tipo === 'sconto');
-    // Evita duplicati: non aggiungere extras già presenti in ovs
-    const ovsLabels = new Set(ovs.map(r => r.label));
-    const extrasExtra = extrasInBase.filter(r => !ovsLabels.has(r.label));
-    const righeFinali = [...ovs, ...extrasExtra];
+    // Righe base dagli ovs (pernottamento, modifiche manuali) — escludi sconti automatici
+    // che vanno sempre ricalcolati sul totale attuale
+    const ovsBase = ovs.filter(r => r.tipo !== 'sconto' || r._manuale);
+    // Calcola totale pernottamento dagli ovs base
+    const totaleBase = parseFloat(ovsBase.filter(r=>r.tipo!=='extra').reduce((s,r)=>s+r.total,0).toFixed(2));
+
+    // Ricalcola sconto lungo periodo sul totale attuale (non sul valore in ovs)
+    const cfg = loadBillSettings();
+    const notti = nights(b.s, b.e);
+    const scontiLp = (cfg.scontiLungoPeriodo || [])
+      .filter(s => s.minNotti > 0 && s.percSconto > 0)
+      .sort((a,b) => b.minNotti - a.minNotti);
+    const sconto = scontiLp.find(s => notti >= s.minNotti);
+    const scontoAutoLp = sconto && totaleBase > 0 ? {
+      label: sconto.label || `Sconto lunga durata (${notti} notti) -${sconto.percSconto}%`,
+      qty: null, unitPrice: null,
+      total: -parseFloat((totaleBase * sconto.percSconto / 100).toFixed(2)),
+      tipo: 'sconto', badge: 'lunga', _auto: true
+    } : null;
+
+    // Extras manuali dagli ovs (flag _manuale) o da getExtraForBooking
+    const extrasMan = ovsBase.filter(r => r.tipo === 'extra');
+    const extrasExt = getExtraForBooking(bid).filter(e =>
+      !extrasMan.some(m => m.label === e.label)
+    ).map(e => ({ label:e.label, qty:e.qty, unitPrice:e.unitPrice,
+      total:parseFloat((e.qty*e.unitPrice).toFixed(2)), tipo:'extra', _manuale:true }));
+
+    const righeFinali = [
+      ...ovsBase,
+      ...(scontoAutoLp ? [scontoAutoLp] : []),
+      ...extrasExt,
+    ];
     const totale = parseFloat(righeFinali.reduce((s,r) => s + r.total, 0).toFixed(2));
     return { ...base, righe: righeFinali, totale };
   }
