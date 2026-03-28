@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '9'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '10'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -791,6 +791,20 @@ function calcolaContoAppart(b, room, extras) {
   }];
   let totale = total;
 
+  // Sconto lungo periodo
+  if (!usaM && total > 0) {
+    const sconti = (cfg.scontiLungoPeriodo || [])
+      .filter(s => s.minNotti > 0 && s.percSconto > 0)
+      .sort((a,b) => b.minNotti - a.minNotti);
+    const sconto = sconti.find(s => notti >= s.minNotti);
+    if (sconto) {
+      const imp = parseFloat((total * sconto.percSconto / 100).toFixed(2));
+      const lbl = sconto.label || `Sconto lungo periodo (${sconto.percSconto}% ≥${sconto.minNotti}gg)`;
+      righe.push({ label:lbl, qty:null, unitPrice:null, total:-imp, tipo:'sconto', badge:'lunga' });
+      totale -= imp;
+    }
+  }
+
   for (const ex of extras) {
     const t = parseFloat((ex.qty * ex.unitPrice).toFixed(2));
     righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:t, tipo:'extra' });
@@ -871,7 +885,7 @@ function salvaOverrideRiga(bid, idx, btn) {
   ovs[idx] = { ...ovs[idx], label, qty, unitPrice:price, total: parseFloat(total.toFixed(2)) };
   setContoOverrides(bid, ovs);
   btn.closest('[style*=fixed]').remove();
-  showBookingDetail(bid);
+  refreshBillTab(bid);
 }
 
 function rimuoviOverrideRiga(bid, idx, btn) {
@@ -884,13 +898,13 @@ function rimuoviOverrideRiga(bid, idx, btn) {
   ovs.splice(idx, 1);
   setContoOverrides(bid, ovs);
   btn.closest('[style*=fixed]').remove();
-  showBookingDetail(bid);
+  refreshBillTab(bid);
 }
 
 function resetOverride(bid, btn) {
   setContoOverrides(bid, null);
   btn.closest('[style*=fixed]').remove();
-  showBookingDetail(bid);
+  refreshBillTab(bid);
 }
 
 function renderDrawerBill(b) {
@@ -2518,6 +2532,14 @@ function buildContiSettingsForm(cfg) {
       <button class="btn-icon-sm" onclick="this.closest('.rate-conv-row').remove()">✕</button>
     </div>`;
 
+  const slpRow = (s,i) => `
+    <div id="slpRow_${i}" style="display:grid;grid-template-columns:80px 60px 1fr 28px;gap:6px;align-items:center;margin-bottom:6px">
+      <input type="number" id="slpNotti_${i}" value="${s.minNotti||0}" min="1" style="padding:6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+      <input type="number" id="slpPerc_${i}" value="${s.percSconto||0}" min="0" max="100" step="0.5" style="padding:6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+      <input type="text" id="slpLabel_${i}" value="${s.label||''}" placeholder="es. Sconto 7+ notti" style="padding:6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+      <button class="btn-icon-sm" onclick="document.getElementById('slpRow_${i}').remove()">✕</button>
+    </div>`;
+
   const durRow = (d,i) => `
     <div class="rate-season-row" id="durRow_${i}" style="grid-template-columns:1fr 1fr 36px">
       <input type="number" id="durSoglia_${i}" value="${d.soglia}" placeholder="Notti">
@@ -2606,6 +2628,15 @@ function buildContiSettingsForm(cfg) {
       <button class="btn-icon-add" onclick="addDurRow()" style="margin-top:6px">+</button>
     </div>
     <div class="conti-section">
+      <div class="conti-section-title">Sconti lungo periodo (appartamenti)</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Sconto % automatico sul pernottamento in modalità giornaliera</div>
+      <div style="display:grid;grid-template-columns:80px 60px 1fr 28px;gap:6px;font-size:10px;font-weight:600;color:var(--text3);margin-bottom:4px">
+        <span>Notti min</span><span>Sconto %</span><span>Etichetta</span><span></span>
+      </div>
+      <div id="slpRows">${(cfg.scontiLungoPeriodo||[]).map(slpRow).join('')}</div>
+      <button class="btn-icon-add" onclick="addSlpRow()" style="margin-top:6px">+</button>
+    </div>
+    <div class="conti-section">
       <div class="conti-section-title">Voci extra</div>
       <div style="display:grid;grid-template-columns:1fr 24px 80px 90px 30px;gap:4px;font-size:10px;font-weight:600;color:var(--text3);margin-bottom:6px">
         <span>Voce</span><span></span><span>Prezzo</span><span>Unità</span><span></span>
@@ -2636,6 +2667,18 @@ function addConvRow() {
     <button class="btn-icon-sm" onclick="this.closest('.rate-conv-row').remove()">✕</button>
   </div>`);
 }
+function addSlpRow() {
+  const list = document.getElementById('slpRows');
+  if (!list) return;
+  const i = list.children.length;
+  list.insertAdjacentHTML('beforeend', `<div id="slpRow_${i}" style="display:grid;grid-template-columns:80px 60px 1fr 28px;gap:6px;align-items:center;margin-bottom:6px">
+    <input type="number" id="slpNotti_${i}" value="7" min="1" style="padding:6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+    <input type="number" id="slpPerc_${i}" value="10" min="0" max="100" step="0.5" style="padding:6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+    <input type="text" id="slpLabel_${i}" placeholder="es. Sconto 7+ notti" style="padding:6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+    <button class="btn-icon-sm" onclick="this.parentElement.remove()">✕</button>
+  </div>`);
+}
+
 function addDurRow() {
   const rows=document.getElementById('durRows');
   const i=rows.children.length;
@@ -2722,6 +2765,17 @@ function saveContiSettings() {
     if (sog>0 && sco>0) cfg.scontiDurata.push({ soglia:sog, sconto:sco });
   });
   cfg.scontiDurata.sort((a,b)=>b.soglia-a.soglia);
+
+  // Sconti lungo periodo (appartamenti)
+  cfg.scontiLungoPeriodo = [];
+  document.querySelectorAll('[id^=slpRow_]').forEach(row => {
+    const i = row.id.split('_')[1];
+    const n = parseInt(document.getElementById(`slpNotti_${i}`)?.value || 0);
+    const p = parseFloat(document.getElementById(`slpPerc_${i}`)?.value || 0);
+    const l = document.getElementById(`slpLabel_${i}`)?.value?.trim() || '';
+    if (n > 0 && p > 0) cfg.scontiLungoPeriodo.push({ minNotti:n, percSconto:p, label:l });
+  });
+  cfg.scontiLungoPeriodo.sort((a,b) => b.minNotti - a.minNotti);
 
   // Extra voci
   cfg.extra = [];
