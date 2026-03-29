@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '11'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '12'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -737,12 +737,14 @@ async function readAnnualSheet(entry) {
     try {
       const base = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/`;
       const enc  = s => encodeURIComponent(s);
-      const [hR, jR] = await Promise.all([
+      const [hR, jR, idR] = await Promise.all([
         fetch(base+enc(`'${sName}'!B${HEADER_ROW}:AJ${HEADER_ROW}`)+'?valueRenderOption=FORMATTED_VALUE', {headers:{Authorization:'Bearer '+accessToken}}),
         fetch(base+enc(`'${sName}'!B${OUTPUT_ROW}:AJ${OUTPUT_ROW}`)+'?valueRenderOption=FORMATTED_VALUE', {headers:{Authorization:'Bearer '+accessToken}}),
+        fetch(base+enc(`'${sName}'!B${BLIP_ID_ROW}:AJ${BLIP_ID_ROW}`)+'?valueRenderOption=FORMATTED_VALUE', {headers:{Authorization:'Bearer '+accessToken}}),
       ]);
       const headers = (await hR.json()).values?.[0] || [];
       const jsonRow = (await jR.json()).values?.[0] || [];
+      const idRow   = (await idR.json()).values?.[0] || []; // BLIP IDs riga 46
 
       sheetColumnMap[sName] = {};
       headers.forEach((h, i) => {
@@ -766,12 +768,17 @@ async function readAnnualSheet(entry) {
             const room = ROOMS.find(r => r.name===camNorm || r.name.toLowerCase()===camNorm.toLowerCase());
             if (!room) { console.warn('Camera non riconosciuta:', b.camera); return; }
             const colorHex = (b.backgroundColor||'#D9D9D9').startsWith('#') ? (b.backgroundColor||'#D9D9D9') : '#'+b.backgroundColor;
+            // Legge il BLIP_ID dalla riga 46 per la colonna corrispondente
+            const colIdx   = sheetColumnMap[sName]?.[String(b.camera).trim()] || null;
+            const blipColI = colIdx ? colIdx - 2 : null; // riga 46 inizia da col B (indice 0)
+            const blipId   = (blipColI !== null && idRow[blipColI]) ? String(idRow[blipColI]).trim() : null;
             result.push({
               id:nid++, r:room.id, n:b.nome||'—', d:b.disposizione||'',
               c:colorHex, s:new Date(yy,mm-1,dd,12), e:new Date(ye,me-1,de,12),
               note:b.note||'', fromSheet:true, sheetName:sName,
               cameraName:room.name, sheetId,
-              dbId:null, dbRow:null, ts:null, fonte:'manuale',
+              dbId:blipId||null, dbRow:null, ts:null, fonte:'manuale',
+              _sheetCol:colIdx, // colonna nel foglio, usata per scrivere riga 46
             });
           });
         } catch(e) {}
@@ -872,11 +879,18 @@ function invalidateDbCache() { localStorage.removeItem(DB_CACHE_KEY); }
 // ═══════════════════════════════════════════════════════════════════
 
 function findMatch(target, list) {
+  // PRIORITÀ 1: match per BLIP_ID dalla riga 46 — match perfetto, immune a spostamenti
+  if (target.dbId) {
+    const byId = list.find(b => b.dbId === target.dbId);
+    if (byId) return byId;
+  }
+
   const camT  = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
   const nomT  = (target.n || '').toLowerCase().trim();
   const dayT  = Math.round((target.s?.getTime?.() || 0) / DAY_MS);
   const dispT = (target.d || '').trim().toLowerCase();
 
+  // PRIORITÀ 2: match esatto per nome + camera + data
   let m = list.find(b => {
     if ((b.n||'').toLowerCase().trim() !== nomT) return false;
     if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
@@ -884,6 +898,7 @@ function findMatch(target, list) {
   });
   if (m) return m;
 
+  // PRIORITÀ 3: fuzzy — nome + camera + data ±1 giorno
   m = list.find(b => {
     if ((b.n||'').toLowerCase().trim() !== nomT) return false;
     if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
@@ -1029,7 +1044,74 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
 
   const dbActiveCount = dbActive.length;
   syncLog(`DB: ${result.length} prenotazioni attive, rimossi ${toArchive.length}`, 'db');
+
+  // Scrivi BLIP_ID nella riga 46 per le prenotazioni nuove (fire & forget)
+  const toWriteRow46 = toAddToDB.filter(b => b.dbId && b._sheetCol && b.sheetName && b.sheetId);
+  if (toWriteRow46.length > 0) {
+    writeBlipIdsToRow46(toWriteRow46).catch(e =>
+      syncLog('⚠ Scrittura riga 46: ' + e.message, 'wrn')
+    );
+  }
+
   return result;
+}
+
+// Scrive i BLIP_ID nella riga 46 del foglio visivo
+async function writeBlipIdsToRow46(bookings) {
+  const bySheet = {};
+  for (const b of bookings) {
+    const key = b.sheetId + '|' + b.sheetName;
+    if (!bySheet[key]) bySheet[key] = { sheetId:b.sheetId, sName:b.sheetName, updates:[] };
+    bySheet[key].updates.push({ col:b._sheetCol, id:b.dbId });
+  }
+  for (const { sheetId, sName, updates } of Object.values(bySheet)) {
+    if (!updates.length) continue;
+    try {
+      const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId + '/values:batchUpdate';
+      const resp = await apiFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          valueInputOption: 'RAW',
+          data: updates.map(({ col, id }) => ({
+            range: "'" + sName + "'!" + columnLetter(col) + BLIP_ID_ROW,
+            values: [[id]]
+          }))
+        })
+      });
+      if (resp.ok) syncLog('✓ BLIP_ID scritti riga 46 in ' + sName + ': ' + updates.length, 'ok');
+      else syncLog('⚠ Errore scrittura riga 46 in ' + sName, 'wrn');
+    } catch(e) { syncLog('⚠ writeBlipIdsToRow46: ' + e.message, 'wrn'); }
+  }
+}
+
+// Converte numero colonna (1-based) → lettera Excel (A, B, ..., Z, AA, ...)
+function columnLetter(col) {
+  let s = '';
+  while (col > 0) { col--; s = String.fromCharCode(65 + col % 26) + s; col = Math.floor(col / 26); }
+  return s;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DIAGNOSTICA — Confronto riga 45 (Apps Script) vs DB
+// ═══════════════════════════════════════════════════════════════════
+
+// Confronta le prenotazioni del foglio con quelle nel DB
+// e logga le discrepanze → aiuta a capire se Apps Script funziona
+function diagnosticaAppScript(sheetBookings, dbBookings) {
+  const now = new Date().toISOString().slice(0,10);
+  let ok = 0, discrepanze = 0;
+  for (const sb of sheetBookings) {
+    const match = dbBookings.find(db => db.dbId === sb.dbId || (
+      (db.n||'').toLowerCase() === (sb.n||'').toLowerCase() &&
+      (db.cameraName||'') === (sb.cameraName||'') &&
+      Math.abs((db.s?.getTime()||0) - (sb.s?.getTime()||0)) < 86400000
+    ));
+    if (!match) { discrepanze++; syncLog('⚠ AppsScript: "' + sb.n + '" cam.' + sb.cameraName + ' ' + (sb.s?.toISOString()?.slice(0,10)||'?') + ' — non in DB', 'wrn'); }
+    else ok++;
+  }
+  syncLog('📊 Diagnostica: ' + ok + ' OK, ' + discrepanze + ' discrepanze foglio↔DB', discrepanze > 0 ? 'wrn' : 'ok');
+  return discrepanze;
 }
 
 // ═══════════════════════════════════════════════════════════════════
