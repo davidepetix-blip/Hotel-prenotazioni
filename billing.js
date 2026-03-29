@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '16'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '17'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1956,9 +1956,23 @@ function confermaPagamento(contoId, importo, tipo, modalita, dataStr, riferiment
   if (typeof render === 'function') render();
 }
 
-function riapriFoglio(bid) {
+function riapriFoglio(bid, apriTabConto) {
   closeConti();
-  if (bookings.find(x=>x.id===bid)) showBookingDetail(bid);
+  const b = bookings.find(x=>x.id===bid);
+  if (b) {
+    setTimeout(() => {
+      if (typeof selBook === 'function') {
+        selBook(b.id, null);
+        if (apriTabConto) {
+          // Attiva il tab Conto dopo che il drawer si è aperto
+          setTimeout(() => {
+            const tabBill = document.querySelector('.dr-bill-tab:nth-child(2)');
+            if (tabBill && typeof drTab === 'function') drTab(tabBill, 'drTabBill');
+          }, 100);
+        }
+      }
+    }, 80);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2559,7 +2573,7 @@ function renderContiAppart() {
         <div class="bill-card-hdr">
           <div><div class="bill-card-name">${b.n}</div><div class="bill-card-room">${room?.name}</div></div>
           <div><div class="bill-total">${tot.toFixed(2)}€</div>
-            <button class="btn" style="font-size:11px;margin-top:4px" onclick="closeConti();showBookingDetail(${b.id})">→ Conto</button>
+            <button class="btn" style="font-size:11px;margin-top:4px" onclick="riapriFoglio(${b.id}, true)">→ Conto</button>
           </div>
         </div>
         <div class="bill-row"><span class="bill-row-label">Periodo</span><span class="bill-row-total">${fmt(b.s)} → ${fmt(b.e)}</span></div>
