@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '12'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '13'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -1083,6 +1083,44 @@ async function writeBlipIdsToRow46(bookings) {
       else syncLog('⚠ Errore scrittura riga 46 in ' + sName, 'wrn');
     } catch(e) { syncLog('⚠ writeBlipIdsToRow46: ' + e.message, 'wrn'); }
   }
+}
+
+// ── Backfill riga 46: scrive BLIP_ID per tutte le prenotazioni già in memoria ──
+// Da chiamare una volta sola per popolare la riga 46 su tutte le colonne
+async function backfillRow46() {
+  if (!DATABASE_SHEET_ID || !bookings.length) {
+    showToast('Carica prima le prenotazioni', 'error');
+    return;
+  }
+  // Solo prenotazioni dal foglio (fromSheet=true) con dbId e sheetCol
+  const toWrite = bookings.filter(b => b.fromSheet && b.dbId && b._sheetCol && b.sheetName && b.sheetId);
+  if (toWrite.length === 0) {
+    // Prova a ricostruire _sheetCol dalla mappa colonne
+    let rebuilt = 0;
+    for (const b of bookings.filter(b2 => b2.fromSheet && b2.dbId)) {
+      const sName = b.sheetName;
+      const cam   = b.cameraName || roomName(b.r) || '';
+      const colMap = sheetColumnMap[sName] || {};
+      const col = colMap[cam] || colMap[String(cam).trim()];
+      if (col && b.sheetId) { b._sheetCol = col; rebuilt++; }
+    }
+    const toWrite2 = bookings.filter(b => b.fromSheet && b.dbId && b._sheetCol && b.sheetName && b.sheetId);
+    if (toWrite2.length === 0) {
+      showToast('Nessuna prenotazione con colonna mappata — fai prima un sync dal foglio', 'error');
+      return;
+    }
+    showLoading('Backfill riga 46 (' + toWrite2.length + ' prenotazioni)…');
+    await writeBlipIdsToRow46(toWrite2);
+    hideLoading();
+    showToast('✓ Riga 46 compilata: ' + toWrite2.length + ' prenotazioni', 'success');
+    syncLog('✓ Backfill riga 46: ' + toWrite2.length, 'ok');
+    return;
+  }
+  showLoading('Backfill riga 46 (' + toWrite.length + ' prenotazioni)…');
+  await writeBlipIdsToRow46(toWrite);
+  hideLoading();
+  showToast('✓ Riga 46 compilata: ' + toWrite.length + ' prenotazioni', 'success');
+  syncLog('✓ Backfill riga 46: ' + toWrite.length, 'ok');
 }
 
 // Converte numero colonna (1-based) → lettera Excel (A, B, ..., Z, AA, ...)
