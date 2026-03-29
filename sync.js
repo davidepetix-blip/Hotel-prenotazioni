@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '13'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '14'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -1089,38 +1089,70 @@ async function writeBlipIdsToRow46(bookings) {
 // Da chiamare una volta sola per popolare la riga 46 su tutte le colonne
 async function backfillRow46() {
   if (!DATABASE_SHEET_ID || !bookings.length) {
-    showToast('Carica prima le prenotazioni', 'error');
-    return;
+    showToast('Carica prima le prenotazioni', 'error'); return;
   }
-  // Solo prenotazioni dal foglio (fromSheet=true) con dbId e sheetCol
+  showLoading('Lettura intestazioni fogli…');
+
+  // Raccogli sheetId univoci per le prenotazioni dal foglio
+  const sheetIds = [...new Set(bookings.filter(b => b.fromSheet && b.sheetId).map(b => b.sheetId))];
+  if (!sheetIds.length) { hideLoading(); showToast('Nessun foglio fonte trovato', 'error'); return; }
+
+  // Per ogni sheetId, leggi i nomi dei fogli mensili e le loro intestazioni
+  for (const sid of sheetIds) {
+    try {
+      const metaR = await apiFetch(
+        'https://sheets.googleapis.com/v4/spreadsheets/' + sid + '?fields=sheets.properties.title'
+      );
+      const meta = await metaR.json();
+      const monthSheets = (meta.sheets || [])
+        .map(s => s.properties.title)
+        .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-z\u00C0-\u00FF]+\s+\d{4}$/i.test(n));
+
+      for (const sName of monthSheets) {
+        if (sheetColumnMap[sName] && Object.keys(sheetColumnMap[sName]).length > 0) continue; // già noto
+        try {
+          const enc = s => encodeURIComponent(s);
+          const hR = await apiFetch(
+            'https://sheets.googleapis.com/v4/spreadsheets/' + sid + '/values/' +
+            enc("'" + sName + "'!B" + HEADER_ROW + ":AJ" + HEADER_ROW) +
+            '?valueRenderOption=FORMATTED_VALUE'
+          );
+          const headers = (await hR.json()).values?.[0] || [];
+          if (!sheetColumnMap[sName]) sheetColumnMap[sName] = {};
+          headers.forEach((h, i) => {
+            if (!h) return;
+            const raw = String(h).trim(), norm = raw.replace(/\.0$/, '');
+            sheetColumnMap[sName][raw] = i + 2;
+            if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
+          });
+          syncLog('✓ Intestazioni lette: ' + sName + ' (' + headers.filter(Boolean).length + ' camere)', 'ok');
+        } catch(e) { syncLog('⚠ Intestazioni ' + sName + ': ' + e.message, 'wrn'); }
+      }
+    } catch(e) { syncLog('⚠ Meta foglio: ' + e.message, 'wrn'); }
+  }
+
+  // Ora assegna _sheetCol a ogni prenotazione
+  let rebuilt = 0;
+  for (const b of bookings.filter(b2 => b2.fromSheet && b2.dbId && !b2._sheetCol)) {
+    const sName = b.sheetName;
+    const cam   = b.cameraName || roomName(b.r) || '';
+    const colMap = sheetColumnMap[sName] || {};
+    const col = colMap[cam] || colMap[cam.trim()] || colMap[String(cam).replace(/\.0$/, '')];
+    if (col && b.sheetId) { b._sheetCol = col; rebuilt++; }
+  }
+  syncLog('Colonne ricostruite: ' + rebuilt, 'ok');
+
   const toWrite = bookings.filter(b => b.fromSheet && b.dbId && b._sheetCol && b.sheetName && b.sheetId);
   if (toWrite.length === 0) {
-    // Prova a ricostruire _sheetCol dalla mappa colonne
-    let rebuilt = 0;
-    for (const b of bookings.filter(b2 => b2.fromSheet && b2.dbId)) {
-      const sName = b.sheetName;
-      const cam   = b.cameraName || roomName(b.r) || '';
-      const colMap = sheetColumnMap[sName] || {};
-      const col = colMap[cam] || colMap[String(cam).trim()];
-      if (col && b.sheetId) { b._sheetCol = col; rebuilt++; }
-    }
-    const toWrite2 = bookings.filter(b => b.fromSheet && b.dbId && b._sheetCol && b.sheetName && b.sheetId);
-    if (toWrite2.length === 0) {
-      showToast('Nessuna prenotazione con colonna mappata — fai prima un sync dal foglio', 'error');
-      return;
-    }
-    showLoading('Backfill riga 46 (' + toWrite2.length + ' prenotazioni)…');
-    await writeBlipIdsToRow46(toWrite2);
     hideLoading();
-    showToast('✓ Riga 46 compilata: ' + toWrite2.length + ' prenotazioni', 'success');
-    syncLog('✓ Backfill riga 46: ' + toWrite2.length, 'ok');
+    showToast('Nessuna prenotazione abbinabile alle colonne del foglio', 'error');
     return;
   }
-  showLoading('Backfill riga 46 (' + toWrite.length + ' prenotazioni)…');
+  showLoading('Scrittura riga 46 (' + toWrite.length + ' prenotazioni)…');
   await writeBlipIdsToRow46(toWrite);
   hideLoading();
-  showToast('✓ Riga 46 compilata: ' + toWrite.length + ' prenotazioni', 'success');
-  syncLog('✓ Backfill riga 46: ' + toWrite.length, 'ok');
+  showToast('✓ Riga 46 compilata: ' + toWrite.length + ' celle scritte', 'success');
+  syncLog('✓ Backfill riga 46 completato: ' + toWrite.length, 'ok');
 }
 
 // Converte numero colonna (1-based) → lettera Excel (A, B, ..., Z, AA, ...)
