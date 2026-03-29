@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '17'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '18'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1148,6 +1148,11 @@ function prefillExtraPrice(bid) {
 function refreshBillTab(bid) {
   const b = bookings.find(x=>x.id===bid);
   if (!b) return;
+  // Se i dati del conto non sono ancora in cache, caricali dal DB prima di renderizzare
+  if (DATABASE_SHEET_ID && !_contiDatiCache[b.dbId] && !_contiDatiCache[b.id]) {
+    loadContoDati(b.dbId || String(b.id)).then(() => refreshBillTab(bid)).catch(() => {});
+    return;
+  }
   const tabEl = document.getElementById('drTabBill');
   if (tabEl) {
     const scrollTop = tabEl.scrollTop;

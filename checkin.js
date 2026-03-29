@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '11'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '12'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -335,14 +335,16 @@ let _ciHistSearch = '';
 let _exportDialogItems = []; // items temporanei per il dialog export
 function renderCiHistory() {
   const body = document.getElementById('ciBody');
-  // De-duplica per ciId prima di mostrare lo storico
-  const _seenIds = new Set();
-  const allCi = Object.values(ciData).filter(ci => {
-    const k = ci.ciId || ci.preId;
-    if (!k || _seenIds.has(k)) return false;
-    _seenIds.add(k);
-    return true;
-  }).sort((a,b) => b.data.localeCompare(a.data));
+  // De-duplica per (camera+data) — chiave fisica univoca
+  // Preferisce il record con preId associato
+  const _ciMap = new Map(); // key=camera|data → record preferito
+  Object.values(ciData).forEach(ci => {
+    const k = ci.camera + '|' + ci.data;
+    const existing = _ciMap.get(k);
+    // Preferisce record con preId (già riconciliato)
+    if (!existing || (!existing.preId && ci.preId)) _ciMap.set(k, ci);
+  });
+  const allCi = Array.from(_ciMap.values()).sort((a,b) => b.data.localeCompare(a.data));
   const filtered = _ciHistSearch
     ? allCi.filter(ci => {
         const q = _ciHistSearch.toLowerCase();
