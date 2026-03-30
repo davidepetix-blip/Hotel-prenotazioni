@@ -1,66 +1,118 @@
 // ═══════════════════════════════════════════════════════════════════
-// sync.js — Auth OAuth, Google Sheets API, DB, Sync Engine
-// Blip Hotel Management — build 18.7.x
-// Dipende da: core.js (deve essere caricato prima)
+// sync.js — Build 18.12.01 (Optimized Sync Engine)
 // ═══════════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════════
-// AUTH — OAuth 2.0 redirect flow
-// ═══════════════════════════════════════════════════════════════════
+const BLIP_VER_SYNC = '15';
 
+/**
+ * 1 & 2. Funzione potenziata per il salvataggio: 
+ * Legge la griglia, confronta con riga 45/46 e corregge in background.
+ */
+async function syncGridToDatabase(sheetName) {
+  dbg(`[Sync] Analisi foglio: ${sheetName}...`);
+  try {
+    // Legge l'intero foglio (Griglia + Metadati righe 45 e 46)
+    const response = await gapi.client.sheets.spreadsheets.values.get({
+      spreadsheetId: DATABASE_SHEET_ID,
+      range: `${sheetName}!A1:AJ46`,
+    });
 
-const BLIP_VER_SYNC = '14'; // ← incrementa ad ogni modifica
+    const rows = response.result.values;
+    if (!rows) return;
 
-function randomState() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
-    .map(b => b.toString(16).padStart(2,'0')).join('');
+    const roomsInSheet = rows[1].slice(7, 36); // Righe intestazione camere (H2:AJ2)
+    const currentJsonRow = rows[44] || []; // Riga 45 (Index 44)
+    const currentIdRow = rows[45] || [];   // Riga 46 (Index 45)
+
+    let updateNeeded = false;
+    const newJsonRow = [...currentJsonRow];
+    const newIdRow = [...currentIdRow];
+
+    // Iteriamo sulle colonne delle camere (dalla H alla AJ)
+    for (let colIdx = 0; colIdx < roomsInSheet.length; colIdx++) {
+      const realColIdx = colIdx + 7; // Offset per colonna H
+      const roomName = roomsInSheet[colIdx];
+      
+      // Estraiamo la prenotazione visiva dalla colonna
+      const extractedData = extractBookingFromColumn(rows, realColIdx);
+      const generatedId = generateBookingId(roomName, extractedData);
+
+      // Verifica Coerenza Riga 45 (JSON)
+      const stringified = JSON.stringify(extractedData);
+      if (currentJsonRow[realColIdx] !== stringified) {
+        newJsonRow[realColIdx] = stringified;
+        updateNeeded = true;
+      }
+
+      // Verifica Coerenza Riga 46 (ID)
+      if (currentIdRow[realColIdx] !== generatedId) {
+        newIdRow[realColIdx] = generatedId;
+        updateNeeded = true;
+      }
+    }
+
+    if (updateNeeded) {
+      dbg(`[Sync] Rilevate discrepanze nelle righe 45/46. Correzione in corso...`);
+      await gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: DATABASE_SHEET_ID,
+        range: `${sheetName}!A45:AJ46`,
+        valueInputOption: 'RAW',
+        resource: { values: [newJsonRow, newIdRow] }
+      });
+      dbg(`[Sync] Righe 45 e 46 allineate con successo.`);
+    }
+
+    // 4. Confronto con Database (Tab PRENOTAZIONI)
+    await reconcileWithDatabase(newJsonRow, newIdRow);
+
+  } catch (e) {
+    dbg(`[Sync Error] ${e.message}`, true);
+  }
 }
 
-function getRedirectUri() {
-  const path = location.pathname.replace(/\/index\.html$/, '/').replace(/([^/])$/, '$1/');
-  return location.origin + path;
-}
-
-function startLogin() {
-  dbg('▶ startLogin');
-  document.getElementById('loginErr').textContent = '';
-  const state = randomState();
-  sessionStorage.setItem('oauth_state', state);
-  const params = new URLSearchParams({
-    client_id:     CLIENT_ID,
-    redirect_uri:  getRedirectUri(),
-    response_type: 'token',
-    scope:         SCOPES,
-    state,
-    include_granted_scopes: 'true',
+/**
+ * 4. Carica e confronta i dati: aggiunge solo ciò che è nuovo o modificato
+ */
+async function reconcileWithDatabase(jsonRow, idRow) {
+  dbg("[Sync] Sincronizzazione con Database centrale...");
+  const dbResponse = await gapi.client.sheets.spreadsheets.values.get({
+    spreadsheetId: DATABASE_SHEET_ID,
+    range: 'PRENOTAZIONI!A:L',
   });
-  location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+  
+  const dbEntries = dbResponse.result.values || [];
+  const dbIds = new Set(dbEntries.map(r => r[0])); // Set di ID esistenti
+
+  const newEntries = [];
+  for (let i = 7; i < idRow.length; i++) {
+    const id = idRow[i];
+    if (id && !dbIds.has(id)) {
+      const data = JSON.parse(jsonRow[i]);
+      // A=ID, B=Camera, C=Nome, D=Dal, E=Al, F=Disp, G=Note, H=Colore, I=Anno, J=Fonte, K=TS
+      newEntries.push([
+        id, data.camera, data.nome, data.dal, data.al, 
+        data.disposizione, data.note, data.backgroundColor, 
+        new Date().getFullYear(), 'sync_auto', new Date().toISOString()
+      ]);
+    }
+  }
+
+  if (newEntries.length > 0) {
+    await gapi.client.sheets.spreadsheets.values.append({
+      spreadsheetId: DATABASE_SHEET_ID,
+      range: 'PRENOTAZIONI!A:A',
+      valueInputOption: 'RAW',
+      resource: { values: newEntries }
+    });
+    dbg(`[Sync] Aggiunte ${newEntries.length} nuove prenotazioni al DB.`);
+  }
 }
 
-function handleOAuthRedirect() {
-  dbg('▶ handleOAuthRedirect hash='+(location.hash?'si':'no'));
-  const hash = location.hash.slice(1);
-  if (!hash) return false;
-  const params = new URLSearchParams(hash);
-  const token  = params.get('access_token');
-  const error  = params.get('error');
-  const state  = params.get('state');
-
-  history.replaceState(null, '', location.pathname);
-
-  if (error) {
-    document.getElementById('loginErr').textContent = 'Accesso negato: ' + error;
-    return true;
-  }
-  if (!token) return false;
-
-  const saved = sessionStorage.getItem('oauth_state');
-  sessionStorage.removeItem('oauth_state');
-  if (saved && state !== saved) {
-    document.getElementById('loginErr').textContent = 'Errore sicurezza. Riprova.';
-    return true;
-  }
-
+function generateBookingId(room, data) {
+  if (!data || !data.nome) return "";
+  const hash = btoa(room + data.dal + data.nome).substring(0, 8).toUpperCase();
+  return `PRE-2026-${hash}`;
+}
   accessToken = token;
   onLoginSuccess();
   return true;
