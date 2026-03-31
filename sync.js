@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '16'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '17'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -768,10 +768,25 @@ async function readAnnualSheet(entry) {
             const room = ROOMS.find(r => r.name===camNorm || r.name.toLowerCase()===camNorm.toLowerCase());
             if (!room) { console.warn('Camera non riconosciuta:', b.camera); return; }
             const colorHex = (b.backgroundColor||'#D9D9D9').startsWith('#') ? (b.backgroundColor||'#D9D9D9') : '#'+b.backgroundColor;
-            // Legge il BLIP_ID dalla riga 46 per la colonna corrispondente
+            // Legge la mappa BLIP_ID dalla riga 46 ({dbId:[dal,al],...})
             const colIdx   = sheetColumnMap[sName]?.[String(b.camera).trim()] || null;
-            const blipColI = colIdx ? colIdx - 2 : null; // riga 46 inizia da col B (indice 0)
-            const blipId   = (blipColI !== null && idRow[blipColI]) ? String(idRow[blipColI]).trim() : null;
+            const blipColI = colIdx ? colIdx - 2 : null;
+            const rawId46  = (blipColI !== null && idRow[blipColI]) ? String(idRow[blipColI]).trim() : null;
+            let blipId = null;
+            if (rawId46) {
+              try {
+                // Formato nuovo: JSON map {dbId:[dal,al]}
+                const idMap = JSON.parse(rawId46);
+                // Cerca la prenotazione per dal+al
+                blipId = Object.keys(idMap).find(k => {
+                  const [mapDal, mapAl] = idMap[k];
+                  return mapDal === b.dal && mapAl === b.al;
+                }) || null;
+              } catch(e) {
+                // Formato vecchio: singolo ID (retrocompatibilità)
+                blipId = rawId46.startsWith('PRE-') ? rawId46 : null;
+              }
+            }
             result.push({
               id:nid++, r:room.id, n:b.nome||'—', d:b.disposizione||'',
               c:colorHex, s:new Date(yy,mm-1,dd,12), e:new Date(ye,me-1,de,12),
@@ -1015,6 +1030,16 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
       result.push(db); continue;
     }
 
+    // GUARD anni non coperti: se il foglio non ha NESSUNA prenotazione nell'anno
+    // della prenotazione DB, probabilmente stiamo leggendo un anno diverso.
+    // Non cestinare prenotazioni di anni non rappresentati nel foglio corrente.
+    const sheetHasYear = sheetBookings.some(s =>
+      s.s && new Date(s.s).getFullYear() === dbYear
+    );
+    if (!sheetHasYear) {
+      result.push(db); continue;
+    }
+
     db.deleted      = true;
     db.deleteReason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
     db.deletedAt    = nowISO();
@@ -1064,28 +1089,42 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
 
 // Scrive i BLIP_ID nella riga 46 del foglio visivo
 async function writeBlipIdsToRow46(bookings) {
-  const bySheet = {};
+  // Raggruppa per sheet+colonna: ogni cella contiene un JSON map {dbId:[dal,al],...}
+  const byCell = {}; // key = sheetId|sName|col
   for (const b of bookings) {
-    const key = b.sheetId + '|' + b.sheetName;
-    if (!bySheet[key]) bySheet[key] = { sheetId:b.sheetId, sName:b.sheetName, updates:[] };
-    bySheet[key].updates.push({ col:b._sheetCol, id:b.dbId });
+    if (!b.dbId || !b._sheetCol || !b.sheetName || !b.sheetId) continue;
+    const key = b.sheetId + '|' + b.sheetName + '|' + b._sheetCol;
+    if (!byCell[key]) byCell[key] = { sheetId:b.sheetId, sName:b.sheetName, col:b._sheetCol, map:{} };
+    // Formatta dal/al come dd/MM/yyyy (formato Apps Script)
+    const fmtDate = d => {
+      if (!d) return '';
+      const dt = d instanceof Date ? d : new Date(d);
+      return dt.toLocaleDateString('it-IT', {day:'2-digit',month:'2-digit',year:'numeric'});
+    };
+    byCell[key].map[b.dbId] = [fmtDate(b.s), fmtDate(b.e)];
   }
-  for (const { sheetId, sName, updates } of Object.values(bySheet)) {
-    if (!updates.length) continue;
+
+  // Raggruppa per sheet per fare batchUpdate
+  const bySheet = {};
+  for (const { sheetId, sName, col, map } of Object.values(byCell)) {
+    const sk = sheetId + '|' + sName;
+    if (!bySheet[sk]) bySheet[sk] = { sheetId, sName, data:[] };
+    bySheet[sk].data.push({
+      range: "'" + sName + "'!" + columnLetter(col) + BLIP_ID_ROW,
+      values: [[JSON.stringify(map)]]
+    });
+  }
+
+  for (const { sheetId, sName, data } of Object.values(bySheet)) {
+    if (!data.length) continue;
     try {
       const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId + '/values:batchUpdate';
       const resp = await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          valueInputOption: 'RAW',
-          data: updates.map(({ col, id }) => ({
-            range: "'" + sName + "'!" + columnLetter(col) + BLIP_ID_ROW,
-            values: [[id]]
-          }))
-        })
+        body: JSON.stringify({ valueInputOption: 'RAW', data })
       });
-      if (resp.ok) syncLog('✓ BLIP_ID scritti riga 46 in ' + sName + ': ' + updates.length, 'ok');
+      if (resp.ok) syncLog('✓ BLIP_ID scritti riga 46 in ' + sName + ': ' + data.length + ' celle', 'ok');
       else syncLog('⚠ Errore scrittura riga 46 in ' + sName, 'wrn');
     } catch(e) { syncLog('⚠ writeBlipIdsToRow46: ' + e.message, 'wrn'); }
   }
