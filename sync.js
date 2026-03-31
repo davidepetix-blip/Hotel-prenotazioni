@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '14'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '15'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -962,6 +962,12 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
       result.push(sheet);
     } else {
       seenDbIds.add(match.dbId);
+      // Propaga info del foglio all'oggetto DB (necessario per backfill riga 46)
+      if (sheet.sheetId)   match.sheetId   = sheet.sheetId;
+      if (sheet.sheetName) match.sheetName = sheet.sheetName;
+      if (sheet.cameraName)match.cameraName= sheet.cameraName;
+      if (sheet._sheetCol) match._sheetCol = sheet._sheetCol;
+      match.fromSheet = true;
       const changed =
         match.d !== sheet.d || match.c !== sheet.c || match.note !== sheet.note ||
         Math.abs(match.e.getTime() - sheet.e.getTime()) > DAY_MS/2 ||
