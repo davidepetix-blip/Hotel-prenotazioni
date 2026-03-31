@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '18'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '19'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1052,7 +1052,9 @@ function renderDrawerBill(b) {
 
   // Calcola stato conto UNA VOLTA sola — usato sia nel badge che nel bottone
   const _contiOuter = loadConti();
-  const _ceOuter = _contiOuter.find(x => x.bookingId === b.id) || null;
+  // Cerca per dbId (nuovo formato) o per id numerico (legacy)
+  const _ceOuter = _contiOuter.find(x => x.bookingId === b.dbId) ||
+                   _contiOuter.find(x => x.bookingId === b.id) || null;
   const _isEmesso = _ceOuter && _ceOuter.status && _ceOuter.status !== 'bozza';
 
   return `
@@ -1148,9 +1150,10 @@ function prefillExtraPrice(bid) {
 function refreshBillTab(bid) {
   const b = bookings.find(x=>x.id===bid);
   if (!b) return;
-  // Se i dati del conto non sono ancora in cache, caricali dal DB prima di renderizzare
-  if (DATABASE_SHEET_ID && !_contiDatiCache[b.dbId] && !_contiDatiCache[b.id]) {
-    loadContoDati(b.dbId || String(b.id)).then(() => refreshBillTab(bid)).catch(() => {});
+  // usa dbId come chiave primaria per la cache
+  const cacheKey = b.dbId || String(b.id);
+  if (DATABASE_SHEET_ID && !_contiDatiCache[cacheKey] && !_contiDatiCache[b.id]) {
+    loadContoDati(cacheKey).then(() => refreshBillTab(bid)).catch(() => {});
     return;
   }
   const tabEl = document.getElementById('drTabBill');
@@ -1296,12 +1299,15 @@ function emettiConto(bid) {
   const isA  = room?.g==='Appartamenti';
   const conto= getContoEffettivo(bid);
   const conti= loadConti();
-  const idx  = conti.findIndex(c=>c.bookingId===bid);
+  // Cerca per dbId (nuovo) o id numerico (legacy)
+  const idx  = conti.findIndex(c=>c.bookingId===(b.dbId||bid)) >= 0
+    ? conti.findIndex(c=>c.bookingId===(b.dbId||bid))
+    : conti.findIndex(c=>c.bookingId===bid);
   const ora  = new Date().toISOString();
   const esistente = idx >= 0 ? conti[idx] : null;
   const doc  = {
     id:         esistente?.id || ('C'+Date.now()),
-    bookingId:  bid,
+    bookingId:  b.dbId || bid,  // usa BLIP_ID se disponibile
     groupId:    esistente?.groupId || null,
     nome:       b.n,
     camera:     room?.name||roomName(b.r),
@@ -1321,6 +1327,12 @@ function emettiConto(bid) {
   };
   if(idx>=0) conti[idx]=doc; else conti.unshift(doc);
   saveConti(conti);
+  // Salva anche nel foglio CONTI usando dbId come chiave
+  const _saveBid = b.dbId || bid;
+  if (_contiDatiCache[bid] && !_contiDatiCache[_saveBid]) {
+    _contiDatiCache[_saveBid] = _contiDatiCache[bid];
+  }
+  saveContoDati(_saveBid, { contoEmesso: doc });
   // Aggiorna subito il tab Conto nel drawer — mostra badge Emesso e totale
   refreshBillTab(bid);
   // Aggiorna il Gantt per il bordo colore billing
