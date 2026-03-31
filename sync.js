@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '17'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '18'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -830,6 +830,46 @@ async function readJSONAnnuale(sheetId) {
       if (parseErrors > 0) throw new Error(TAB + ': JSON non valido in ' + parseErrors + ' righe');
       throw new Error(TAB + ': nessuna prenotazione — rigenera dal menu del foglio');
     }
+    // Popola sheetColumnMap leggendo le intestazioni di tutti i fogli mensili
+    // in una sola chiamata batchGet — necessario per assegnare _sheetCol ai booking
+    try {
+      const metaR = await fetch(
+        'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId + '?fields=sheets.properties.title',
+        { headers: { Authorization: 'Bearer ' + accessToken } }
+      );
+      if (metaR.ok) {
+        const metaJ = await metaR.json();
+        const monthSheets = (metaJ.sheets || [])
+          .map(s => s.properties.title)
+          .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-zÀ-ÿ]+\s+\d{4}$/i.test(n));
+        if (monthSheets.length > 0) {
+          const ranges = monthSheets
+            .map(sn => encodeURIComponent("'" + sn + "'!B" + HEADER_ROW + ":AJ" + HEADER_ROW))
+            .join('&ranges=');
+          const bR = await fetch(
+            'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId +
+            '/values:batchGet?ranges=' + ranges + '&valueRenderOption=FORMATTED_VALUE',
+            { headers: { Authorization: 'Bearer ' + accessToken } }
+          );
+          if (bR.ok) {
+            const bData = await bR.json();
+            (bData.valueRanges || []).forEach((vr, idx) => {
+              const sn = monthSheets[idx];
+              const headers = vr.values?.[0] || [];
+              sheetColumnMap[sn] = {};
+              headers.forEach((h, i) => {
+                if (!h) return;
+                const raw = String(h).trim(), norm = raw.replace(/\.0$/, '');
+                sheetColumnMap[sn][raw] = i + 2;
+                if (norm !== raw) sheetColumnMap[sn][norm] = i + 2;
+              });
+            });
+            console.log('[JSON_ANNUALE] sheetColumnMap popolato per ' + monthSheets.length + ' fogli');
+          }
+        }
+      }
+    } catch(hErr) { console.warn('[JSON_ANNUALE] intestazioni:', hErr.message); }
+
     return _parseJSONAnnualeBookings(allPren, sheetId, TAB);
   }
   throw new Error(TAB + ': rate limit persistente, riprova');
@@ -850,12 +890,16 @@ function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
     const color = colorHex.startsWith('#') ? colorHex : '#'+colorHex;
     const sName = sheetName(yy, mm-1);
     if (!sheetColumnMap[sName]) sheetColumnMap[sName] = {};
+    // Assegna _sheetCol se sheetColumnMap è già popolato per questo foglio
+    const _colMap = sheetColumnMap[sName] || {};
+    const _sheetCol = _colMap[room.name] || _colMap[String(room.name).trim()] || null;
     result.push({
       id: nid++, r: room.id, n: b.nome||'—', d: b.disposizione||'',
       c: color, s: new Date(yy,mm-1,dd,12), e: new Date(ye,me-1,de,12),
       note: b.note||'', fromSheet:true, fromJSONAnnuale:true,
       sheetName:sName, sheetId, cameraName:room.name,
       dbId:null, dbRow:null, ts:null, fonte:'manuale',
+      _sheetCol: _sheetCol || undefined,
     });
   }
   if (skipped > 0) console.warn(`[${tabName}] ${skipped} prenotazioni saltate`);
@@ -978,10 +1022,10 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
     } else {
       seenDbIds.add(match.dbId);
       // Propaga info del foglio all'oggetto DB (necessario per backfill riga 46)
-      if (sheet.sheetId)   match.sheetId   = sheet.sheetId;
-      if (sheet.sheetName) match.sheetName = sheet.sheetName;
-      if (sheet.cameraName)match.cameraName= sheet.cameraName;
-      if (sheet._sheetCol) match._sheetCol = sheet._sheetCol;
+      if (sheet.sheetId)    match.sheetId    = sheet.sheetId;
+      if (sheet.sheetName)  match.sheetName  = sheet.sheetName;
+      if (sheet.cameraName) match.cameraName = sheet.cameraName;
+      if (sheet._sheetCol)  match._sheetCol  = sheet._sheetCol; // solo se definito
       match.fromSheet = true;
       const changed =
         match.d !== sheet.d || match.c !== sheet.c || match.note !== sheet.note ||
@@ -1154,9 +1198,9 @@ async function backfillRow46() {
         .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-z\u00C0-\u00FF]+\s+\d{4}$/i.test(n));
 
       // Leggi tutte le intestazioni in UNA sola chiamata batchGet
-      const sheetsToRead = monthSheets.filter(sName =>
-        !sheetColumnMap[sName] || Object.keys(sheetColumnMap[sName]).length === 0
-      );
+      // Leggi sempre TUTTI i fogli mensili — sheetColumnMap potrebbe essere
+      // inizializzato vuoto da _parseJSONAnnualeBookings e non avere le camere
+      const sheetsToRead = monthSheets; // forza rilettura completa
       if (sheetsToRead.length > 0) {
         try {
           const ranges = sheetsToRead
