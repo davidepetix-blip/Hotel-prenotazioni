@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '19'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '20'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -269,7 +269,7 @@ async function loadPagamentiPerBooking(bid) {
   if (!DATABASE_SHEET_ID) return [];
   // Usa cache se fresca (5 min)
   if (_pagamentiCache && Date.now() - _pagamentiCacheTs < BILL_DB_TTL) {
-    return (_pagamentiCache || []).filter(p => p.bookingId === bid);
+    return (_pagamentiCache || []).filter(p => String(p.bookingId) === String(bid));
   }
   try {
     await ensurePagamentiSheet();
@@ -278,7 +278,7 @@ async function loadPagamentiPerBooking(bid) {
     _pagamentiCache = rows.map((row, i) => ({
       id:           (row[PAG_COLS.ID-1]||'').trim(),
       contoId:      (row[PAG_COLS.CONTO_ID-1]||'').trim(),
-      bookingId:    parseInt(row[PAG_COLS.BOOKING_ID-1])||0,
+      bookingId:    String(row[PAG_COLS.BOOKING_ID-1] || '').trim(),
       data:         (row[PAG_COLS.DATA-1]||'').trim(),
       importo:      parseFloat(row[PAG_COLS.IMPORTO-1])||0,
       tipo:         (row[PAG_COLS.TIPO-1]||'saldo').trim(),
@@ -290,7 +290,7 @@ async function loadPagamentiPerBooking(bid) {
       dbRow:        i + 2,
     })).filter(p => p.id && p.importo > 0);
     _pagamentiCacheTs = Date.now();
-    return _pagamentiCache.filter(p => p.bookingId === bid);
+    return _pagamentiCache.filter(p => String(p.bookingId) === String(bid));
   } catch(e) {
     console.warn('[PAGAMENTI] load:', e.message);
     return [];
@@ -299,7 +299,14 @@ async function loadPagamentiPerBooking(bid) {
 
 function getPagamentiPerBookingSync(bid) {
   if (!_pagamentiCache) return [];
-  return _pagamentiCache.filter(p => p.bookingId === bid);
+  const key = String(bid);
+  // Cerca per bid esatto, poi fallback con dbId/id della prenotazione
+  const exact = _pagamentiCache.filter(p => String(p.bookingId) === key);
+  if (exact.length > 0) return exact;
+  // Fallback: cerca anche per id numerico se bid è BLIP_ID
+  const b = bookings.find(x => x.dbId === key);
+  if (b) return _pagamentiCache.filter(p => String(p.bookingId) === String(b.id));
+  return [];
 }
 
 function getTotalePagatoPerBooking(bid) {
@@ -522,15 +529,32 @@ function toggleAppartMode(bid) {
 }
 
 // Conti emessi: salvati nella riga del conto specifica
+// Stato conto SEMPRE calcolato dai movimenti — non persistito
+// Questo evita stati incoerenti dopo pagamenti/eliminazioni/modifiche
+function getStatoContoCalcolato(conto) {
+  if (!conto) return null;
+  const totale = parseFloat(conto.totale || 0);
+  const pagato = getTotalePagatoPerBooking(String(conto.bookingId));
+  if (totale > 0 && pagato >= totale - 0.01) return 'pagato';
+  if (conto.tipoDoc || conto.numDoc || conto.fatturatoIl) return 'fatturato';
+  if (conto.emessoIl || conto.status === 'emesso' || conto.status === 'fatturato' || conto.status === 'pagato') return 'emesso';
+  return 'bozza';
+}
+
 function loadConti() {
-  // Raccoglie tutti i contoEmesso dalla cache in-memory
   return Object.entries(_contiDatiCache)
     .filter(([,d]) => d.contoEmesso)
-    .map(([,d]) => d.contoEmesso)
+    .map(([,d]) => {
+      const c = { ...d.contoEmesso };
+      // Stato sempre calcolato dai pagamenti reali — mai dal campo salvato
+      c.status    = getStatoContoCalcolato(c);
+      c.totPagato = getTotalePagatoPerBooking(String(c.bookingId));
+      c.residuo   = Math.max(0, parseFloat(c.totale || 0) - (c.totPagato || 0));
+      return c;
+    })
     .sort((a,b) => (b.emessoIl||'').localeCompare(a.emessoIl||''));
 }
 function saveConti(contiArray) {
-  // Salva ogni conto nella riga della prenotazione corrispondente
   contiArray.forEach(doc => {
     const bid = doc.bookingId;
     if (!bid) return;
@@ -540,15 +564,32 @@ function saveConti(contiArray) {
   });
 }
 
+// Segna il conto come "sporco" se viene modificato dopo l'emissione
+// Usato da: addExtraLibero, addExtraVoce, salvaOverrideRiga, rimuoviOverrideRiga
+function markContoDirty(bid) {
+  const key = String(bid);
+  const b = bookings.find(x => x.id === bid || x.dbId === key);
+  const cacheKey = b?.dbId || key;
+  const dati = _contiDatiCache[cacheKey] || _contiDatiCache[bid];
+  if (!dati?.contoEmesso) return; // nessun conto emesso → niente da sporcare
+  const stato = getStatoContoCalcolato(dati.contoEmesso);
+  if (stato === 'bozza') return; // non ancora emesso → non serve il flag
+  dati.contoEmesso.dirty = true;
+  dati.contoEmesso.dirtyTs = nowISO();
+  saveContoDati(cacheKey, { contoEmesso: dati.contoEmesso });
+}
+
 // ─────────────────────────────────────────────────────────────────
 // HELPER: stato conto per una prenotazione (usato dal Gantt)
 // Legge solo la cache in-memory — nessuna chiamata API, sempre sincrono.
 // Ritorna: null | 'bozza' | 'emesso' | 'fatturato' | 'pagato'
 // ─────────────────────────────────────────────────────────────────
 function getBillingStatusForBooking(bid) {
-  const dati = _contiDatiCache[bid];
+  // Cerca per dbId (BLIP_ID) o id numerico
+  const dati = _contiDatiCache[bid] || _contiDatiCache[String(bid)];
   if (!dati?.contoEmesso) return null;
-  return dati.contoEmesso.status || 'bozza';
+  // Stato sempre calcolato, non letto dal campo salvato
+  return getStatoContoCalcolato(dati.contoEmesso);
 }
 
 // Colore bordo sinistro Gantt per stato conto
@@ -904,6 +945,7 @@ function salvaOverrideRiga(bid, idx, btn) {
 
   ovs[idx] = { ...ovs[idx], label, qty:qtyFinal, unitPrice:priceFinal, total: parseFloat(total.toFixed(2)) };
   setContoOverrides(bid, ovs);
+  markContoDirty(bid);
   btn.closest('[style*=fixed]').remove();
   refreshBillTab(bid);
 }
@@ -923,6 +965,7 @@ function rimuoviRigaPerLabel(bid, label) {
   if (ei >= 0) { extras.splice(ei, 1); setExtraForBooking(bid, extras); }
   ovs.splice(idx, 1);
   setContoOverrides(bid, ovs.length ? ovs : null);
+  markContoDirty(bid);
   refreshBillTab(bid);
 }
 
@@ -1073,7 +1116,8 @@ function renderDrawerBill(b) {
     ${consumiHtml}
     ${(()=>{
       const _ce = _ceOuter;
-      const _si = _ce ? (STATO_CFG[_ce.status]||STATO_CFG.bozza) : null;
+      const _si = _ce ? (STATO_CFG[getStatoContoCalcolato(_ce)]||STATO_CFG.bozza) : null;
+      const _dirty = _ce?.dirty ? `<span style="background:#f59e0b;color:#fff;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px">⚠ da aggiornare</span>` : '';
       return _si ? `<div style="display:flex;align-items:center;gap:6px;margin:10px 0 6px;padding:8px 10px;background:var(--surface2);border-radius:8px;font-size:12px">
         <span class="stato-pill ${_ce.status}">${_si.icon} ${_si.label}</span>
         <span style="color:var(--text3);flex:1">Salvato · ${_ce.totale?.toFixed(2)}€</span>
@@ -1081,7 +1125,7 @@ function renderDrawerBill(b) {
       </div>` : '';
     })()}
     ${(()=>{
-      const _pags = (typeof getPagamentiPerBookingSync==='function') ? getPagamentiPerBookingSync(b.id) : [];
+      const _pags = (typeof getPagamentiPerBookingSync==='function') ? getPagamentiPerBookingSync(String(b.dbId||b.id)) : [];
       const _ce2 = _ceOuter;
       const _tot  = _ce2 ? (_ce2.totale||0) : 0;
       const _pagato = _pags.reduce((s,p)=>s+p.importo,0);
@@ -1327,6 +1371,7 @@ function emettiConto(bid) {
   };
   if(idx>=0) conti[idx]=doc; else conti.unshift(doc);
   saveConti(conti);
+  doc.dirty = false; // conto appena emesso/aggiornato — non è sporco
   // Salva anche nel foglio CONTI usando dbId come chiave
   const _saveBid = b.dbId || bid;
   if (_contiDatiCache[bid] && !_contiDatiCache[_saveBid]) {
