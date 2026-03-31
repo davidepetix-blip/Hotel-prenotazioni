@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '18'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '19'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -1260,6 +1260,265 @@ function columnLetter(col) {
   let s = '';
   while (col > 0) { col--; s = String.fromCharCode(65 + col % 26) + s; col = Math.floor(col / 26); }
   return s;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// RIPARAZIONE DATABASE — aggiorna legami BLIP_ID in tutti i fogli
+// ═══════════════════════════════════════════════════════════════════
+
+async function riparaDatabase() {
+  if (!DATABASE_SHEET_ID) { showToast('DATABASE_SHEET_ID non configurato', 'error'); return; }
+  if (!bookings.length)   { showToast('Carica prima le prenotazioni (↻)', 'error'); return; }
+
+  syncLog('🔧 Avvio riparazione database…', 'syn');
+  showLoading('Riparazione database…');
+  let totFixed = 0, totWarn = 0;
+
+  // ── Indici di ricerca dai bookings in memoria ──
+  // (camera|dal) → dbId  e  (cameraName|nome8) → dbId (fuzzy)
+  const camDalMap  = {};   // "cam|dd/MM/yyyy" → dbId
+  const camNomeMap = {};   // "cam|nome8"       → dbId  (fallback)
+  for (const b of bookings) {
+    if (!b.dbId) continue;
+    const cam = (b.cameraName || roomName(b.r) || '').trim();
+    if (b.s) {
+      const d  = b.s;
+      const dal = String(d.getDate()).padStart(2,'0') + '/'
+                + String(d.getMonth()+1).padStart(2,'0') + '/'
+                + d.getFullYear();
+      camDalMap[cam + '|' + dal] = b.dbId;
+    }
+    const n8 = (b.n || '').toLowerCase().trim().slice(0, 10);
+    if (n8) camNomeMap[cam + '|' + n8] = b.dbId;
+  }
+
+  function blipFromContoJSON(c) {
+    if (!c) return null;
+    const cam = String(c.camera || '').trim();
+    // da ISO a dd/MM/yyyy
+    try {
+      const dt  = new Date(c.checkin || '');
+      const dal = String(dt.getDate()).padStart(2,'0') + '/'
+                + String(dt.getMonth()+1).padStart(2,'0') + '/'
+                + dt.getFullYear();
+      const byDal = camDalMap[cam + '|' + dal];
+      if (byDal) return byDal;
+    } catch(e) {}
+    // fallback fuzzy nome
+    const n8 = (c.nome || '').toLowerCase().trim().slice(0, 10);
+    return camNomeMap[cam + '|' + n8] || null;
+  }
+
+  // ── STEP 1: Header CLIENTE_ID in PRENOTAZIONI (col M = 13) ──
+  try {
+    showLoading('Verifica schema PRENOTAZIONI…');
+    const hR  = await dbGet(DB_SHEET_NAME + '!A1:M1');
+    const hdr = hR.values?.[0] || [];
+    if (!hdr[12] || String(hdr[12]).trim() !== 'CLIENTE_ID') {
+      const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + DATABASE_SHEET_ID
+                + '/values/' + encodeURIComponent(DB_SHEET_NAME + '!M1')
+                + '?valueInputOption=RAW';
+      await apiFetch(url, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ values: [['CLIENTE_ID']] })
+      });
+      syncLog('✓ Header CLIENTE_ID aggiunto (col M)', 'ok');
+      totFixed++;
+    } else {
+      syncLog('✓ PRENOTAZIONI.CLIENTE_ID: già presente', 'ok');
+    }
+  } catch(e) { syncLog('⚠ Header PRENOTAZIONI: ' + e.message, 'wrn'); totWarn++; }
+
+  // ── STEP 2: CONTI — migra BOOKING_ID numerici → BLIP_ID ──
+  const contoIdToBlip = {};   // C17xxxxx → PRE-2026-xxx  (per collegare i pagamenti)
+  try {
+    showLoading('Riparazione CONTI…');
+    if (typeof ensureContiSheet === 'function') await ensureContiSheet();
+    const cr   = await dbGet('CONTI!A2:F9999');
+    const rows = cr.values || [];
+    const upd  = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row      = rows[i];
+      const bid      = String(row[0] || '').trim();
+      const contoStr = String(row[4] || '').trim();
+      const rowNum   = i + 2;
+
+      // Registra mapping id-conto → bookingId (serve per PAGAMENTI)
+      if (contoStr) {
+        try {
+          const c = JSON.parse(contoStr);
+          if (c.id) contoIdToBlip[c.id] = String(c.bookingId || bid);
+        } catch(e) {}
+      }
+
+      if (!bid || bid.startsWith('PRE-')) continue;   // già OK
+
+      if (contoStr) {
+        try {
+          const c      = JSON.parse(contoStr);
+          const blipId = blipFromContoJSON(c);
+          if (blipId) {
+            c.bookingId = blipId;
+            if (c.id) contoIdToBlip[c.id] = blipId;
+            upd.push({ range: 'CONTI!A' + rowNum, values: [[blipId]] });
+            upd.push({ range: 'CONTI!E' + rowNum, values: [[JSON.stringify(c)]] });
+            // aggiorna cache in-memory billing
+            if (typeof _contiDatiCache !== 'undefined') {
+              const dati = _contiDatiCache[bid];
+              if (dati) { _contiDatiCache[blipId] = { ...dati, contoEmesso: c }; }
+            }
+            syncLog('✓ CONTI: ' + bid + ' → ' + blipId + ' (' + (c.nome||'?') + ')', 'ok');
+            totFixed++;
+          } else {
+            syncLog('⚠ CONTI: ' + bid + ' (' + (c.nome||'?') + ' cam' + (c.camera||'?') + ') — match non trovato', 'wrn');
+            totWarn++;
+          }
+        } catch(e) { syncLog('⚠ CONTI row ' + rowNum + ': ' + e.message, 'wrn'); totWarn++; }
+      } else {
+        // Riga con solo EXTRA/OVERRIDE: il bid è solo la chiave di cache, non critico
+        syncLog('⚠ CONTI: ' + bid + ' ha solo extra/override, nessun conto emesso — skip', 'inf');
+      }
+    }
+
+    if (upd.length > 0) {
+      await apiFetch(
+        'https://sheets.googleapis.com/v4/spreadsheets/' + DATABASE_SHEET_ID + '/values:batchUpdate',
+        { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ valueInputOption:'RAW', data: upd }) }
+      );
+      syncLog('✓ CONTI: ' + (upd.length/2|0) + ' righe scritte', 'ok');
+    }
+  } catch(e) { syncLog('⚠ Fix CONTI: ' + e.message, 'wrn'); totWarn++; }
+
+  // ── STEP 3: PAGAMENTI — migra BOOKING_ID numerici → BLIP_ID ──
+  try {
+    showLoading('Riparazione PAGAMENTI…');
+    if (typeof ensurePagamentiSheet === 'function') await ensurePagamentiSheet();
+    const pr   = await dbGet('PAGAMENTI!A2:K9999');
+    const rows = pr.values || [];
+    const upd  = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row       = rows[i];
+      const pagId     = String(row[0] || '').trim();
+      const contoId   = String(row[1] || '').trim();
+      const bookingId = String(row[2] || '').trim();
+      const rowNum    = i + 2;
+
+      if (!pagId || bookingId.startsWith('PRE-')) continue;
+
+      // Cerca BLIP_ID tramite contoId (bridge affidabile)
+      let blipId = contoIdToBlip[contoId] || null;
+
+      // Fallback: cerca nei conti in cache per booking id numerico
+      if (!blipId && typeof _contiDatiCache !== 'undefined') {
+        const entry = Object.values(_contiDatiCache).find(d =>
+          d.contoEmesso && String(d.contoEmesso.bookingId) === bookingId
+        );
+        if (entry?.contoEmesso?.bookingId?.startsWith?.('PRE-')) {
+          blipId = entry.contoEmesso.bookingId;
+        }
+      }
+
+      if (blipId && blipId.startsWith('PRE-')) {
+        upd.push({ range: 'PAGAMENTI!C' + rowNum, values: [[blipId]] });
+        if (typeof _pagamentiCache !== 'undefined' && _pagamentiCache) {
+          const p = _pagamentiCache.find(p => p.id === pagId);
+          if (p) p.bookingId = blipId;
+        }
+        syncLog('✓ PAGAMENTI: ' + pagId + ' → ' + blipId, 'ok');
+        totFixed++;
+      } else {
+        syncLog('⚠ PAGAMENTI: ' + pagId + ' (bid=' + bookingId + ') — BLIP_ID non trovato', 'wrn');
+        totWarn++;
+      }
+    }
+
+    if (upd.length > 0) {
+      await apiFetch(
+        'https://sheets.googleapis.com/v4/spreadsheets/' + DATABASE_SHEET_ID + '/values:batchUpdate',
+        { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ valueInputOption:'RAW', data: upd }) }
+      );
+      syncLog('✓ PAGAMENTI: ' + upd.length + ' righe scritte', 'ok');
+    }
+  } catch(e) { syncLog('⚠ Fix PAGAMENTI: ' + e.message, 'wrn'); totWarn++; }
+
+  // ── STEP 4: CHECK-IN — re-linka orfani (puntano a prenotazioni in CESTINO) ──
+  try {
+    showLoading('Riparazione CHECK-IN…');
+    const activeIds = new Set(bookings.map(b => b.dbId).filter(Boolean));
+    const ciR  = await dbGet('CHECK-IN!A2:H9999');
+    const rows = ciR.values || [];
+    const upd  = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row    = rows[i];
+      const ciId   = String(row[0] || '').trim();
+      const preId  = String(row[1] || '').trim();
+      const camera = String(row[2] || '').trim();
+      const data   = String(row[3] || '').trim();   // YYYY-MM-DD
+      const rowNum = i + 2;
+
+      if (!ciId || !preId || activeIds.has(preId)) continue;
+
+      // Cerca booking attivo che copre camera+data
+      let dt;
+      try { dt = new Date(data + 'T12:00:00'); } catch(e) { continue; }
+      const match = bookings.find(b => {
+        const bCam = (b.cameraName || roomName(b.r) || '').trim();
+        return bCam === camera && b.dbId && b.s && b.e && dt >= b.s && dt < b.e;
+      });
+
+      if (match?.dbId) {
+        upd.push({ range: 'CHECK-IN!B' + rowNum, values: [[match.dbId]] });
+        syncLog('✓ CI: ' + ciId + ' cam' + camera + ' ' + data + ' → ' + match.dbId + ' (' + match.n + ')', 'ok');
+        totFixed++;
+      } else {
+        syncLog('⚠ CI: ' + ciId + ' cam' + camera + ' ' + data + ' — booking attivo non trovato', 'wrn');
+        totWarn++;
+      }
+    }
+
+    if (upd.length > 0) {
+      await apiFetch(
+        'https://sheets.googleapis.com/v4/spreadsheets/' + DATABASE_SHEET_ID + '/values:batchUpdate',
+        { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ valueInputOption:'RAW', data: upd }) }
+      );
+      syncLog('✓ CHECK-IN: ' + upd.length + ' righe aggiornate', 'ok');
+    }
+  } catch(e) { syncLog('⚠ Fix CHECK-IN: ' + e.message, 'wrn'); totWarn++; }
+
+  // ── STEP 5: CONTI — migra anche le righe con solo extra/override ──
+  // (bid numerico senza conto emesso — usa matching per booking in memoria)
+  try {
+    showLoading('Riparazione chiavi CONTI extra/override…');
+    const cr   = await dbGet('CONTI!A2:D9999');
+    const rows = cr.values || [];
+    const upd  = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row    = rows[i];
+      const bid    = String(row[0] || '').trim();
+      const rowNum = i + 2;
+      if (!bid || bid.startsWith('PRE-')) continue;
+      // Cerca nel cache in-memory il bid numerico e trova il BLIP_ID dall'indice
+      // Questi record non hanno conto emesso quindi non possiamo fare match per nome+camera
+      // Segnaliamo solo come avviso
+      syncLog('⚠ CONTI extra-only: ' + bid + ' — rimuovi manualmente o re-inserisci il conto', 'wrn');
+      totWarn++;
+    }
+  } catch(e) {}
+
+  hideLoading();
+  const msg = '🔧 Riparazione: ' + totFixed + ' corretti, ' + totWarn + ' avvisi';
+  syncLog(msg, totWarn > 0 ? 'wrn' : 'ok');
+  showToast(msg, totWarn > 0 ? 'warning' : 'success');
+  // Invalida cache e aggiorna il render
+  if (typeof render === 'function') render();
 }
 
 // ═══════════════════════════════════════════════════════════════════
