@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '15'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '16'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -1114,25 +1114,36 @@ async function backfillRow46() {
         .map(s => s.properties.title)
         .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-z\u00C0-\u00FF]+\s+\d{4}$/i.test(n));
 
-      for (const sName of monthSheets) {
-        if (sheetColumnMap[sName] && Object.keys(sheetColumnMap[sName]).length > 0) continue; // già noto
+      // Leggi tutte le intestazioni in UNA sola chiamata batchGet
+      const sheetsToRead = monthSheets.filter(sName =>
+        !sheetColumnMap[sName] || Object.keys(sheetColumnMap[sName]).length === 0
+      );
+      if (sheetsToRead.length > 0) {
         try {
-          const enc = s => encodeURIComponent(s);
-          const hR = await apiFetch(
-            'https://sheets.googleapis.com/v4/spreadsheets/' + sid + '/values/' +
-            enc("'" + sName + "'!B" + HEADER_ROW + ":AJ" + HEADER_ROW) +
-            '?valueRenderOption=FORMATTED_VALUE'
-          );
-          const headers = (await hR.json()).values?.[0] || [];
-          if (!sheetColumnMap[sName]) sheetColumnMap[sName] = {};
-          headers.forEach((h, i) => {
-            if (!h) return;
-            const raw = String(h).trim(), norm = raw.replace(/\.0$/, '');
-            sheetColumnMap[sName][raw] = i + 2;
-            if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
-          });
-          syncLog('✓ Intestazioni lette: ' + sName + ' (' + headers.filter(Boolean).length + ' camere)', 'ok');
-        } catch(e) { syncLog('⚠ Intestazioni ' + sName + ': ' + e.message, 'wrn'); }
+          const ranges = sheetsToRead
+            .map(sName => encodeURIComponent("'" + sName + "'!B" + HEADER_ROW + ":AJ" + HEADER_ROW))
+            .join('&ranges=');
+          const batchUrl = 'https://sheets.googleapis.com/v4/spreadsheets/' + sid +
+            '/values:batchGet?ranges=' + ranges + '&valueRenderOption=FORMATTED_VALUE';
+          const bR = await apiFetch(batchUrl);
+          if (bR.ok) {
+            const bData = await bR.json();
+            (bData.valueRanges || []).forEach((vr, idx) => {
+              const sName = sheetsToRead[idx];
+              const headers = vr.values?.[0] || [];
+              if (!sheetColumnMap[sName]) sheetColumnMap[sName] = {};
+              headers.forEach((h, i) => {
+                if (!h) return;
+                const raw = String(h).trim(), norm = raw.replace(/\.0$/, '');
+                sheetColumnMap[sName][raw] = i + 2;
+                if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
+              });
+            });
+            syncLog('✓ Intestazioni lette: ' + sheetsToRead.length + ' fogli in 1 chiamata', 'ok');
+          } else {
+            syncLog('⚠ batchGet intestazioni: HTTP ' + bR.status, 'wrn');
+          }
+        } catch(e) { syncLog('⚠ batchGet intestazioni: ' + e.message, 'wrn'); }
       }
     } catch(e) { syncLog('⚠ Meta foglio: ' + e.message, 'wrn'); }
   }
