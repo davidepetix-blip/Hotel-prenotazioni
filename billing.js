@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '22'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '23'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -335,10 +335,12 @@ async function registraPagamento(pag) {
   const u = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(PAGAMENTI_SHEET)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
   const r = await apiFetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ values:[row] }) });
   if (!r.ok) throw new Error(`Registrazione pagamento fallita (${r.status})`);
-  // Aggiorna cache
+  // Aggiorna cache solo se non già aggiornata in anticipo da confermaPagamento
   if (!_pagamentiCache) _pagamentiCache = [];
-  _pagamentiCache.push({ ...pag, id, dbRow: _pagamentiCache.length + 2 });
-  _pagamentiCacheTs = Date.now();
+  if (!_pagamentiCache.find(p => p.id === id)) {
+    _pagamentiCache.push({ ...pag, id, dbRow: _pagamentiCache.length + 2 });
+    _pagamentiCacheTs = Date.now();
+  }
   return id;
 }
 
@@ -558,9 +560,13 @@ function saveConti(contiArray) {
   contiArray.forEach(doc => {
     const bid = doc.bookingId;
     if (!bid) return;
-    if (_contiDatiCache[bid]) _contiDatiCache[bid].contoEmesso = doc;
-    else _contiDatiCache[bid] = { extra:[], override:null, appartMode:null, contoEmesso:doc, dbRow:null };
-    saveContoDati(bid, { contoEmesso: doc });
+    // Rimuove i campi calcolati prima di persistere: status/totPagato/residuo
+    // sono sempre ricalcolati da getStatoContoCalcolato — salvarli causa stati
+    // incoerenti (es. status:'pagato' fa ritornare 'emesso' al prossimo render)
+    const { status: _s, totPagato: _tp, residuo: _r, ...docPulito } = doc;
+    if (_contiDatiCache[bid]) _contiDatiCache[bid].contoEmesso = docPulito;
+    else _contiDatiCache[bid] = { extra:[], override:null, appartMode:null, contoEmesso:docPulito, dbRow:null };
+    saveContoDati(bid, { contoEmesso: docPulito });
   });
 }
 
@@ -2009,20 +2015,40 @@ function confermaPagamento(contoId, importo, tipo, modalita, dataStr, riferiment
   const giaPagato   = getTotalePagatoPerBooking(conto.bookingId);
   const nuovoTotale = giaPagato + importo;
 
-  // Registra il pagamento nel foglio PAGAMENTI
+  // ── STEP 1: aggiorna _pagamentiCache in-memory SUBITO (prima del render)
+  // Così getStatoContoCalcolato vede già il pagamento e mostra lo stato corretto.
+  // registraPagamento è async — se aggiornassimo la cache solo lì, il render
+  // successivo vedrebbe lo stato vecchio e la card diventerebbe non cliccabile.
+  const anno = new Date().getFullYear();
+  const pagId = (typeof genPagamentoId === 'function') ? genPagamentoId(anno) : 'PAG-' + anno + '-' + Date.now().toString(36).toUpperCase();
   const dataFmt = dataStr
     ? new Date(dataStr).toLocaleDateString('it-IT')
     : new Date().toLocaleDateString('it-IT');
+  if (!_pagamentiCache) _pagamentiCache = [];
+  _pagamentiCache.push({
+    id: pagId, contoId, bookingId: conto.bookingId,
+    data: dataFmt, importo, tipo, metodo: modalita,
+    riferimento: riferimento || '', conDocumento: !!conDocumento,
+    note: '', ts: nowISO(),
+    dbRow: _pagamentiCache.length + 2,
+  });
+  _pagamentiCacheTs = Date.now();
+
+  // ── STEP 2: scrittura DB in background con ID pre-generato
+  // registraPagamento userà lo stesso ID e salterà il push in cache (già fatto)
   registraPagamento({
+    id: pagId,
     contoId, bookingId: conto.bookingId,
     data: dataFmt, importo, tipo, metodo: modalita,
     riferimento, conDocumento,
   }).catch(e => console.warn('[PAGAMENTI] registra:', e.message));
 
-  // Aggiorna stato del conto
+  // ── STEP 3: salva metadati del conto (modalità, data pagamento)
+  // NON salva status: è sempre calcolato da getStatoContoCalcolato
+  // saveConti fa già lo strip dei campi calcolati (status/totPagato/residuo)
   const nuovoStato = nuovoTotale >= totaleConto - 0.01 ? 'pagato' : 'emesso';
   conti[idx] = {
-    ...conto, status: nuovoStato,
+    ...conto,
     modalitaPag: modalita,
     pagatoIl: dataStr ? new Date(dataStr).toISOString() : new Date().toISOString(),
     ts: new Date().toISOString(),
