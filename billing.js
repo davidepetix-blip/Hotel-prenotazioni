@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '21'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '22'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1191,19 +1191,25 @@ function prefillExtraPrice(bid) {
 
 // Aggiorna il tab Conto in-place senza ricostruire l'intero drawer
 // Preserva il tab attivo e lo scroll position del drawer
+const _refreshBillLoading = new Set(); // anti-loop guard
 function refreshBillTab(bid) {
   const b = bookings.find(x=>x.id===bid);
   if (!b) return;
-  // usa dbId come chiave primaria per la cache
   const cacheKey = b.dbId || String(b.id);
-  if (DATABASE_SHEET_ID && !_contiDatiCache[cacheKey] && !_contiDatiCache[b.id]) {
-    loadContoDati(cacheKey).then(() => refreshBillTab(bid)).catch(() => {});
+  // Se non in cache E non stiamo già caricando → carica una volta sola
+  if (DATABASE_SHEET_ID && !_contiDatiCache[cacheKey] && !_contiDatiCache[b.id] && !_refreshBillLoading.has(bid)) {
+    _refreshBillLoading.add(bid);
+    loadContoDati(cacheKey)
+      .then(() => { _refreshBillLoading.delete(bid); refreshBillTab(bid); })
+      .catch(() => { _refreshBillLoading.delete(bid); refreshBillTab(bid); });
     return;
   }
+  _refreshBillLoading.delete(bid); // pulizia in caso fosse rimasto
   const tabEl = document.getElementById('drTabBill');
   if (tabEl) {
     const scrollTop = tabEl.scrollTop;
-    tabEl.innerHTML = renderDrawerBill(b);
+    try { tabEl.innerHTML = renderDrawerBill(b); }
+    catch(e) { tabEl.innerHTML = '<div style="padding:16px;color:var(--danger);font-size:12px">⚠ Errore: ' + e.message + '</div>'; console.error('renderDrawerBill:', e); }
     tabEl.scrollTop = scrollTop;
     // Assicurati che il tab Conto sia visibile
     tabEl.style.display = '';
@@ -1906,6 +1912,12 @@ function confermaFatturazione(contoId, tipoDoc, numDoc) {
   saveConti(conti);
   showToast(`✓ ${tipoDoc} registrata`, 'success');
   renderContiTab('lista');
+  // Aggiorna drawer se aperto
+  const _cFatt = conti.find(c => c.id === contoId);
+  if (_cFatt?.bookingId && typeof refreshBillTab === 'function') {
+    const _bFatt = bookings.find(b => b.dbId === String(_cFatt.bookingId) || String(b.id) === String(_cFatt.bookingId));
+    if (_bFatt) refreshBillTab(_bFatt.id);
+  }
 }
 
 function apriDialogPagamento(contoId, prefillImporto) {
@@ -2023,6 +2035,12 @@ function confermaPagamento(contoId, importo, tipo, modalita, dataStr, riferiment
     showToast(`✓ Acconto €${importo.toFixed(2)} registrato — residuo €${(totaleConto-nuovoTotale).toFixed(2)}`, 'success');
   }
   renderContiTab('lista');
+  // Aggiorna anche il drawer se è aperto sulla stessa prenotazione
+  const _bid = conto.bookingId;
+  if (_bid && typeof refreshBillTab === 'function') {
+    const _b = bookings.find(b => b.dbId === String(_bid) || String(b.id) === String(_bid));
+    if (_b) refreshBillTab(_b.id);
+  }
   if (typeof render === 'function') render();
 }
 

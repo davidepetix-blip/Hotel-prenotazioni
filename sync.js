@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '19'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '20'; // ← incrementa ad ogni modifica
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -1746,13 +1746,9 @@ async function loadFromSheets() {
     render();
 
     const fromJSON = sheetBookings.some(b => b.fromJSONAnnuale);
-    const badge = document.getElementById('jsonSourceBadge');
-    if (badge) {
-      badge.textContent = fromJSON ? 'JSON' : '12f';
-      badge.title = fromJSON ? 'Dati da JSON_ANNUALE (1 chiamata API)' : 'Dati dai 12 fogli mensili (fallback)';
-      badge.style.display = 'inline';
-      badge.style.color   = fromJSON ? '#2d6a4f' : '#e67e22';
-    }
+    // Badge rimosso dal topbar — info solo nel LOG
+    const _srcMsg = fromJSON ? 'Fonte: JSON_ANNUALE (1 chiamata API)' : 'Fonte: 12 fogli mensili (fallback)';
+    syncLog(_srcMsg, 'inf');
     showToast(`✓ ${bookings.length} prenotazioni`, 'success');
     syncLog(`✓ ${bookings.length} prenotazioni caricate`, 'ok');
     saveDbCache(DATABASE_SHEET_ID ? sheetBookings : bookings);

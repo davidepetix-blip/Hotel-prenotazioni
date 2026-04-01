@@ -8,13 +8,13 @@
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- Moduli Blip -->
-<script src="core.js?v=18.11.41"></script>
-<script src="sync.js?v=18.11.41"></script>
-<script src="gantt.js?v=18.11.41"></script>
-<script src="clienti.js?v=18.11.41"></script>
-<script src="alloggiati-data.js?v=18.11.41"></script>
-<script src="checkin.js?v=18.11.41"></script>
-<script src="billing.js?v=18.11.41"></script>
+<script src="core.js?v=18.11.42"></script>
+<script src="sync.js?v=18.11.42"></script>
+<script src="gantt.js?v=18.11.42"></script>
+<script src="clienti.js?v=18.11.42"></script>
+<script src="alloggiati-data.js?v=18.11.42"></script>
+<script src="checkin.js?v=18.11.42"></script>
+<script src="billing.js?v=18.11.42"></script>
 <style>
 :root {
   --bg: #f8f7f5; --surface: #ffffff; --surface2: #f2f1ef;
@@ -829,7 +829,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
 
-  <span id="jsonSourceBadge" style="font-size:10px;color:#888;display:none;margin-left:2px" title="Fonte dati"></span>
+
   <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
   <button class="btn btn-icon" onclick="openCheckin()" title="Check-in">🛎</button>
   <button class="btn btn-icon" onclick="openRoomDash()" title="Stato camere">🏠</button>
@@ -1093,7 +1093,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Versione build ──
-const BLIP_BUILD = '18.11.41'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.11.42'; // ← build complessiva (major.minor.patch)
 
 // Assembla la versione completa dai moduli appena caricati
 function blipFullVersion() {
