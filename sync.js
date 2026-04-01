@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '21'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '22'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -190,21 +190,68 @@ function logout() {
 
 let _reAuthInProgress = false;
 
-async function apiFetch(url, options = {}) {
+// ── Contatore chiamate API (sliding window 60s) ───────────────────
+// Usato solo per log — il throttle reale è gestito dal retry su 429.
+const _apiCallLog = [];
+function _apiLogCall() {
+  const now = Date.now();
+  while (_apiCallLog.length > 0 && now - _apiCallLog[0] > 60000) _apiCallLog.shift();
+  _apiCallLog.push(now);
+  return _apiCallLog.length; // restituisce il conteggio attuale
+}
+
+// ─────────────────────────────────────────────────────────────────
+// apiFetch — wrapper con retry automatico su 429 (quota exceeded)
+//
+// Su 429: backoff esponenziale 2s → 4s → 8s (max 3 tentativi).
+// Su 401: silent re-auth come prima.
+// Il parametro _attempt è interno — non passarlo dall'esterno.
+// ─────────────────────────────────────────────────────────────────
+async function apiFetch(url, options = {}, _attempt = 0) {
   if (!options.headers) options.headers = {};
   options.headers['Authorization'] = 'Bearer ' + accessToken;
 
-  let r = await fetch(url, options);
-  if (r.status !== 401) return r;
-
-  const newToken = await trySilentReAuth();
-  if (!newToken) {
-    showSessionExpiredBanner();
-    throw new Error('Sessione scaduta. Fai clic su "Riconnetti" per continuare.');
+  const count = _apiLogCall();
+  if (count >= 50 && _attempt === 0) {
+    // Avviso preventivo quando siamo vicini al limite (non bloccante)
+    syncLog(`⚠ ${count} req/min — vicino al limite quota Google`, 'wrn');
   }
 
-  options.headers['Authorization'] = 'Bearer ' + newToken;
-  return fetch(url, options);
+  let r;
+  try {
+    r = await fetch(url, options);
+  } catch(e) {
+    throw e; // AbortError, network error → passa al chiamante
+  }
+
+  // ── 429 Rate limit: retry con backoff esponenziale ──
+  if (r.status === 429) {
+    if (_attempt >= 3) {
+      // Dopo 3 tentativi restituisce la risposta 429 — il chiamante può gestirla
+      syncLog('❌ 429 quota esaurita dopo 3 retry — riprova tra 1 minuto', 'err');
+      return r;
+    }
+    const backoffMs = Math.min(32000, 2000 * Math.pow(2, _attempt)); // 2s, 4s, 8s, 16s
+    syncLog(`⏱ 429 quota — retry ${_attempt + 1}/3 tra ${Math.round(backoffMs / 1000)}s`, 'wrn');
+    await new Promise(res => setTimeout(res, backoffMs));
+    // Crea nuove options senza il signal AbortController (potrebbe essere scaduto durante il backoff)
+    const retryOpts = { ...options, headers: { ...options.headers } };
+    delete retryOpts.signal;
+    return apiFetch(url, retryOpts, _attempt + 1);
+  }
+
+  // ── 401 Sessione scaduta: silent re-auth ──
+  if (r.status === 401) {
+    const newToken = await trySilentReAuth();
+    if (!newToken) {
+      showSessionExpiredBanner();
+      throw new Error('Sessione scaduta. Fai clic su "Riconnetti" per continuare.');
+    }
+    options.headers['Authorization'] = 'Bearer ' + newToken;
+    return fetch(url, options);
+  }
+
+  return r;
 }
 
 function trySilentReAuth() {
@@ -1647,6 +1694,11 @@ function clearSyncLog(e) {
 
 let _bgSyncTimer   = null;
 let _bgSyncRunning = false;
+// Timestamp dell'ultima sync completa (loadFromSheets full path).
+// bgSync aspetta almeno BGSYNC_COOLDOWN_MS dopo una sync completa
+// per evitare di scatenare un nuovo burst di chiamate API.
+let _lastFullSyncTs = 0;
+const BGSYNC_COOLDOWN_MS = 3 * 60 * 1000; // 3 minuti
 // Blacklist locale: dbId cancellati localmente, ignorati dal bgSync
 // per evitare il "ghost reappearance" prima che il DB si aggiorni
 const _deletedLocally = new Map(); // dbId → timestamp cancellazione
@@ -1685,6 +1737,12 @@ function setSyncPulsing(on) {
 
 async function bgSync() {
   if (!accessToken || _bgSyncRunning) return;
+  // Non partire se una sync completa è avvenuta da meno di BGSYNC_COOLDOWN_MS:
+  // evita burst API subito dopo il caricamento iniziale o un forceSync
+  if (Date.now() - _lastFullSyncTs < BGSYNC_COOLDOWN_MS) {
+    syncLog('⟳ bgSync rimandato — sync recente, attendo cooldown', 'syn');
+    return;
+  }
   _bgSyncRunning = true;
   setSyncPulsing(true);
   syncLog('⟳ bgSync avviato', 'syn');
@@ -1759,7 +1817,10 @@ async function loadFromSheets() {
         hideLoading();
         render();
         showToast(`✓ ${bookings.length} prenotazioni (cache)`, 'success');
-        setTimeout(bgSync, 2000);
+        // Aspetta 90s prima del primo bgSync: preloadContoDati e CI data
+        // caricano in questo intervallo — partire prima causa burst 429
+        _lastFullSyncTs = Date.now() - BGSYNC_COOLDOWN_MS + 90 * 1000;
+        setTimeout(bgSync, 90 * 1000);
         startBgSync();
         return;
       }
@@ -1806,6 +1867,7 @@ async function loadFromSheets() {
     showToast(`✓ ${bookings.length} prenotazioni`, 'success');
     syncLog(`✓ ${bookings.length} prenotazioni caricate`, 'ok');
     saveDbCache(DATABASE_SHEET_ID ? sheetBookings : bookings);
+    _lastFullSyncTs = Date.now(); // cooldown: bgSync non parte per i prossimi 3 min
     startBgSync();
   } catch(e) {
     hideLoading();
