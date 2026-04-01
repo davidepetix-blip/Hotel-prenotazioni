@@ -9,7 +9,47 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '20'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '21'; // ← incrementa ad ogni modifica
+
+// ─────────────────────────────────────────────────────────────────
+// CESTINO BLACKLIST — set in-memory degli ID cestinati
+// Costruito una volta per sessione da loadCestinoBlacklist().
+// Impedisce a syncWithDatabase di reimportare prenotazioni che
+// l'utente ha cancellato (anche manualmente dal DB remoto).
+// ─────────────────────────────────────────────────────────────────
+let _cestinoBlacklist = null;       // null = non ancora caricata
+let _cestinoBlacklistTs = 0;        // timestamp ultimo caricamento
+const CESTINO_BLACKLIST_TTL = 10 * 60 * 1000; // 10 minuti
+
+async function loadCestinoBlacklist(force = false) {
+  const age = Date.now() - _cestinoBlacklistTs;
+  if (!force && _cestinoBlacklist && age < CESTINO_BLACKLIST_TTL) return _cestinoBlacklist;
+  if (!DATABASE_SHEET_ID) { _cestinoBlacklist = new Set(); return _cestinoBlacklist; }
+  try {
+    const d = await dbGet(`${CESTINO_SHEET_NAME}!A2:A9999`);
+    const ids = (d.values || []).map(r => (r[0] || '').trim()).filter(Boolean);
+    _cestinoBlacklist = new Set(ids);
+    _cestinoBlacklistTs = Date.now();
+    if (ids.length > 0) syncLog(`🗑 Blacklist CESTINO: ${ids.length} ID caricati`, 'syn');
+  } catch(e) {
+    // Se il foglio CESTINO non esiste ancora, blacklist vuota — non bloccante
+    _cestinoBlacklist = new Set();
+    _cestinoBlacklistTs = Date.now();
+  }
+  return _cestinoBlacklist;
+}
+
+function isInCestinoBlacklist(dbId) {
+  if (!dbId || !_cestinoBlacklist) return false;
+  return _cestinoBlacklist.has(String(dbId));
+}
+
+// Aggiorna la blacklist quando una prenotazione viene cestinata
+function addToCestinoBlacklist(dbId) {
+  if (!dbId) return;
+  if (!_cestinoBlacklist) _cestinoBlacklist = new Set();
+  _cestinoBlacklist.add(String(dbId));
+}
 
 function randomState() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -682,6 +722,9 @@ async function archiviaInCestino(lista, reason) {
     }
   }
   console.log(`[CESTINO] ${lista.length} righe archiviate e rimosse dal DB`);
+  // Aggiorna la blacklist in-memory subito — così la sync successiva nella stessa
+  // sessione non reimporta immediatamente le stesse prenotazioni appena cestinate
+  lista.forEach(b => { if (b.dbId) addToCestinoBlacklist(b.dbId); });
 }
 
 let _cestinoHeadersChecked = false;
@@ -987,6 +1030,11 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   const cleanedN  = await cleanupDeletedFromDb(allDbRows);
   if (cleanedN > 0) showLoading(`Cestino: ${cleanedN} righe spostate…`);
 
+  // Carica blacklist CESTINO — impedisce reimport di prenotazioni cancellate
+  // anche se ancora presenti nel foglio grafico o nel JSON_ANNUALE.
+  // Forza ricarico se abbiamo appena spostato righe nel cestino.
+  await loadCestinoBlacklist(cleanedN > 0);
+
   const dbActive      = allDbRows.filter(b => !b.deleted);
   const result        = [];
   const toAddToDB     = [];
@@ -1011,7 +1059,13 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   for (const sheet of sheetBookings) {
     if (!sheet.n || sheet.n === '???' || sheet.n.trim() === '') continue;
     // Salta prenotazioni cancellate localmente (blacklist anti-ghost)
-    if (isDeletedLocally(sheet.dbId)) { syncLog(`🗑 Skip blacklist: ${sheet.n}`, 'wrn'); continue; }
+    if (isDeletedLocally(sheet.dbId)) { syncLog(`🗑 Skip blacklist locale: ${sheet.n}`, 'wrn'); continue; }
+    // Salta prenotazioni già nel CESTINO remoto — blocca il reimport di prenotazioni
+    // cancellate manualmente dal DB o tramite app (anche dopo cancellazione manuale)
+    if (isInCestinoBlacklist(sheet.dbId)) {
+      syncLog(`🗑 Skip CESTINO: ${sheet.n} (${sheet.dbId})`, 'wrn');
+      continue;
+    }
     const match = findMatch(sheet, dbActive);
     if (!match) {
       sheet.dbId  = genBookingId(sheet.s.getFullYear());
