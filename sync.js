@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '22'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '23'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -190,32 +190,54 @@ function logout() {
 
 let _reAuthInProgress = false;
 
-// ── Contatore chiamate API (sliding window 60s) ───────────────────
-// Usato solo per log — il throttle reale è gestito dal retry su 429.
-const _apiCallLog = [];
-function _apiLogCall() {
-  const now = Date.now();
-  while (_apiCallLog.length > 0 && now - _apiCallLog[0] > 60000) _apiCallLog.shift();
-  _apiCallLog.push(now);
-  return _apiCallLog.length; // restituisce il conteggio attuale
+// ═══════════════════════════════════════════════════════════════════
+// TOKEN BUCKET — Rate limiter reale per Google Sheets API
+//
+// Google Sheets: 60 read req/min per utente per progetto.
+// Strategia: token bucket con capacità 45, ricarica 1 token/1.4s ≈ 43/min
+//
+// Le prime 45 chiamate passano subito (burst iniziale tollerato).
+// Dalla 46a in poi: una chiamata ogni 1.4s — mai più 429 per quota.
+// Su 429 residuo: retry con backoff esponenziale (safety net).
+// Su 401: silent re-auth come prima.
+// ═══════════════════════════════════════════════════════════════════
+
+let _tbTokens      = 45;      // token disponibili (bucket pieno all'avvio)
+let _tbLastRefill  = Date.now();
+const _TB_CAPACITY  = 45;     // max token nel bucket
+const _TB_REFILL_MS = 1400;   // ms per token → 43 token/min (sotto quota 60)
+
+async function _tbAcquire() {
+  // Ricarica i token in base al tempo trascorso
+  const now     = Date.now();
+  const elapsed = now - _tbLastRefill;
+  const gained  = Math.floor(elapsed / _TB_REFILL_MS);
+  if (gained > 0) {
+    _tbTokens    = Math.min(_TB_CAPACITY, _tbTokens + gained);
+    _tbLastRefill = now - (elapsed % _TB_REFILL_MS);
+  }
+
+  if (_tbTokens > 0) {
+    _tbTokens--;
+    return; // token disponibile → procedi subito
+  }
+
+  // Bucket vuoto: aspetta il prossimo token
+  const waitMs = _TB_REFILL_MS - (Date.now() - _tbLastRefill) + 20; // +20ms headroom
+  syncLog(`⏳ Rate limit preventivo — attesa ${Math.round(waitMs)}ms`, 'syn');
+  await new Promise(r => setTimeout(r, waitMs));
+  return _tbAcquire(); // riprova (ricorsione a profondità bassa)
 }
 
 // ─────────────────────────────────────────────────────────────────
-// apiFetch — wrapper con retry automatico su 429 (quota exceeded)
-//
-// Su 429: backoff esponenziale 2s → 4s → 8s (max 3 tentativi).
-// Su 401: silent re-auth come prima.
-// Il parametro _attempt è interno — non passarlo dall'esterno.
+// apiFetch — token bucket + retry 429 + silent re-auth 401
 // ─────────────────────────────────────────────────────────────────
 async function apiFetch(url, options = {}, _attempt = 0) {
   if (!options.headers) options.headers = {};
   options.headers['Authorization'] = 'Bearer ' + accessToken;
 
-  const count = _apiLogCall();
-  if (count >= 50 && _attempt === 0) {
-    // Avviso preventivo quando siamo vicini al limite (non bloccante)
-    syncLog(`⚠ ${count} req/min — vicino al limite quota Google`, 'wrn');
-  }
+  // Acquisisci un token prima di sparare la chiamata
+  await _tbAcquire();
 
   let r;
   try {
@@ -224,19 +246,20 @@ async function apiFetch(url, options = {}, _attempt = 0) {
     throw e; // AbortError, network error → passa al chiamante
   }
 
-  // ── 429 Rate limit: retry con backoff esponenziale ──
+  // ── 429: safety net — non dovrebbe più succedere con il token bucket,
+  //    ma se succede (es. altri tab aperti) retry con backoff esponenziale
   if (r.status === 429) {
     if (_attempt >= 3) {
-      // Dopo 3 tentativi restituisce la risposta 429 — il chiamante può gestirla
       syncLog('❌ 429 quota esaurita dopo 3 retry — riprova tra 1 minuto', 'err');
       return r;
     }
-    const backoffMs = Math.min(32000, 2000 * Math.pow(2, _attempt)); // 2s, 4s, 8s, 16s
+    // Svuota il bucket: il prossimo token arriverà dopo la ricarica
+    _tbTokens = 0;
+    const backoffMs = Math.min(32000, 5000 * Math.pow(2, _attempt)); // 5s, 10s, 20s
     syncLog(`⏱ 429 quota — retry ${_attempt + 1}/3 tra ${Math.round(backoffMs / 1000)}s`, 'wrn');
     await new Promise(res => setTimeout(res, backoffMs));
-    // Crea nuove options senza il signal AbortController (potrebbe essere scaduto durante il backoff)
     const retryOpts = { ...options, headers: { ...options.headers } };
-    delete retryOpts.signal;
+    delete retryOpts.signal; // AbortController potrebbe essere scaduto durante il backoff
     return apiFetch(url, retryOpts, _attempt + 1);
   }
 
