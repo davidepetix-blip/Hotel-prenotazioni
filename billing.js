@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '20'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '21'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1757,7 +1757,10 @@ function switchContiTab(tab) {
 }
 function renderContiTab(tab) {
   const body = document.getElementById('contiBody');
-  if (tab==='lista')   body.innerHTML = renderContiLista();
+  if (tab==='lista') {
+    try { body.innerHTML = renderContiLista(); }
+    catch(e) { body.innerHTML = '<div style="padding:20px;color:var(--danger)">⚠ Errore lista conti: ' + e.message + '</div>'; console.error('renderContiLista:', e); }
+  }
   if (tab==='gruppo')  { body.innerHTML = renderContoGruppo(); bindContoGruppo(); }
   if (tab==='appart')  body.innerHTML = renderContiAppart();
   if (tab==='tariffe') body.innerHTML = renderListino();
@@ -1794,7 +1797,7 @@ function renderContiLista() {
       </div>
       ${lista.map(c => {
         const ci  = new Date(c.checkin), co = new Date(c.checkout);
-        const dot = pastello(bookings.find(b=>b.id===c.bookingId)?.c || '#ccc');
+        const dot = pastello((bookings.find(b=>b.dbId===c.bookingId)||bookings.find(b=>String(b.id)===String(c.bookingId)))?.c || '#ccc');
         const cfg = STATO_CFG[c.status] || STATO_CFG.bozza;
         const isGruppo = c.groupId != null;
         const metaExtra = [
@@ -1824,11 +1827,13 @@ function renderContiLista() {
 
 function avanzaStatoConto(contoId, e) {
   e && e.stopPropagation();
-  const conti = loadConti();
+  const conti = loadConti(); // restituisce conti con status CALCOLATO
   const idx = conti.findIndex(c => c.id === contoId);
   if (idx < 0) return;
   const c   = conti[idx];
-  const cfg = STATO_CFG[c.status] || STATO_CFG.bozza;
+  // Usa sempre lo stato calcolato (non il salvato) per decidere il prossimo
+  const statoCorrente = getStatoContoCalcolato(c) || c.status || 'bozza';
+  const cfg = STATO_CFG[statoCorrente] || STATO_CFG.bozza;
   if (!cfg.next) { showToast('Conto già pagato','info'); return; }
 
   // Se avanza a fatturato: chiede tipo doc e numero
@@ -1836,15 +1841,18 @@ function avanzaStatoConto(contoId, e) {
     apriDialogFatturazione(contoId);
     return;
   }
-  // Se avanza a pagato: chiede modalità pagamento
+  // Se avanza a pagato: apre dialog pagamento (non cambia status — è calcolato)
   if (cfg.next === 'pagato') {
-    apriDialogPagamento(contoId);
+    apriDialogPagamento(c.id, c.residuo || 0);
     return;
   }
-  // emesso: avanza direttamente
-  conti[idx] = { ...c, status: cfg.next, emessoIl: c.emessoIl || new Date().toISOString(), ts: new Date().toISOString() };
-  saveConti(conti);
-  showToast(`✓ Stato aggiornato: ${STATO_CFG[cfg.next].label}`, 'success');
+  // emesso: avanza direttamente salvando nel campo persistito
+  const raw = _contiDatiCache[c.bookingId]?.contoEmesso || c;
+  raw.status   = cfg.next;
+  raw.emessoIl = raw.emessoIl || new Date().toISOString();
+  raw.ts       = new Date().toISOString();
+  saveContoDati(c.bookingId, { contoEmesso: raw });
+  showToast('✓ Stato aggiornato: ' + (STATO_CFG[cfg.next]?.label||cfg.next), 'success');
   renderContiTab('lista');
 }
 
