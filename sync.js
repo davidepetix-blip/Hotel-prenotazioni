@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '23'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '24'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -208,25 +208,26 @@ const _TB_CAPACITY  = 45;     // max token nel bucket
 const _TB_REFILL_MS = 1400;   // ms per token → 43 token/min (sotto quota 60)
 
 async function _tbAcquire() {
-  // Ricarica i token in base al tempo trascorso
-  const now     = Date.now();
-  const elapsed = now - _tbLastRefill;
-  const gained  = Math.floor(elapsed / _TB_REFILL_MS);
-  if (gained > 0) {
-    _tbTokens    = Math.min(_TB_CAPACITY, _tbTokens + gained);
-    _tbLastRefill = now - (elapsed % _TB_REFILL_MS);
+  // Implementazione iterativa (non ricorsiva) — evita stack overflow
+  // con molte chiamate in coda e lunghe attese
+  while (true) {
+    const now     = Date.now();
+    const elapsed = now - _tbLastRefill;
+    const gained  = Math.floor(elapsed / _TB_REFILL_MS);
+    if (gained > 0) {
+      _tbTokens    = Math.min(_TB_CAPACITY, _tbTokens + gained);
+      _tbLastRefill = now - (elapsed % _TB_REFILL_MS);
+    }
+    if (_tbTokens > 0) {
+      _tbTokens--;
+      return; // token disponibile → procedi subito
+    }
+    // Bucket vuoto: aspetta il prossimo token
+    const waitMs = _TB_REFILL_MS - (Date.now() - _tbLastRefill) + 20;
+    syncLog(`⏳ Rate limit preventivo — attesa ${Math.round(waitMs)}ms`, 'syn');
+    await new Promise(r => setTimeout(r, waitMs));
+    // loop → riprova senza ricorsione
   }
-
-  if (_tbTokens > 0) {
-    _tbTokens--;
-    return; // token disponibile → procedi subito
-  }
-
-  // Bucket vuoto: aspetta il prossimo token
-  const waitMs = _TB_REFILL_MS - (Date.now() - _tbLastRefill) + 20; // +20ms headroom
-  syncLog(`⏳ Rate limit preventivo — attesa ${Math.round(waitMs)}ms`, 'syn');
-  await new Promise(r => setTimeout(r, waitMs));
-  return _tbAcquire(); // riprova (ricorsione a profondità bassa)
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1215,6 +1216,19 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   }
 
   // FASE 3: Scrittura DB
+  // ── GUARD ASSOLUTO anti-cestinazione massiva ──────────────────────
+  // Indipendentemente da qualsiasi guard precedente, non cestinare mai
+  // più di MAX_ARCHIVE_PER_SYNC prenotazioni in una singola sync.
+  // Se il numero supera la soglia: blocca tutto, mostra avviso, NON scrivere.
+  // L'utente può usare 🔄 Force Sync per forzare se è davvero intenzionale.
+  const MAX_ARCHIVE_PER_SYNC = 20;
+  if (toArchive.length > MAX_ARCHIVE_PER_SYNC && !forceFullSync) {
+    syncLog(`🛑 STOP: ${toArchive.length} prenotazioni da cestinare — limite sicurezza (${MAX_ARCHIVE_PER_SYNC}) superato. Usa 🔄 per forzare.`, 'err');
+    showToast(`⚠ ${toArchive.length} prenotazioni da cestinare — operazione bloccata per sicurezza. Usa 🔄 se intenzionale.`, 'error');
+    // Non cestina nulla — aggiunge comunque al result così sono visibili
+    toArchive.forEach(b => { b.deleted = false; result.push(b); });
+    toArchive.length = 0;
+  }
   if (toAddToDB.length > 0) {
     const total = toAddToDB.length;
     for (let i = 0; i < total; i += BATCH_SIZE) {
