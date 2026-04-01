@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '19'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '20'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -1311,6 +1311,27 @@ function renderSettingsBody() {
     });
     html += '</div>';
   });
+
+  // ── Sezione Manutenzione Database ──
+  html += `
+    <div class="sgroup">
+      <div class="sgroup-title">🔧 Manutenzione Database</div>
+      <div class="sroom-card" style="display:flex;flex-direction:column;gap:10px;">
+        <p style="font-size:11px;color:var(--text2);margin:0;line-height:1.7;">
+          Strumenti per riparare i legami univoci nel database (CONTI, PAGAMENTI, CHECK-IN)
+          e per scrivere i BLIP_ID nella riga 46 del foglio Google.
+          Usare dopo anomalie o migrazioni.
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn" onclick="closeSettings();riparaDatabase()" style="flex:1;min-width:140px;">
+            🔧 Ripara database
+          </button>
+          <button class="btn" onclick="closeSettings();backfillRow46()" style="flex:1;min-width:140px;">
+            #46 Scrivi BLIP_ID riga 46
+          </button>
+        </div>
+      </div>
+    </div>`;
 
   body.innerHTML = html;
 }

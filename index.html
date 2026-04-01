@@ -8,13 +8,13 @@
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- Moduli Blip -->
-<script src="core.js?v=18.11.39"></script>
-<script src="sync.js?v=18.11.39"></script>
-<script src="gantt.js?v=18.11.39"></script>
-<script src="clienti.js?v=18.11.39"></script>
-<script src="alloggiati-data.js?v=18.11.39"></script>
-<script src="checkin.js?v=18.11.39"></script>
-<script src="billing.js?v=18.11.39"></script>
+<script src="core.js?v=18.11.40"></script>
+<script src="sync.js?v=18.11.40"></script>
+<script src="gantt.js?v=18.11.40"></script>
+<script src="clienti.js?v=18.11.40"></script>
+<script src="alloggiati-data.js?v=18.11.40"></script>
+<script src="checkin.js?v=18.11.40"></script>
+<script src="billing.js?v=18.11.40"></script>
 <style>
 :root {
   --bg: #f8f7f5; --surface: #ffffff; --surface2: #f2f1ef;
@@ -828,8 +828,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <button class="btn btn-icon sync-btn" onclick="forceSync()" title="Leggi da JSON_2026 (1 chiamata API)">
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
-  <button class="btn btn-icon" onclick="backfillRow46()" title="Scrivi ID prenotazioni in riga 46 del foglio Google" style="font-size:10px;padding:4px 7px">46</button>
-  <button class="btn btn-icon" onclick="riparaDatabase()" title="Ripara legami BLIP_ID nel database (CONTI, PAGAMENTI, CHECK-IN)" style="font-size:10px;padding:4px 7px">🔧</button>
+
   <span id="jsonSourceBadge" style="font-size:10px;color:#888;display:none;margin-left:2px" title="Fonte dati"></span>
   <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
   <button class="btn btn-icon" onclick="openCheckin()" title="Check-in">🛎</button>
@@ -1094,7 +1093,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Versione build ──
-const BLIP_BUILD = '18.11.39'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.11.40'; // ← build complessiva (major.minor.patch)
 
 // Assembla la versione completa dai moduli appena caricati
 function blipFullVersion() {
