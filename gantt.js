@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '20'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '21'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -250,7 +250,7 @@ function drTabCheckin(el, bookingNumId) {
   if (typeof renderCheckinDrawerTab === 'function') renderCheckinDrawerTab(bookingNumId);
 }
 
-function renderCheckinDrawerTab(bookingNumId) {
+function renderCheckinDrawerTab(bookingNumId, _reloaded=false) {
   const tabEl = document.getElementById('drTabCI');
   if (!tabEl) return;
   const b = bookings.find(x => x.id === bookingNumId);
@@ -259,15 +259,16 @@ function renderCheckinDrawerTab(bookingNumId) {
   const _ciKeys = (typeof ciData !== 'undefined') ? Object.keys(ciData).length : 0;
   if (typeof syncLog === 'function') syncLog('CI tab: id='+bookingNumId+' dbId='+(b.dbId||'null')+' ciData.keys='+_ciKeys, 'syn');
   let ci = (typeof getCiForBooking === 'function') ? getCiForBooking(b) : null;
-  // Se ciData è vuoto e il DB è configurato → carica prima di renderizzare
-  if (!ci && _ciKeys === 0 && typeof loadCiData === 'function' && typeof DATABASE_SHEET_ID !== 'undefined' && DATABASE_SHEET_ID) {
+  // Se ciData è vuoto e il DB è configurato → carica prima di renderizzare (una sola volta)
+  if (!ci && _ciKeys === 0 && !_reloaded && typeof loadCiData === 'function' && typeof DATABASE_SHEET_ID !== 'undefined' && DATABASE_SHEET_ID) {
     tabEl.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">⏳ Caricamento check-in…</div>';
-    loadCiData(false).then(() => renderCheckinDrawerTab(bookingNumId));
+    loadCiData(false).then(() => renderCheckinDrawerTab(bookingNumId, true));
     return;
   }
-  // Se ciData ha dati ma non trova la prenotazione → forza reload
-  if (!ci && _ciKeys > 0 && b.dbId && typeof loadCiData === 'function') {
-    loadCiData(true).then(() => renderCheckinDrawerTab(bookingNumId));
+  // Se ciData ha dati ma non trova il check-in → forza reload una sola volta
+  // GUARD: senza _reloaded questo diventava un loop infinito per prenotazioni senza check-in
+  if (!ci && _ciKeys > 0 && b.dbId && !_reloaded && typeof loadCiData === 'function') {
+    loadCiData(true).then(() => renderCheckinDrawerTab(bookingNumId, true));
     return;
   }
   if (typeof syncLog === 'function') syncLog('CI trovato: '+(ci?'SI cam='+ci.camera+' data='+ci.data:'NO'), ci?'ok':'wrn');
