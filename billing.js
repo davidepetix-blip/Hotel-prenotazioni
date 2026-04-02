@@ -1,39 +1,166 @@
 // ═══════════════════════════════════════════════════════════════════
-// billing.js — Conti, tariffe, PDF, XML FatturaPA, listino
-// Blip Hotel Management — build 18.11.50
-// Dipende da: core.js, sync.js
+// billing.js — Gestione Conti e Pagamenti
+// Blip Hotel Management — build 18.11.51
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_BILLING = '25'; // ← incrementata v25 per fix duplicati e string ID
+const BLIP_VER_BILLING = '26';
 
-const BILL_SETTINGS_KEY = 'hotelBillSettings';
-const BILL_CONTI_KEY    = 'hotelConti';
-
-// ─────────────────────────────────────────────────────────────────
-// STATO E CACHE
-// ─────────────────────────────────────────────────────────────────
-let _contiDatiCache = {}; // bid -> { extra, override, appartMode, contoEmesso, dbRow, ts }
-let _pagamentiCache = []; // flat array di tutti i pagamenti dal DB
+// Inizializzazione FORZATA come Array/Oggetti per evitare crash al caricamento
+let _contiDatiCache = {}; 
+let _pagamentiCache = []; 
 
 /**
- * Precarica tutti i conti e pagamenti all'avvio.
- * RISOLUZIONE BUG DUPLICATI: Se il foglio CONTI ha più righe per lo stesso ID,
- * tiene solo la riga più recente basandosi sulla colonna TS.
+ * Precarica i dati. Chiamata solo DOPO il login.
  */
 async function preloadContoDati() {
   try {
-    dbg("📥 Caricamento conti e pagamenti...");
+    dbg("📥 Sincronizzazione contabilità...");
+    
+    // Reset cache per sicurezza prima del fetch
+    _contiDatiCache = {};
+    _pagamentiCache = [];
+
     const [contiData, pagData] = await Promise.all([
-      fetchSheet(DB_SHEETS.CONTI),
-      fetchSheet(DB_SHEETS.PAGAMENTI)
+      fetchSheet(DB_SHEETS.CONTI).catch(() => []),
+      fetchSheet(DB_SHEETS.PAGAMENTI).catch(() => [])
     ]);
 
-    // 1. Processa Pagamenti
-    _pagamentiCache = pagData.map(row => ({
-      id:     String(row[DB_COLS.PAGAMENTI.PAG_ID]),
-      cid:    String(row[DB_COLS.PAGAMENTI.CONTO_ID]),
-      bid:    String(row[DB_COLS.PAGAMENTI.BOOKING_ID]),
-      data:   row[DB_COLS.PAGAMENTI.DATA],
+    // 1. Caricamento Pagamenti (con validazione array)
+    if (Array.isArray(pagData)) {
+      _pagamentiCache = pagData.map(row => ({
+        id:     String(row[DB_COLS.PAGAMENTI.PAG_ID] || ''),
+        bid:    String(row[DB_COLS.PAGAMENTI.BOOKING_ID] || ''),
+        euro:   parseFloat(row[DB_COLS.PAGAMENTI.IMPORTO] || 0),
+        data:   row[DB_COLS.PAGAMENTI.DATA] || '',
+        metodo: row[DB_COLS.PAGAMENTI.METODO] || 'Contanti',
+        tipo:   row[DB_COLS.PAGAMENTI.TIPO] || 'saldo',
+        ts:     row[DB_COLS.PAGAMENTI.TS]
+      })).filter(p => p.id && p.bid);
+    }
+
+    // 2. Caricamento Conti con Deduplicazione TS
+    if (Array.isArray(contiData)) {
+      contiData.forEach((row, idx) => {
+        const bid = String(row[DB_COLS.CONTI.BOOKING_ID] || '').trim();
+        if (!bid || bid === "undefined") return;
+
+        const tsStr = row[DB_COLS.CONTI.TS];
+        const tsMs = tsStr ? new Date(tsStr).getTime() : 0;
+
+        if (_contiDatiCache[bid] && tsMs <= _contiDatiCache[bid].ts_ms) return;
+
+        _contiDatiCache[bid] = {
+          extra:       JSON.parse(row[DB_COLS.CONTI.EXTRA_JSON] || '[]'),
+          override:    JSON.parse(row[DB_COLS.CONTI.OVERRIDE_JSON] || 'null'),
+          contoEmesso: JSON.parse(row[DB_COLS.CONTI.CONTO_EMESSO_JSON] || 'null'),
+          ts_ms:       tsMs
+        };
+      });
+    }
+
+    dbg(`✅ Contabilità caricata: ${_pagamentiCache.length} pagamenti.`);
+  } catch (e) {
+    dbg("⚠️ Errore caricamento conti: " + e.message);
+    // Assicuriamoci che non restino undefined che causano .push is not a function
+    _pagamentiCache = _pagamentiCache || [];
+    _contiDatiCache = _contiDatiCache || {};
+  }
+}
+
+function getContoDati(bid) {
+  const sBid = String(bid);
+  if (!_contiDatiCache[sBid]) {
+    _contiDatiCache[sBid] = { extra: [], override: null, contoEmesso: null, ts_ms: 0 };
+  }
+  return _contiDatiCache[sBid];
+}
+
+function getStatoContoCalcolato(bid, totale) {
+  const sBid = String(bid);
+  const pagati = _pagamentiCache
+    .filter(p => String(p.bid) === sBid)
+    .reduce((sum, p) => sum + p.euro, 0);
+
+  if (totale > 0 && pagati >= (totale - 0.01)) return 'pagato';
+  const c = getContoDati(sBid);
+  if (c.contoEmesso && c.contoEmesso.emessoIl) return 'emesso';
+  return 'bozza';
+}
+
+async function confermaPagamento(pagObj) {
+  const pag = {
+    id:     genPagamentoId(),
+    bid:    String(pagObj.bid),
+    euro:   parseFloat(pagObj.euro || 0),
+    data:   pagObj.data || new Date().toLocaleDateString('it-IT'),
+    metodo: pagObj.metodo || 'Contanti',
+    tipo:   pagObj.tipo || 'saldo',
+    ts:     nowISO()
+  };
+
+  // Sicurezza: se per qualche motivo non è un array, lo resettiamo
+  if (!Array.isArray(_pagamentiCache)) _pagamentiCache = [];
+  
+  _pagamentiCache.push(pag);
+
+  const row = [pag.id, '', pag.bid, pag.data, pag.euro, pag.tipo, pag.metodo, '', false, '', pag.ts];
+  
+  try {
+    await apiFetch('appendRow', { sheet: DB_SHEETS.PAGAMENTI, rowData: row });
+    dbg(`💰 Pagamento ${pag.id} registrato.`);
+  } catch (e) {
+    dbg("❌ Errore salvataggio pagamento: " + e.message, true);
+  }
+}
+
+function calcolaTotaleDinamico(booking) {
+  const dati = getContoDati(booking.id);
+  const notti = diffDays(booking.s, booking.e);
+  let totale = notti * 40; // Default base
+
+  if (dati.override) {
+    totale = dati.override.reduce((s, r) => s + r.total, 0);
+  }
+  
+  const extra = dati.extra.reduce((s, r) => s + r.total, 0);
+  return totale + extra;
+}
+
+// Funzioni UI essenziali
+window.renderContiTab = function(bid) {
+  const sBid = String(bid);
+  const booking = (typeof bookings !== 'undefined') ? bookings.find(b => String(b.id) === sBid) : null;
+  if (!booking) return;
+
+  const totale = calcolaTotaleDinamico(booking);
+  const stato = getStatoContoCalcolato(sBid, totale);
+  const container = document.getElementById('tab-billing');
+  if (!container) return;
+
+  container.innerHTML = `
+    <div style="padding:15px; background:#f9f9f9; border-radius:8px; margin-bottom:15px;">
+      <span class="badge ${stato}">${stato}</span>
+      <h2 style="margin:10px 0 5px 0">€ ${totale.toFixed(2)}</h2>
+      <small style="color:var(--text-light)">ID Prenotazione: ${sBid}</small>
+    </div>
+    <button class="btn primary w-full" onclick="apriDialogPagamento('${sBid}')">Registra Pagamento</button>
+    <div id="lista-pagamenti-mini" style="margin-top:20px;">
+       ${_pagamentiCache.filter(p => p.bid === sBid).map(p => `
+         <div style="display:flex; justify-content:space-between; font-size:13px; padding:8px 0; border-bottom:1px solid #eee;">
+           <span>${p.data} (${p.metodo})</span>
+           <strong>€ ${p.euro.toFixed(2)}</strong>
+         </div>
+       `).join('')}
+    </div>
+  `;
+};
+
+window.apriDialogPagamento = function(bid) {
+  const euro = prompt("Inserisci importo pagamento:", "0.00");
+  if (euro && !isNaN(parseFloat(euro))) {
+    confermaPagamento({ bid, euro: parseFloat(euro) }).then(() => renderContiTab(bid));
+  }
+};
       euro:   parseFloat(row[DB_COLS.PAGAMENTI.IMPORTO] || 0),
       tipo:   row[DB_COLS.PAGAMENTI.TIPO],
       metodo: row[DB_COLS.PAGAMENTI.METODO],
