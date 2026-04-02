@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '24'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '21'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -190,92 +190,21 @@ function logout() {
 
 let _reAuthInProgress = false;
 
-// ═══════════════════════════════════════════════════════════════════
-// TOKEN BUCKET — Rate limiter reale per Google Sheets API
-//
-// Google Sheets: 60 read req/min per utente per progetto.
-// Strategia: token bucket con capacità 45, ricarica 1 token/1.4s ≈ 43/min
-//
-// Le prime 45 chiamate passano subito (burst iniziale tollerato).
-// Dalla 46a in poi: una chiamata ogni 1.4s — mai più 429 per quota.
-// Su 429 residuo: retry con backoff esponenziale (safety net).
-// Su 401: silent re-auth come prima.
-// ═══════════════════════════════════════════════════════════════════
-
-let _tbTokens      = 45;      // token disponibili (bucket pieno all'avvio)
-let _tbLastRefill  = Date.now();
-const _TB_CAPACITY  = 45;     // max token nel bucket
-const _TB_REFILL_MS = 1400;   // ms per token → 43 token/min (sotto quota 60)
-
-async function _tbAcquire() {
-  // Implementazione iterativa (non ricorsiva) — evita stack overflow
-  // con molte chiamate in coda e lunghe attese
-  while (true) {
-    const now     = Date.now();
-    const elapsed = now - _tbLastRefill;
-    const gained  = Math.floor(elapsed / _TB_REFILL_MS);
-    if (gained > 0) {
-      _tbTokens    = Math.min(_TB_CAPACITY, _tbTokens + gained);
-      _tbLastRefill = now - (elapsed % _TB_REFILL_MS);
-    }
-    if (_tbTokens > 0) {
-      _tbTokens--;
-      return; // token disponibile → procedi subito
-    }
-    // Bucket vuoto: aspetta il prossimo token
-    const waitMs = _TB_REFILL_MS - (Date.now() - _tbLastRefill) + 20;
-    syncLog(`⏳ Rate limit preventivo — attesa ${Math.round(waitMs)}ms`, 'syn');
-    await new Promise(r => setTimeout(r, waitMs));
-    // loop → riprova senza ricorsione
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// apiFetch — token bucket + retry 429 + silent re-auth 401
-// ─────────────────────────────────────────────────────────────────
-async function apiFetch(url, options = {}, _attempt = 0) {
+async function apiFetch(url, options = {}) {
   if (!options.headers) options.headers = {};
   options.headers['Authorization'] = 'Bearer ' + accessToken;
 
-  // Acquisisci un token prima di sparare la chiamata
-  await _tbAcquire();
+  let r = await fetch(url, options);
+  if (r.status !== 401) return r;
 
-  let r;
-  try {
-    r = await fetch(url, options);
-  } catch(e) {
-    throw e; // AbortError, network error → passa al chiamante
+  const newToken = await trySilentReAuth();
+  if (!newToken) {
+    showSessionExpiredBanner();
+    throw new Error('Sessione scaduta. Fai clic su "Riconnetti" per continuare.');
   }
 
-  // ── 429: safety net — non dovrebbe più succedere con il token bucket,
-  //    ma se succede (es. altri tab aperti) retry con backoff esponenziale
-  if (r.status === 429) {
-    if (_attempt >= 3) {
-      syncLog('❌ 429 quota esaurita dopo 3 retry — riprova tra 1 minuto', 'err');
-      return r;
-    }
-    // Svuota il bucket: il prossimo token arriverà dopo la ricarica
-    _tbTokens = 0;
-    const backoffMs = Math.min(32000, 5000 * Math.pow(2, _attempt)); // 5s, 10s, 20s
-    syncLog(`⏱ 429 quota — retry ${_attempt + 1}/3 tra ${Math.round(backoffMs / 1000)}s`, 'wrn');
-    await new Promise(res => setTimeout(res, backoffMs));
-    const retryOpts = { ...options, headers: { ...options.headers } };
-    delete retryOpts.signal; // AbortController potrebbe essere scaduto durante il backoff
-    return apiFetch(url, retryOpts, _attempt + 1);
-  }
-
-  // ── 401 Sessione scaduta: silent re-auth ──
-  if (r.status === 401) {
-    const newToken = await trySilentReAuth();
-    if (!newToken) {
-      showSessionExpiredBanner();
-      throw new Error('Sessione scaduta. Fai clic su "Riconnetti" per continuare.');
-    }
-    options.headers['Authorization'] = 'Bearer ' + newToken;
-    return fetch(url, options);
-  }
-
-  return r;
+  options.headers['Authorization'] = 'Bearer ' + newToken;
+  return fetch(url, options);
 }
 
 function trySilentReAuth() {
@@ -1216,19 +1145,6 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   }
 
   // FASE 3: Scrittura DB
-  // ── GUARD ASSOLUTO anti-cestinazione massiva ──────────────────────
-  // Indipendentemente da qualsiasi guard precedente, non cestinare mai
-  // più di MAX_ARCHIVE_PER_SYNC prenotazioni in una singola sync.
-  // Se il numero supera la soglia: blocca tutto, mostra avviso, NON scrivere.
-  // L'utente può usare 🔄 Force Sync per forzare se è davvero intenzionale.
-  const MAX_ARCHIVE_PER_SYNC = 20;
-  if (toArchive.length > MAX_ARCHIVE_PER_SYNC && !forceFullSync) {
-    syncLog(`🛑 STOP: ${toArchive.length} prenotazioni da cestinare — limite sicurezza (${MAX_ARCHIVE_PER_SYNC}) superato. Usa 🔄 per forzare.`, 'err');
-    showToast(`⚠ ${toArchive.length} prenotazioni da cestinare — operazione bloccata per sicurezza. Usa 🔄 se intenzionale.`, 'error');
-    // Non cestina nulla — aggiunge comunque al result così sono visibili
-    toArchive.forEach(b => { b.deleted = false; result.push(b); });
-    toArchive.length = 0;
-  }
   if (toAddToDB.length > 0) {
     const total = toAddToDB.length;
     for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -1731,11 +1647,6 @@ function clearSyncLog(e) {
 
 let _bgSyncTimer   = null;
 let _bgSyncRunning = false;
-// Timestamp dell'ultima sync completa (loadFromSheets full path).
-// bgSync aspetta almeno BGSYNC_COOLDOWN_MS dopo una sync completa
-// per evitare di scatenare un nuovo burst di chiamate API.
-let _lastFullSyncTs = 0;
-const BGSYNC_COOLDOWN_MS = 3 * 60 * 1000; // 3 minuti
 // Blacklist locale: dbId cancellati localmente, ignorati dal bgSync
 // per evitare il "ghost reappearance" prima che il DB si aggiorni
 const _deletedLocally = new Map(); // dbId → timestamp cancellazione
@@ -1774,12 +1685,6 @@ function setSyncPulsing(on) {
 
 async function bgSync() {
   if (!accessToken || _bgSyncRunning) return;
-  // Non partire se una sync completa è avvenuta da meno di BGSYNC_COOLDOWN_MS:
-  // evita burst API subito dopo il caricamento iniziale o un forceSync
-  if (Date.now() - _lastFullSyncTs < BGSYNC_COOLDOWN_MS) {
-    syncLog('⟳ bgSync rimandato — sync recente, attendo cooldown', 'syn');
-    return;
-  }
   _bgSyncRunning = true;
   setSyncPulsing(true);
   syncLog('⟳ bgSync avviato', 'syn');
@@ -1854,10 +1759,7 @@ async function loadFromSheets() {
         hideLoading();
         render();
         showToast(`✓ ${bookings.length} prenotazioni (cache)`, 'success');
-        // Aspetta 90s prima del primo bgSync: preloadContoDati e CI data
-        // caricano in questo intervallo — partire prima causa burst 429
-        _lastFullSyncTs = Date.now() - BGSYNC_COOLDOWN_MS + 90 * 1000;
-        setTimeout(bgSync, 90 * 1000);
+        setTimeout(bgSync, 2000);
         startBgSync();
         return;
       }
@@ -1904,7 +1806,6 @@ async function loadFromSheets() {
     showToast(`✓ ${bookings.length} prenotazioni`, 'success');
     syncLog(`✓ ${bookings.length} prenotazioni caricate`, 'ok');
     saveDbCache(DATABASE_SHEET_ID ? sheetBookings : bookings);
-    _lastFullSyncTs = Date.now(); // cooldown: bgSync non parte per i prossimi 3 min
     startBgSync();
   } catch(e) {
     hideLoading();
