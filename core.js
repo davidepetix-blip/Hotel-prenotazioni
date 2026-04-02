@@ -1,215 +1,212 @@
 // ═══════════════════════════════════════════════════════════════════
-// core.js — Stato globale e Utilities
-// Blip Hotel Management — build 18.11.51
+// core.js — Stato globale, costanti, ROOMS, utilities condivise
+// Blip Hotel Management — build 18.7.x
+// Caricato PRIMA di tutti gli altri moduli.
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_CORE = '6';
+// ── Error handler globale per debug mobile ──
+
+const BLIP_VER_CORE = '5'; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
   console.log(msg);
   const box = document.getElementById('dbgLog');
-  if (box) {
-    box.style.display = 'block';
-    const l = document.createElement('div');
-    l.style.color = isErr ? '#ff4d4d' : '#00ff00';
-    l.textContent = new Date().toLocaleTimeString() + ' ' + msg;
-    box.appendChild(l);
-    box.scrollTop = box.scrollHeight;
-  }
-  if (isErr) {
-    const e = document.getElementById('loginErr');
-    if (e) e.textContent = msg;
-  }
+  if (box) { box.style.display='block'; const l=document.createElement('div'); l.style.color=isErr?'#c0392b':'#555'; l.textContent=new Date().toLocaleTimeString()+' '+msg; box.appendChild(l); box.scrollTop=box.scrollHeight; }
+  if (isErr) { const e=document.getElementById('loginErr'); if(e) e.textContent=msg; }
 }
+window.onerror = function(msg, src, line) { dbg('❌ JS riga '+line+': '+msg, true); return false; };
+window.addEventListener('unhandledrejection', function(e) { dbg('❌ Promise: '+(e.reason?.message||String(e.reason)), true); });
 
-window.onerror = (m, s, l) => { dbg(`❌ Errore riga ${l}: ${m}`, true); return false; };
+// ═══════════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════════
+const CLIENT_ID = '13060466249-bk4s31a1vanhnd6j0qhequ3d3ptd2b2g.apps.googleusercontent.com';
+const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets';
 
-const SCRIPT_ID = 'AKfycbzL7QO5o3Xm1Ld60E_3p5I39_57Lw5v0SIn8-sVj8w51VpB16A-iMvPIdfA_FjV2S8'; 
-const BASE_URL  = `https://script.google.com/macros/s/${SCRIPT_ID}/exec`;
+const DEFAULT_ANNUAL_SHEETS = [
+  { year: 2025, sheetId: '', label: '2025' },
+  { year: 2026, sheetId: '1XTalxQBUFywBW4DL3JwSJvKkPlOhstAbRMH4DWx-eGI', label: '2026' },
+];
+
+let DATABASE_SHEET_ID = '';
 
 const DB_COLS = {
-  PRENOTAZIONI: { ID:0, CAMERA:1, NOME:2, DAL:3, AL:4, DISP:5, NOTE:6, COLORE:7, ANNO:8, FONTE:9, TS:10, DELETED:11, CLIENTE_ID:12 },
-  CONTI:        { BOOKING_ID:0, EXTRA_JSON:1, OVERRIDE_JSON:2, APPART_MODE:3, CONTO_EMESSO_JSON:4, TS:5 },
-  PAGAMENTI:    { PAG_ID:0, CONTO_ID:1, BOOKING_ID:2, DATA:3, IMPORTO:4, TIPO:5, METODO:6, RIF:7, CON_DOC:8, NOTE:9, TS:10 },
-  CAMERE:       { CAMERA:0, MAX:1, LETTI:2, PULIZIA:3, CONFIG:4, NOTE:5, TS:6 }
+  ID:         1,  // A
+  CAMERA:     2,  // B
+  NOME:       3,  // C
+  DAL:        4,  // D — dd/MM/yyyy
+  AL:         5,  // E — dd/MM/yyyy
+  DISP:       6,  // F
+  NOTE:       7,  // G
+  COLORE:     8,  // H
+  ANNO:       9,  // I
+  FONTE:      10, // J — "app" | "manuale"
+  TS:         11, // K — timestamp ISO
+  DELETED:    12, // L — "true" se eliminata
+  CLIENTE_ID: 13, // M — collegamento anagrafica CLI-xxxx
+};
+const DB_SHEET_NAME      = 'PRENOTAZIONI';
+const CESTINO_SHEET_NAME = 'CESTINO';
+const DB_HEADER_ROW      = 1;
+const DB_FIRST_ROW       = 2;
+
+const ROOMS_SHEET_NAME = 'CAMERE';
+const RCOLS = {
+  CAMERA: 1, MAX_OSPITI: 2, LETTI_AMMESSI: 3,
+  PULIZIA: 4, CONFIGURAZIONE: 5, NOTE_OPS: 6, TS: 7
+};
+const PULIZIA_STATI = [
+  { id:'pulita',         label:'Pulita',                cls:'s-pulita'         },
+  { id:'da-pulire',      label:'Da pulire',             cls:'s-da-pulire'      },
+  { id:'in-corso',       label:'Controllare/Rassettare',cls:'s-in-corso'       },
+  { id:'fuori-servizio', label:'Fuori servizio',        cls:'s-fuori-servizio' },
+];
+
+// Costanti foglio annuale — devono corrispondere all'Apps Script
+const FIRST_DATA_ROW  = 3;
+const HEADER_ROW      = 2;
+const OUTPUT_ROW      = 45;
+const BLIP_ID_ROW     = 46; // Riga dove Blip scrive i propri ID per ogni camera
+const DATES_COL       = 1;
+const FIRST_ROOM_COL  = 2;
+const EXCLUDED_SHEETS = ['Dati Centralizzati Realtime','Non toccare','Ricettività','LOG COMPLESSIVO','PRENOTAZIONI'];
+
+const MONTHS_IT = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
+                   'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+const MONTHS_S  = ['GEN','FEB','MAR','APR','MAG','GIU','LUG','AGO','SET','OTT','NOV','DIC'];
+const DAYS_IT   = ['Do','Lu','Ma','Me','Gi','Ve','Sa'];
+
+const ROOMS = [
+  {id:'r1',  name:'1',   g:'Scuola'}, {id:'r2',  name:'2',   g:'Scuola'},
+  {id:'r3',  name:'3',   g:'Scuola'}, {id:'r4',  name:'4',   g:'Scuola'},
+  {id:'r5',  name:'5',   g:'Scuola'}, {id:'r6',  name:'6',   g:'Scuola'},
+  {id:'r7',  name:'7',   g:'Scuola'}, {id:'r8',  name:'8',   g:'Scuola'},
+  {id:'r9',  name:'9',   g:'Scuola'}, {id:'r10', name:'10',  g:'Scuola'},
+  {id:'r100',name:'100', g:'Scuola'}, {id:'r101',name:'101', g:'Scuola'},
+  {id:'r102',name:'102', g:'Scuola'}, {id:'r103',name:'103', g:'Scuola'},
+  {id:'r104',name:'104', g:'Scuola'},
+  {id:'r21', name:'21',  g:'Largo Roma'}, {id:'r22', name:'22',  g:'Largo Roma'},
+  {id:'r23', name:'23',  g:'Largo Roma'}, {id:'r24', name:'24',  g:'Largo Roma'},
+  {id:'r25', name:'25',  g:'Largo Roma'}, {id:'r31', name:'31',  g:'Largo Roma'},
+  {id:'marasanta', name:'marasanta',       g:'Appartamenti'},
+  {id:'margher',   name:'margherita p.t.', g:'Appartamenti'},
+  {id:'marg1',     name:'marg.ta 1 p.',   g:'Appartamenti'},
+  {id:'sole',      name:'sole',            g:'Appartamenti'},
+  {id:'giove',     name:'giove 4/6',       g:'Appartamenti'},
+  {id:'saturno',   name:'saturno 3',       g:'Appartamenti'},
+  {id:'nettuno',   name:'nettuno 2',       g:'Appartamenti'},
+  {id:'marte',     name:'marte 3/4',       g:'Appartamenti'},
+  {id:'venere',    name:'venere 2',        g:'Appartamenti'},
+  {id:'mercurio',  name:'mercurio 3',      g:'Appartamenti'},
+  {id:'giuliaB',   name:'Giulia B',        g:'Appartamenti'},
+  {id:'giuliaC',   name:'Giulia C',        g:'Appartamenti'},
+  {id:'giuliaD',   name:'Giulia D',        g:'Appartamenti'},
+  {id:'giuliaE',   name:'Giulia E',        g:'Appartamenti'},
+];
+
+const PALETTE = [
+  {h:'#D9D9D9',n:'Grigio'},      {h:'#FCE5CD',n:'Pesca'},
+  {h:'#B6D7A8',n:'Verde salvia'},{h:'#CFE2F3',n:'Azzurro'},
+  {h:'#FFE599',n:'Giallo'},      {h:'#EA9999',n:'Rosato'},
+  {h:'#F9CB9C',n:'Arancio'},     {h:'#B4A7D6',n:'Lavanda'},
+  {h:'#A2C4C9',n:'Turchese'},    {h:'#D5A6BD',n:'Rosa antico'},
+  {h:'#C9DAF8',n:'Celeste'},     {h:'#D9EAD3',n:'Menta'},
+  {h:'#FFF2CC',n:'Crema'},       {h:'#F4CCCC',n:'Salmone'},
+  {h:'#EAD1DC',n:'Cipria'},      {h:'#93C47D',n:'Verde'},
+  {h:'#76D7EA',n:'Ciano'},       {h:'#76A5AF',n:'Petrolio'},
+];
+
+const BED_TYPES = [
+  { id:'m',   label:'Matrimoniale',             short:'m'   },
+  { id:'ms',  label:'Matrimoniale uso singolo', short:'ms'  },
+  { id:'s',   label:'Singolo',                  short:'s'   },
+  { id:'c',   label:'Culla',                    short:'c'   },
+  { id:'aff', label:'Affollato/Extra',           short:'aff' },
+];
+
+const ROOM_DEFAULTS = {
+  r1:{maxGuests:2,allowedBeds:['m','ms','s']},    r2:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r3:{maxGuests:2,allowedBeds:['m','ms','s']},    r4:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r5:{maxGuests:2,allowedBeds:['m','ms','s']},    r6:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r7:{maxGuests:2,allowedBeds:['m','ms','s']},    r8:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r9:{maxGuests:2,allowedBeds:['m','ms','s']},    r10:{maxGuests:2,allowedBeds:['m','ms','s']},
+  r100:{maxGuests:2,allowedBeds:['m','ms','s','c']}, r101:{maxGuests:2,allowedBeds:['m','ms','s','c']},
+  r102:{maxGuests:2,allowedBeds:['m','ms','s','c']}, r103:{maxGuests:2,allowedBeds:['m','ms','s','c']},
+  r104:{maxGuests:2,allowedBeds:['m','ms','s','c']},
+  r21:{maxGuests:3,allowedBeds:['m','ms','s','c']}, r22:{maxGuests:3,allowedBeds:['m','ms','s','c']},
+  r23:{maxGuests:3,allowedBeds:['m','ms','s','c']}, r24:{maxGuests:3,allowedBeds:['m','ms','s','c']},
+  r25:{maxGuests:3,allowedBeds:['m','ms','s','c']}, r31:{maxGuests:4,allowedBeds:['m','ms','s','c']},
+  marasanta:{maxGuests:6,allowedBeds:['m','ms','s','c','aff']},
+  margher:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  marg1:    {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  sole:     {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  giove:    {maxGuests:6,allowedBeds:['m','ms','s','c','aff']},
+  saturno:  {maxGuests:3,allowedBeds:['m','ms','s','c']},
+  nettuno:  {maxGuests:2,allowedBeds:['m','ms','s']},
+  marte:    {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  venere:   {maxGuests:2,allowedBeds:['m','ms','s']},
+  mercurio: {maxGuests:3,allowedBeds:['m','ms','s','c']},
+  giuliaB:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  giuliaC:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  giuliaD:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
+  giuliaE:  {maxGuests:4,allowedBeds:['m','ms','s','c']},
 };
 
-const DB_SHEETS = {
-  PRENOTAZIONI: 'PRENOTAZIONI',
-  CONTI: 'CONTI',
-  PAGAMENTI: 'PAGAMENTI'
-};
-
-let bookings = [];
-let gUserToken = null;
-
-function nowISO() { return new Date().toISOString(); }
-
-function diffDays(a, b) {
-  const d1 = new Date(a); d1.setHours(12,0,0,0);
-  const d2 = new Date(b); d2.setHours(12,0,0,0);
-  return Math.round((d2 - d1) / (1000*60*60*24));
-}
-
-function genPagamentoId() {
-  return 'PAG-' + new Date().getFullYear() + '-' + Math.random().toString(36).substring(2, 9).toUpperCase();
-}
-
-// Network con Token Bucket
-let _tokens = 45;
-setInterval(() => { if (_tokens < 45) _tokens++; }, 1500);
-
-async function apiFetch(action, params = {}, retry = 0) {
-  if (!gUserToken && action !== 'login') {
-    throw new Error("Effettuare il login prima di procedere");
-  }
-
-  if (_tokens <= 0) {
-    await new Promise(r => setTimeout(r, 2000));
-    return apiFetch(action, params, retry);
-  }
-
-  _tokens--;
-  const url = `${BASE_URL}?action=${action}${gUserToken ? '&token='+gUserToken : ''}`;
-
+// ═══════════════════════════════════════════════════════════════════
+// ROOM SETTINGS — localStorage
+// ═══════════════════════════════════════════════════════════════════
+function loadRoomSettings() {
   try {
-    const r = await fetch(url, { method: 'POST', body: JSON.stringify(params) });
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    return d.result;
-  } catch (e) {
-    if (retry < 2) return apiFetch(action, params, retry + 1);
-    throw e;
-  }
-}
-
-async function fetchSheet(sheet) {
-  return await apiFetch('readSheet', { sheet });
-}
-  PAGAMENTI: 'PAGAMENTI',
-  CLIENTI: 'CLIENTI',
-  IMPOSTAZIONI: 'IMPOSTAZIONI',
-  CAMERE: 'CAMERE'
-};
-
-// Configurazione Camere (Ridotta per brevità, caricata dinamicamente in sync.js)
-let ROOMS = []; 
-
-// ═══════════════════════════════════════════════════════════════════
-// STATO GLOBALE
-// ═══════════════════════════════════════════════════════════════════
-let bookings = [];
-let gUserToken = null;
-let curM = new Date().getMonth();
-let curY = new Date().getFullYear();
-
-// ═══════════════════════════════════════════════════════════════════
-// UTILITIES — DATE & STRINGHE
-// ═══════════════════════════════════════════════════════════════════
-
-function isoToDate(iso) { return new Date(iso); }
-function dateToIso(d) { return d.toISOString(); }
-function nowISO() { return new Date().toISOString(); }
-
-function parseDateIT(str) {
-  if (!str) return null;
-  const parts = str.split('/');
-  if (parts.length!==3) return new Date(str); // fall back
-  return new Date(parts[2], parts[1]-1, parts[0], 12, 0, 0);
-}
-
-function formatDateIT(d) {
-  if (!d) return '';
-  const day = String(d.getDate()).padStart(2,'0');
-  const month = String(d.getMonth()+1).padStart(2,'0');
-  return `${day}/${month}/${d.getFullYear()}`;
-}
-
-function diffDays(a, b) {
-  const d1 = new Date(a); d1.setHours(12,0,0,0);
-  const d2 = new Date(b); d2.setHours(12,0,0,0);
-  return Math.round((d2 - d1) / (1000*60*60*24));
-}
-
-function genBookingId() {
-  const prefix = 'PRE-' + new Date().getFullYear();
-  const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const time   = Date.now().toString(36).toUpperCase().slice(-4);
-  return `${prefix}-${random}-${time}`;
-}
-
-function genPagamentoId() {
-  return 'PAG-' + new Date().getFullYear() + '-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// NETWORK — apiFetch con Token Bucket & Retry
-// ═══════════════════════════════════════════════════════════════════
-
-let _tokens = 45;
-const _maxTokens = 45;
-setInterval(() => { if (_tokens < _maxTokens) _tokens++; }, 1400);
-
-async function apiFetch(action, params = {}, retryCount = 0) {
-  if (_tokens <= 0) {
-    const wait = 2000 + (retryCount * 2000);
-    dbg(`⏳ Rate limit, attendo ${wait}ms...`);
-    await new Promise(r => setTimeout(r, wait));
-    return apiFetch(action, params, retryCount + 1);
-  }
-
-  _tokens--;
-  const url = new URL(BASE_URL);
-  url.searchParams.set('action', action);
-  if (gUserToken) url.searchParams.set('token', gUserToken);
-
-  const options = {
-    method: 'POST',
-    mode: 'cors',
-    body: JSON.stringify(params)
-  };
-
-  try {
-    const resp = await fetch(url.toString(), options);
-    if (resp.status === 429) throw new Error('429');
-    const data = await resp.json();
-    if (data.error) throw new Error(data.error);
-    return data.result;
-  } catch (err) {
-    if (err.message === '429' && retryCount < 3) {
-      const backoff = [5000, 10000, 20000][retryCount];
-      dbg(`⚠️ 429 Too Many Requests. Retry ${retryCount+1} in ${backoff}ms`);
-      await new Promise(r => setTimeout(r, backoff));
-      return apiFetch(action, params, retryCount + 1);
+    const saved = localStorage.getItem('hotelRoomSettings');
+    if (saved) {
+      const settings = JSON.parse(saved);
+      let migrated = false;
+      for (const rid of Object.keys(settings)) {
+        const beds = settings[rid].allowedBeds || [];
+        if (beds.includes('m') && !beds.includes('ms')) {
+          const idx = beds.indexOf('m');
+          beds.splice(idx + 1, 0, 'ms');
+          settings[rid].allowedBeds = beds;
+          migrated = true;
+        }
+      }
+      if (migrated) localStorage.setItem('hotelRoomSettings', JSON.stringify(settings));
+      return settings;
     }
-    dbg(`❌ API Error (${action}): ` + err.message, true);
-    throw err;
-  }
+  } catch(e) {}
+  return JSON.parse(JSON.stringify(ROOM_DEFAULTS));
 }
-
-// Helper per scaricare un intero foglio
-async function fetchSheet(sheetName) {
-  return await apiFetch('readSheet', { sheet: sheetName });
+function saveRoomSettingsLS(settings) {
+  localStorage.setItem('hotelRoomSettings', JSON.stringify(settings));
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// HELPERS — UI (toast, loading)
+// STATO APPLICAZIONE — variabili globali condivise tra i moduli
 // ═══════════════════════════════════════════════════════════════════
-function showToast(msg, dur=3000) {
-  let t = document.getElementById('blipToast');
-  if(!t) {
-    t = document.createElement('div'); t.id='blipToast';
-    Object.assign(t.style, {
-      position:'fixed', bottom:'24px', left:'50%', transform:'translateX(-50%)',
-      background:'#333', color:'#fff', padding:'12px 20px', borderRadius:'8px',
-      fontSize:'14px', zIndex:'9999', transition:'opacity 0.3s', opacity:'0'
-    });
-    document.body.appendChild(t);
-  }
-  t.textContent = msg; t.style.display='block'; setTimeout(()=>t.style.opacity='1',10);
-  setTimeout(()=>{ t.style.opacity='0'; setTimeout(()=>t.style.display='none',300); }, dur);
-}
-(e) {}
+let accessToken  = null;
+let curM         = new Date().getMonth();
+let curY         = new Date().getFullYear();
+let selColor     = '#D9D9D9';
+let editId       = null;
+let nid          = 1000;
+let bedCounts    = { m:0, ms:0, s:0, c:0, aff:0 };
+let roomSettings = loadRoomSettings();
+let roomStates   = {};          // { roomId: { pulizia, configurazione, noteOps, ts, dbRow } }
+let bookings     = [];
+let sheetColumnMap = {};        // sheetName → { roomName → colIdx }
+let annualSheets = [];          // inizializzato dopo la definizione di loadAnnualSheets()
+let dbRowCache   = [];
+let _rdashFilter      = 'tutti';
+let _rstateEditRoom   = null;
+
+// ═══════════════════════════════════════════════════════════════════
+// HELPERS — configurazione localStorage
+// ═══════════════════════════════════════════════════════════════════
+function loadAnnualSheets() {
+  try {
+    const s = localStorage.getItem('hotelAnnualSheets');
+    if (s) return JSON.parse(s);
+  } catch(e) {}
   return JSON.parse(JSON.stringify(DEFAULT_ANNUAL_SHEETS));
 }
 function saveAnnualSheetsLS(arr) {
@@ -286,6 +283,77 @@ function parseBedString(str) {
     const nc  = p.match(/^(\d+)c$/);   if (nc)  { counts.c   = parseInt(nc[1]);  continue; }
     const na  = p.match(/^(\d+)aff$/); if (na)  { counts.aff = parseInt(na[1]);  continue; }
     if (p === 'ms')  { counts.ms=1;  continue; }
+    if (p === 'm')   { counts.m=1;   continue; }
+    if (p === 's')   { counts.s=1;   continue; }
+    if (p === 'c')   { counts.c=1;   continue; }
+    if (p === 'aff') { counts.aff=1; continue; }
+    if (p.match(/^(\d+)?m\/s$/i)) { counts.ms = parseInt(p) || 1; }
+  }
+  return counts;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// HELPERS — puri (nessun DOM, nessuna chiamata API)
+// ═══════════════════════════════════════════════════════════════════
+const dim       = (y,m) => new Date(y,m+1,0).getDate();
+const fmt       = d => d.toLocaleDateString('it-IT');
+const nights    = (a,b) => Math.round((new Date(b.getFullYear(),b.getMonth(),b.getDate()) - new Date(a.getFullYear(),a.getMonth(),a.getDate()))/86400000);
+const light     = h => { if(!h||h.length<7) return true; const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16); return (r*299+g*587+b*114)/1000>150; };
+// Normalizza qualsiasi colore hex verso il pastello mescolandolo con il bianco.
+// Preserva l'HUE (riconoscibilità), uniforma luminosità e saturazione.
+// mix=0 → colore originale, mix=1 → bianco puro. Default 0.68 → pastello deciso.
+const pastello  = (h, mix=0.68) => { if(!h||h.length<7) return h||'#D9D9D9'; const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16); const nr=Math.round(r+(255-r)*mix),ng=Math.round(g+(255-g)*mix),nb=Math.round(b+(255-b)*mix); return '#'+[nr,ng,nb].map(v=>v.toString(16).padStart(2,'0').toUpperCase()).join(''); };
+const overlaps  = (b,s,e,xid) => b.id!==xid && b.s<e && b.e>s;
+const roomName  = rid => ROOMS.find(r=>r.id===rid)?.name || rid;
+const roomGroup = rid => ROOMS.find(r=>r.id===rid)?.g || '';
+const sheetName = (y,m) => `${MONTHS_IT[m]} ${y}`;
+const numToCol  = n => { let s=''; while(n>0){const r=(n-1)%26; s=String.fromCharCode(65+r)+s; n=Math.floor((n-1)/26);} return s; };
+
+const adjConflict = b => bookings.filter(o =>
+  o.id !== b.id &&
+  o.r  === b.r  &&
+  o.c  === b.c  &&
+  (o.e.getTime() === b.s.getTime() || o.s.getTime() === b.e.getTime()) &&
+  !(o.n === b.n && o.d !== b.d)
+);
+const colorsUsed = (rid,xid) => {
+  const ms=new Date(curY,curM,1), me=new Date(curY,curM+1,0);
+  return bookings.filter(b=>b.id!==xid&&b.r===rid&&b.s<=me&&b.e>=ms).map(b=>b.c);
+};
+
+function hexToSheetsColor(hex) {
+  if (!hex || hex.length < 7) return {red:1,green:1,blue:1};
+  return {
+    red:   parseInt(hex.slice(1,3),16)/255,
+    green: parseInt(hex.slice(3,5),16)/255,
+    blue:  parseInt(hex.slice(5,7),16)/255,
+  };
+}
+function sheetsColorToHex(c) {
+  if (!c) return '#ffffff';
+  const r = Math.round((c.red||0)*255).toString(16).padStart(2,'0');
+  const g = Math.round((c.green||0)*255).toString(16).padStart(2,'0');
+  const b = Math.round((c.blue||0)*255).toString(16).padStart(2,'0');
+  return '#'+r+g+b;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// HELPERS — UI (toast, loading)
+// ═══════════════════════════════════════════════════════════════════
+function showToast(msg, type='', ms=3000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast show ' + type;
+  setTimeout(() => { t.className = 'toast'; }, ms);
+}
+function showLoading(msg='Caricamento…') {
+  if (typeof _bgSyncRunning !== 'undefined' && _bgSyncRunning) return;
+  document.getElementById('loadMsg').textContent = msg;
+  document.getElementById('loadingOverlay').classList.add('show');
+}
+function hideLoading() {
+  if (typeof _bgSyncRunning !== 'undefined' && _bgSyncRunning) return;
+  document.getElementById('loadingOverlay').classList.remove('show');
+}'ms')  { counts.ms=1;  continue; }
     if (p === 'm')   { counts.m=1;   continue; }
     if (p === 's')   { counts.s=1;   continue; }
     if (p === 'c')   { counts.c=1;   continue; }
