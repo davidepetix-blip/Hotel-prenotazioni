@@ -1146,36 +1146,47 @@ console.log('🚀 Blip Build:', BLIP_BUILD);
 </div>
 
 <script>
-// ── Versione build ──
-const BLIP_BUILD = '18.11.42'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.11.51';
 
-// Assembla la versione completa dai moduli appena caricati
-function blipFullVersion() {
-  const mods = [
-    typeof BLIP_VER_CORE    !== 'undefined' ? BLIP_VER_CORE    : '?',
-    typeof BLIP_VER_SYNC    !== 'undefined' ? BLIP_VER_SYNC    : '?',
-    typeof BLIP_VER_GANTT   !== 'undefined' ? BLIP_VER_GANTT   : '?',
-    typeof BLIP_VER_CHECKIN !== 'undefined' ? BLIP_VER_CHECKIN : '?',
-    typeof BLIP_VER_BILLING !== 'undefined' ? BLIP_VER_BILLING : '?',
-  ];
-  return BLIP_BUILD + '.' + mods.join('.');
+// Gestione UI Drawer
+function closeDrawer() {
+  document.getElementById('bookingDrawer').classList.remove('open');
+  document.getElementById('drawerOverlay').style.opacity = '0';
+  setTimeout(() => { document.getElementById('drawerOverlay').style.display = 'none'; }, 300);
 }
 
-// Popola i segnaposto versione nel DOM
-function blipInjectVersion() {
-  const v = blipFullVersion();
-  document.querySelectorAll('[data-blip-version]').forEach(el => {
-    el.textContent = el.dataset.blipVersion === 'short' ? 'v' + BLIP_BUILD : v;
-  });
-  // Tooltip topbar
-  const logo = document.querySelector('.logo');
-  if (logo) logo.title = 'Blip ' + v;
+function switchTab(tabName) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+  
+  document.getElementById('tab-info').style.display = (tabName === 'info') ? 'block' : 'none';
+  document.getElementById('tab-billing').style.display = (tabName === 'billing') ? 'block' : 'none';
 }
 
-window.addEventListener('load', () => {
-  blipInjectVersion();
-  initGoogleAuth();
-});
+// Funzione per aprire i dettagli (chiamata dal Gantt)
+window.openBookingDetails = function(bid) {
+  const b = bookings.find(x => x.id == bid);
+  if(!b) return;
+  
+  document.getElementById('drawerTitle').textContent = b.n;
+  document.getElementById('tab-info').innerHTML = `
+    <p><strong>Camera:</strong> ${b.r}</p>
+    <p><strong>Dal:</strong> ${b.s} <strong>Al:</strong> ${b.e}</p>
+    <p><strong>Note:</strong> ${b.note || '-'}</p>
+  `;
+  
+  // Inizializza tab contabilità
+  if(window.renderContiTab) window.renderContiTab(bid);
+  
+  document.getElementById('drawerOverlay').style.display = 'block';
+  setTimeout(() => {
+    document.getElementById('drawerOverlay').style.opacity = '1';
+    document.getElementById('bookingDrawer').classList.add('open');
+  }, 10);
+};
+
+dbg("🚀 Blip Hotel pronta. Build " + BLIP_BUILD);
 </script>
+
 </body>
 </html>
