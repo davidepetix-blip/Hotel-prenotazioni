@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '23'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '24'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -656,7 +656,10 @@ async function preloadContoDati() {
         const rows = d.values || [];
         _pagamentiCache = rows.map((row, i) => ({
           id: (row[0]||'').trim(), contoId:(row[1]||'').trim(),
-          bookingId:parseInt(row[2])||0, data:(row[3]||'').trim(),
+          // bookingId può essere un BLIP_ID stringa (PRE-2026-...) o un id numerico legacy.
+          // parseInt distruggeva i BLIP_ID → 0, rendendo i pagamenti invisibili dopo reload.
+          bookingId: (row[2]||'').trim(),
+          data:(row[3]||'').trim(),
           importo:parseFloat(row[4])||0, tipo:(row[5]||'saldo').trim(),
           metodo:(row[6]||'Contanti').trim(), riferimento:(row[7]||'').trim(),
           conDocumento:(row[8]||'').trim()==='true', note:(row[9]||'').trim(),
