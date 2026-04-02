@@ -1,58 +1,490 @@
 // ═══════════════════════════════════════════════════════════════════
 // billing.js — Conti, tariffe, PDF, XML FatturaPA, listino
-// Blip Hotel Management — build 18.7.x
+// Blip Hotel Management — build 18.11.50
 // Dipende da: core.js, sync.js
 // ═══════════════════════════════════════════════════════════════════
 
-
-
-const BLIP_VER_BILLING = '24'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '25'; // ← incrementata v25 per fix duplicati e string ID
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
 
 // ─────────────────────────────────────────────────────────────────
-// STRUTTURA TARIFFE
-//
-// Logica di calcolo notte per camera albergo:
-//   1. Calcola tariffa dalla DISPOSIZIONE LETTI:
-//        singolo:                  T.s (es. 35€)
-//        matrimoniale uso singolo: T.ms (es. 38€)
-//        matrimoniale (2 pers):    T.m  (es. 45€)
-//        singolo aggiunto:         +T.ag a persona (es. +15€)
-//        combinazione m+s:         T.m + singoli×T.ag
-//   2. Se la camera ha override giornaliero > 0 → usa quello
-//   3. Applica moltiplicatore stagionale (media sui giorni)
-//   4. Applica convenzione cliente (sconto%)
-//   5. Oppure sconto durata (se no convenzione)
-//
-// Appartamenti: tariffa override per camera (giornaliero o mensile)
+// STATO E CACHE
+// ─────────────────────────────────────────────────────────────────
+let _contiDatiCache = {}; // bid -> { extra, override, appartMode, contoEmesso, dbRow, ts }
+let _pagamentiCache = []; // flat array di tutti i pagamenti dal DB
+
+/**
+ * Precarica tutti i conti e pagamenti all'avvio.
+ * RISOLUZIONE BUG DUPLICATI: Se il foglio CONTI ha più righe per lo stesso ID,
+ * tiene solo la riga più recente basandosi sulla colonna TS.
+ */
+async function preloadContoDati() {
+  try {
+    dbg("📥 Caricamento conti e pagamenti...");
+    const [contiData, pagData] = await Promise.all([
+      fetchSheet(DB_SHEETS.CONTI),
+      fetchSheet(DB_SHEETS.PAGAMENTI)
+    ]);
+
+    // 1. Processa Pagamenti
+    _pagamentiCache = pagData.map(row => ({
+      id:     String(row[DB_COLS.PAGAMENTI.PAG_ID]),
+      cid:    String(row[DB_COLS.PAGAMENTI.CONTO_ID]),
+      bid:    String(row[DB_COLS.PAGAMENTI.BOOKING_ID]),
+      data:   row[DB_COLS.PAGAMENTI.DATA],
+      euro:   parseFloat(row[DB_COLS.PAGAMENTI.IMPORTO] || 0),
+      tipo:   row[DB_COLS.PAGAMENTI.TIPO],
+      metodo: row[DB_COLS.PAGAMENTI.METODO],
+      rif:    row[DB_COLS.PAGAMENTI.RIF],
+      doc:    row[DB_COLS.PAGAMENTI.CON_DOC] === true || row[DB_COLS.PAGAMENTI.CON_DOC] === 'true',
+      note:   row[DB_COLS.PAGAMENTI.NOTE],
+      ts:     row[DB_COLS.PAGAMENTI.TS]
+    }));
+
+    // 2. Processa Conti con Deduplicazione
+    _contiDatiCache = {};
+    contiData.forEach((row, index) => {
+      const bid = String(row[DB_COLS.CONTI.BOOKING_ID]).trim();
+      if (!bid || bid === "undefined" || bid === "null") return;
+
+      const tsStr = row[DB_COLS.CONTI.TS];
+      const currentTS = tsStr ? new Date(tsStr).getTime() : 0;
+
+      // Se l'ID esiste già, confronta il timestamp per tenere il più recente
+      if (_contiDatiCache[bid]) {
+        const existingTS = _contiDatiCache[bid].ts_ms;
+        if (currentTS <= existingTS) return; // Salta questa riga, ne abbiamo una più nuova
+      }
+
+      _contiDatiCache[bid] = {
+        extra:       JSON.parse(row[DB_COLS.CONTI.EXTRA_JSON] || '[]'),
+        override:    JSON.parse(row[DB_COLS.CONTI.OVERRIDE_JSON] || 'null'),
+        appartMode:  row[DB_COLS.CONTI.APPART_MODE] === true || row[DB_COLS.CONTI.APPART_MODE] === 'true',
+        contoEmesso: JSON.parse(row[DB_COLS.CONTI.CONTO_EMESSO_JSON] || 'null'),
+        dbRow:       index + 2, // Per aggiornamenti futuri
+        ts:          tsStr,
+        ts_ms:       currentTS
+      };
+    });
+
+    dbg(`✅ Caricati ${_pagamentiCache.length} pagamenti e ${Object.keys(_contiDatiCache).length} conti unici.`);
+  } catch (e) {
+    dbg("❌ Errore preloadContoDati: " + e.message, true);
+  }
+}
+
+/**
+ * Ottiene o inizializza il dato del conto per una prenotazione
+ */
+function getContoDati(bid) {
+  const sBid = String(bid);
+  if (!_contiDatiCache[sBid]) {
+    _contiDatiCache[sBid] = {
+      extra: [],
+      override: null,
+      appartMode: false,
+      contoEmesso: null,
+      ts: nowISO(),
+      ts_ms: Date.now()
+    };
+  }
+  return _contiDatiCache[sBid];
+}
+
+/**
+ * Calcola lo stato del conto in tempo reale
+ * Non salviamo lo 'status' nel DB per evitare incoerenze.
+ */
+function getStatoContoCalcolato(bid, totaleConto) {
+  const sBid = String(bid);
+  const conto = getContoDati(sBid);
+  const pagati = _pagamentiCache
+    .filter(p => String(p.bid) === sBid)
+    .reduce((sum, p) => sum + p.euro, 0);
+
+  // 1. Pagato (se pagamenti >= totale - tolleranza 0.01€)
+  if (totaleConto > 0 && pagati >= (totaleConto - 0.01)) return 'pagato';
+
+  // 2. Fatturato (se ha estremi fiscali nel JSON emesso)
+  const ce = conto.contoEmesso;
+  if (ce && (ce.tipoDoc || ce.numDoc || ce.fatturatoIl)) return 'fatturato';
+
+  // 3. Emesso (se ha data emissione)
+  if (ce && ce.emessoIl) return 'emesso';
+
+  // 4. Bozza
+  return 'bozza';
+}
+
+/**
+ * Salva i dati del conto sul DB remoto
+ */
+async function saveContoDati(bid) {
+  const sBid = String(bid);
+  const dati = _contiDatiCache[sBid];
+  if (!dati) return;
+
+  dati.ts = nowISO();
+  
+  const payload = [
+    sBid, // BOOKING_ID sempre stringa
+    JSON.stringify(dati.extra || []),
+    JSON.stringify(dati.override || null),
+    dati.appartMode,
+    JSON.stringify(dati.contoEmesso || null),
+    dati.ts
+  ];
+
+  try {
+    // Cerchiamo se esiste già nel foglio per fare updateRow o appendRow
+    // Nota: l'API remota dovrebbe gestire la ricerca per ID nella colonna 0
+    await apiFetch('writeConto', { 
+      bookingId: sBid, 
+      rowData: payload 
+    });
+    dbg(`💾 Conto ${sBid} salvato.`);
+  } catch (e) {
+    dbg(`❌ Errore salvataggio conto ${sBid}: ` + e.message, true);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// LOGICA PAGAMENTI
 // ─────────────────────────────────────────────────────────────────
 
-function billSettingsDefault() {
+/**
+ * Registra un nuovo pagamento
+ */
+async function confermaPagamento(pagObj) {
+  // 1. Validazione e Coercizione
+  const pag = {
+    id:     pagObj.id || genPagamentoId(),
+    cid:    String(pagObj.cid || ''),
+    bid:    String(pagObj.bid),
+    data:   pagObj.data || formatDateIT(new Date()),
+    euro:   parseFloat(pagObj.euro),
+    tipo:   pagObj.tipo || 'saldo',
+    metodo: pagObj.metodo || 'Contanti',
+    rif:    pagObj.rif || '',
+    doc:    !!pagObj.doc,
+    note:   pagObj.note || '',
+    ts:     nowISO()
+  };
+
+  // 2. Update Cache immediato (Race Condition Fix)
+  _pagamentiCache.push(pag);
+
+  // 3. Render UI immediato
+  renderPagamentiTab(pag.bid);
+  if (typeof refreshBillTab === 'function') refreshBillTab(pag.bid);
+
+  // 4. Scrittura asincrona fire-and-forget
+  const row = [
+    pag.id, pag.cid, pag.bid, pag.data, pag.euro, 
+    pag.tipo, pag.metodo, pag.rif, pag.doc, pag.note, pag.ts
+  ];
+  
+  apiFetch('appendRow', { sheet: DB_SHEETS.PAGAMENTI, rowData: row })
+    .then(() => dbg(`💰 Pagamento ${pag.id} registrato sul DB.`))
+    .catch(err => dbg(`❌ Errore DB pagamento: ${err.message}`, true));
+    
+  return pag.id;
+}
+
+/**
+ * Elimina un pagamento
+ */
+async function eliminaPagamento(pagId, bid) {
+  const sPagId = String(pagId);
+  const sBid = String(bid);
+
+  // Rimuovi dalla cache
+  _pagamentiCache = _pagamentiCache.filter(p => String(p.id) !== sPagId);
+  
+  // Render
+  renderPagamentiTab(sBid);
+  if (typeof refreshBillTab === 'function') refreshBillTab(sBid);
+
+  // DB
+  try {
+    await apiFetch('deleteRow', { 
+      sheet: DB_SHEETS.PAGAMENTI, 
+      colIdx: DB_COLS.PAGAMENTI.PAG_ID, 
+      val: sPagId 
+    });
+    dbg(`🗑 Pagamento ${sPagId} eliminato.`);
+  } catch (e) {
+    dbg(`❌ Errore eliminazione pagamento: ${e.message}`, true);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// RENDER UI DRAWER
+// ─────────────────────────────────────────────────────────────────
+
+function renderContiTab(bid) {
+  const sBid = String(bid);
+  const booking = bookings.find(b => String(b.id) === sBid);
+  if (!booking) return;
+
+  const dati = getContoDati(sBid);
+  const container = document.getElementById('tab-billing');
+  if (!container) return;
+
+  // Calcolo Totali
+  const { righe, totale } = calcolaTotaleDinamico(booking, dati);
+  const pagamenti = _pagamentiCache.filter(p => String(p.bid) === sBid);
+  const totPagato = pagamenti.reduce((s, p) => s + p.euro, 0);
+  const residuo = totale - totPagato;
+  const stato = getStatoContoCalcolato(sBid, totale);
+
+  container.innerHTML = `
+    <div class="bill-header" style="margin-bottom:20px; padding:12px; background:var(--surface2); border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <span class="badge ${stato}">${stato}</span>
+        <span style="font-size:12px; color:var(--text-light)">ID: ${sBid}</span>
+      </div>
+      <div style="font-size:24px; font-weight:600;">€ ${totale.toFixed(2)}</div>
+      <div style="font-size:13px; color:var(--text-light)">
+        Pagato: € ${totPagato.toFixed(2)} | 
+        <span style="color:${residuo > 0.01 ? '#c0392b' : 'inherit'}">Residuo: € ${residuo.toFixed(2)}</span>
+      </div>
+    </div>
+
+    <div class="tabs-sub" style="display:flex; gap:12px; margin-bottom:16px; border-bottom:1px solid var(--border)">
+      <div class="tab-s active" onclick="switchSubTab('righe')">Dettaglio</div>
+      <div class="tab-s" onclick="switchSubTab('pagamenti')">Pagamenti (${pagamenti.length})</div>
+    </div>
+
+    <div id="sub-tab-righe">
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        ${righe.map(r => `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px 0;">
+              <div>${r.label}</div>
+              <div style="font-size:11px; color:var(--text-light)">${r.qty} × € ${r.unitPrice.toFixed(2)}</div>
+            </td>
+            <td style="text-align:right; font-weight:500;">€ ${r.total.toFixed(2)}</td>
+          </tr>
+        `).join('')}
+      </table>
+      
+      <button class="btn w-full mt-16" onclick="apriDialogExtra('${sBid}')">+ Aggiungi Extra / Sconto</button>
+      
+      <div style="margin-top:24px; display:flex; gap:8px;">
+        <button class="btn primary" style="flex:1" onclick="avanzaStatoConto('${sBid}')">
+          ${stato === 'bozza' ? 'Emetti Pro-forma' : (stato === 'emesso' ? 'Fattura' : 'Registra Pagamento')}
+        </button>
+        <button class="btn" onclick="stampaConto('${sBid}')">🖨 PDF</button>
+      </div>
+    </div>
+
+    <div id="sub-tab-pagamenti" style="display:none">
+       </div>
+  `;
+}
+
+function renderPagamentiTab(bid) {
+  const sBid = String(bid);
+  const container = document.getElementById('sub-tab-pagamenti');
+  if (!container) return;
+
+  const pagamenti = _pagamentiCache.filter(p => String(p.bid) === sBid);
+
+  container.innerHTML = `
+    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+      ${pagamenti.map(p => `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:8px 0;">
+            <div style="font-weight:500;">${p.data} - ${p.metodo}</div>
+            <div style="font-size:11px; color:var(--text-light)">${p.tipo} ${p.rif ? '('+p.rif+')' : ''}</div>
+          </td>
+          <td style="text-align:right; font-weight:600;">€ ${p.euro.toFixed(2)}</td>
+          <td style="width:30px; text-align:right;">
+            <button onclick="eliminaPagamento('${p.id}', '${sBid}')" style="background:none; border:none; color:#c0392b; cursor:pointer;">✕</button>
+          </td>
+        </tr>
+      `).join('')}
+      ${pagamenti.length === 0 ? '<tr><td colspan="3" style="padding:20px; text-align:center; color:var(--text-light)">Nessun pagamento registrato</td></tr>' : ''}
+    </table>
+    <button class="btn w-full mt-16" onclick="apriDialogPagamento('${sBid}')">+ Nuovo Pagamento</button>
+  `;
+}
+
+/**
+ * Logica di calcolo tariffa
+ */
+function calcolaTotaleDinamico(booking, datiConto) {
+  const righe = [];
+  const start = new Date(booking.s);
+  const end = new Date(booking.e);
+  const notti = diffDays(start, end);
+
+  // 1. Pernottamento (Base o Override)
+  if (datiConto.override && datiConto.override.length > 0) {
+    righe.push(...datiConto.override);
+  } else {
+    // Calcolo automatico da listino (esempio semplificato)
+    const settings = getBillSettings();
+    const tariffaBase = settings.tariffe[booking.disp] || settings.tariffe['s'] || 40;
+    righe.push({
+      label: `Pernottamento — ${booking.disp} × ${notti} notti`,
+      qty: notti,
+      unitPrice: tariffaBase,
+      total: notti * tariffaBase,
+      tipo: 'base'
+    });
+  }
+
+  // 2. Extra
+  if (datiConto.extra && datiConto.extra.length > 0) {
+    righe.push(...datiConto.extra);
+  }
+
+  const totale = righe.reduce((s, r) => s + r.total, 0);
+  return { righe, totale };
+}
+
+// Helper per settings
+function getBillSettings() {
+  const s = localStorage.getItem(BILL_SETTINGS_KEY);
+  if (s) return JSON.parse(s);
   return {
-    hotelName:    'Il mio Hotel',
-    hotelAddress: '',
-    hotelTel:     '',
+    hotelName: "Il Borgo",
+    tariffe: { s: 35, ms: 38, m: 45, ag: 15 },
+    aliquotaIVA: 10
+  };
+}
 
-    // ── Tariffe base per DISPOSIZIONE ──
-    tariffe: {
-      s:  35,   // camera singola (1 letto singolo)
-      ms: 38,   // matrimoniale uso singolo
-      m:  45,   // matrimoniale (2 persone)
-      ag: 15,   // aggiunta singolo in camera matrimoniale (per persona)
-    },
+// ─────────────────────────────────────────────────────────────────
+// DIALOGS & AZIONI
+// ─────────────────────────────────────────────────────────────────
 
-    // ── Override per singola camera (0 = usa disposizione) ──
-    // { [roomId]: { giornaliera: 0, mensile: 0 } }
-    tariffeCamere: {},
+function apriDialogPagamento(bid) {
+  const sBid = String(bid);
+  const modal = document.getElementById('paymentModal');
+  const overlay = document.getElementById('modalOverlay');
+  const content = document.getElementById('paymentModalContent');
 
-    // ── Stagionalità: periodi con moltiplicatore ──
-    stagioni: [
-      { nome:'Alta stagione',  dal:'06-15', al:'09-15', molt:1.5 },
-      { nome:'Media stagione', dal:'03-15', al:'06-14', molt:1.2 },
-      { nome:'Bassa stagione', dal:'09-16', al:'03-14', molt:1.0 },
-    ],
+  // Calcolo residuo
+  const booking = bookings.find(b => String(b.id) === sBid);
+  const dati = getContoDati(sBid);
+  const { totale } = calcolaTotaleDinamico(booking, dati);
+  const pagato = _pagamentiCache.filter(p => String(p.bid) === sBid).reduce((s,p) => s+p.euro, 0);
+  const residuo = Math.max(0, totale - pagato);
+
+  content.innerHTML = `
+    <div class="f-group">
+      <label class="fl">Importo (€)</label>
+      <input type="number" id="payAmount" class="fi" value="${residuo.toFixed(2)}" step="0.01">
+    </div>
+    <div class="f-group">
+      <label class="fl">Metodo</label>
+      <select id="payMethod" class="fi">
+        <option>Contanti</option>
+        <option>POS / Carta</option>
+        <option>Bonifico</option>
+        <option>Link Online</option>
+      </select>
+    </div>
+    <div class="f-group">
+      <label class="fl">Tipo</label>
+      <select id="payType" class="fi">
+        <option value="saldo">Saldo</option>
+        <option value="acconto">Acconto</option>
+        <option value="tassa">Tassa di Soggiorno</option>
+      </select>
+    </div>
+    <button class="btn primary w-full mt-16" onclick="salvaNuovoPagamento('${sBid}')">Conferma Pagamento</button>
+  `;
+
+  overlay.style.display = 'block';
+  modal.classList.add('open');
+  setTimeout(() => overlay.style.opacity = '1', 10);
+}
+
+function closePaymentModal() {
+  const modal = document.getElementById('paymentModal');
+  const overlay = document.getElementById('modalOverlay');
+  modal.classList.remove('open');
+  overlay.style.opacity = '0';
+  setTimeout(() => overlay.style.display = 'none', 300);
+}
+
+async function salvaNuovoPagamento(bid) {
+  const sBid = String(bid);
+  const euro = parseFloat(document.getElementById('payAmount').value);
+  if (isNaN(euro) || euro <= 0) return alert("Inserisci un importo valido");
+
+  await confermaPagamento({
+    bid: sBid,
+    euro: euro,
+    metodo: document.getElementById('payMethod').value,
+    tipo: document.getElementById('payType').value
+  });
+
+  closePaymentModal();
+  renderContiTab(sBid);
+}
+
+/**
+ * Avanza lo stato del conto (Bozza -> Emesso -> Fatturato -> Pagato)
+ */
+async function avanzaStatoConto(bid) {
+  const sBid = String(bid);
+  const dati = getContoDati(sBid);
+  const booking = bookings.find(b => String(b.id) === sBid);
+  const { totale } = calcolaTotaleDinamico(booking, dati);
+  const stato = getStatoContoCalcolato(sBid, totale);
+
+  if (stato === 'bozza') {
+    if (!confirm("Emettere il conto pro-forma?")) return;
+    dati.contoEmesso = {
+      id: 'C' + Date.now(),
+      bookingId: sBid,
+      nome: booking.n,
+      camera: booking.r,
+      emessoIl: nowISO(),
+      totale: totale
+    };
+    await saveContoDati(sBid);
+    renderContiTab(sBid);
+  } else if (stato === 'emesso') {
+     // Qui apriresti il dialog fatturazione
+     alert("Funzione fatturazione in arrivo...");
+  } else {
+     apriDialogPagamento(sBid);
+  }
+}
+
+// Esponi funzioni globali se necessario
+window.renderContiTab = renderContiTab;
+window.apriDialogPagamento = apriDialogPagamento;
+window.salvaNuovoPagamento = salvaNuovoPagamento;
+window.eliminaPagamento = eliminaPagamento;
+window.closePaymentModal = closePaymentModal;
+window.avanzaStatoConto = avanzaStatoConto;
+
+/**
+ * Utility per switch sub-tabs nel drawer
+ */
+window.switchSubTab = function(tab) {
+  document.getElementById('sub-tab-righe').style.display = tab === 'righe' ? 'block' : 'none';
+  document.getElementById('sub-tab-pagamenti').style.display = tab === 'pagamenti' ? 'block' : 'none';
+  document.querySelectorAll('.tab-s').forEach(el => {
+    el.classList.toggle('active', el.textContent.toLowerCase().includes(tab));
+  });
+};
+
+// CSS per sub-tabs
+const style = document.createElement('style');
+style.textContent = `
+  .tab-s { padding: 8px 4px; font-size: 12px; color: var(--text-light); cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab-s.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+`;
+document.head.appendChild(style);
 
     // ── Convenzioni clienti (sconto % sul totale) ──
     convenzioni: [
