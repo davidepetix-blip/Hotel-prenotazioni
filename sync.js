@@ -1,39 +1,70 @@
 // ═══════════════════════════════════════════════════════════════════
-// sync.js — Auth OAuth, Google Sheets API, DB, Sync Engine
-// Blip Hotel Management — build 18.7.x
-// Dipende da: core.js (deve essere caricato prima)
+// sync.js — Gestione Login e Sincronizzazione Dati
+// Blip Hotel Management — build 18.11.51
 // ═══════════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════════
-// AUTH — OAuth 2.0 redirect flow
-// ═══════════════════════════════════════════════════════════════════
+const BLIP_VER_SYNC = '10';
 
-
-const BLIP_VER_SYNC = '24'; // ← incrementa ad ogni modifica
-
-// ─────────────────────────────────────────────────────────────────
-// CESTINO BLACKLIST — set in-memory degli ID cestinati
-// Costruito una volta per sessione da loadCestinoBlacklist().
-// Impedisce a syncWithDatabase di reimportare prenotazioni che
-// l'utente ha cancellato (anche manualmente dal DB remoto).
-// ─────────────────────────────────────────────────────────────────
-let _cestinoBlacklist = null;       // null = non ancora caricata
-let _cestinoBlacklistTs = 0;        // timestamp ultimo caricamento
-const CESTINO_BLACKLIST_TTL = 10 * 60 * 1000; // 10 minuti
-
-async function loadCestinoBlacklist(force = false) {
-  const age = Date.now() - _cestinoBlacklistTs;
-  if (!force && _cestinoBlacklist && age < CESTINO_BLACKLIST_TTL) return _cestinoBlacklist;
-  if (!DATABASE_SHEET_ID) { _cestinoBlacklist = new Set(); return _cestinoBlacklist; }
+/**
+ * Gestisce la risposta dal popup di Google
+ */
+async function handleCredentialResponse(response) {
   try {
-    const d = await dbGet(`${CESTINO_SHEET_NAME}!A2:A9999`);
-    const ids = (d.values || []).map(r => (r[0] || '').trim()).filter(Boolean);
-    _cestinoBlacklist = new Set(ids);
-    _cestinoBlacklistTs = Date.now();
-    if (ids.length > 0) syncLog(`🗑 Blacklist CESTINO: ${ids.length} ID caricati`, 'syn');
-  } catch(e) {
-    // Se il foglio CESTINO non esiste ancora, blacklist vuota — non bloccante
-    _cestinoBlacklist = new Set();
+    dbg("🔑 Token ricevuto, autenticazione in corso...");
+    gUserToken = response.credential;
+    
+    // Decodifica minima per estetica (opzionale)
+    const base64Url = gUserToken.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const userPayload = JSON.parse(window.atob(base64));
+    dbg(`👋 Benvenuto, ${userPayload.name}`);
+
+    // Nascondi login
+    document.getElementById('loginScreen').style.display = 'none';
+
+    // Avvia caricamento dati
+    await initApp();
+    
+  } catch (e) {
+    dbg("❌ Errore login: " + e.message, true);
+  }
+}
+
+/**
+ * Inizializza l'applicazione dopo il login
+ */
+async function initApp() {
+  try {
+    dbg("📥 Caricamento database...");
+    
+    // 1. Carica prima le prenotazioni (Gantt)
+    const data = await fetchSheet(DB_SHEETS.PRENOTAZIONI);
+    bookings = data.map(row => ({
+      id: row[DB_COLS.PRENOTAZIONI.ID],
+      r:  row[DB_COLS.PRENOTAZIONI.CAMERA],
+      n:  row[DB_COLS.PRENOTAZIONI.NOME],
+      s:  row[DB_COLS.PRENOTAZIONI.DAL],
+      e:  row[DB_COLS.PRENOTAZIONI.AL],
+      d:  row[DB_COLS.PRENOTAZIONI.DISP],
+      c:  row[DB_COLS.PRENOTAZIONI.COLORE] || '#5a534a'
+    })).filter(b => b.id && b.s && b.e);
+
+    dbg(`✅ ${bookings.length} prenotazioni caricate.`);
+
+    // 2. Carica la contabilità (billing.js)
+    if (typeof preloadContoDati === 'function') {
+      await preloadContoDati();
+    }
+
+    // 3. Disegna il Gantt
+    if (typeof renderGantt === 'function') {
+      renderGantt();
+    }
+
+  } catch (e) {
+    dbg("❌ Errore inizializzazione: " + e.message, true);
+  }
+}
     _cestinoBlacklistTs = Date.now();
   }
   return _cestinoBlacklist;
