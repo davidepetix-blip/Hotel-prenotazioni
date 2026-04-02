@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '24'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '25'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -193,11 +193,11 @@ let _reAuthInProgress = false;
 // ═══════════════════════════════════════════════════════════════════
 // TOKEN BUCKET — Rate limiter reale per Google Sheets API
 //
-// Google Sheets: 60 read req/min per utente per progetto.
-// Strategia: token bucket con capacità 45, ricarica 1 token/1.4s ≈ 43/min
+// Google Sheets: 100 read req/min per utente per progetto (limite effettivo).
+// Strategia: token bucket con capacità 45, ricarica 1 token/900ms ≈ 67/min
 //
 // Le prime 45 chiamate passano subito (burst iniziale tollerato).
-// Dalla 46a in poi: una chiamata ogni 1.4s — mai più 429 per quota.
+// Dalla 46a in poi: una chiamata ogni 900ms — mai più 429 per quota.
 // Su 429 residuo: retry con backoff esponenziale (safety net).
 // Su 401: silent re-auth come prima.
 // ═══════════════════════════════════════════════════════════════════
@@ -205,7 +205,7 @@ let _reAuthInProgress = false;
 let _tbTokens      = 45;      // token disponibili (bucket pieno all'avvio)
 let _tbLastRefill  = Date.now();
 const _TB_CAPACITY  = 45;     // max token nel bucket
-const _TB_REFILL_MS = 1400;   // ms per token → 43 token/min (sotto quota 60)
+const _TB_REFILL_MS = 900;    // ms per token → ~67 token/min (sotto quota 100/min per utente)
 
 async function _tbAcquire() {
   // Implementazione iterativa (non ricorsiva) — evita stack overflow
@@ -1864,6 +1864,9 @@ async function loadFromSheets() {
     }
 
     // FULL PATH
+    // Blocca bgSync per tutta la durata del caricamento — lo settiamo subito
+    // così bgSync non parte in parallelo mentre siamo già in sync
+    _lastFullSyncTs = Date.now();
     const sheetEntry = annualSheets.find(e => e.sheetId);
     let sheetBookings = [];
 
@@ -1889,7 +1892,9 @@ async function loadFromSheets() {
       syncLog('Sincronizzazione DB…', 'syn');
       showLoading('Sincronizzazione database…');
       await ensureDbHeaders();
-      sheetBookings = await syncWithDatabase(sheetBookings, true);
+      // Passa `forcing` (non true fisso): il guard MAX_ARCHIVE_PER_SYNC si applica
+      // al caricamento normale. Solo il 🔄 esplicito dell'utente bypassa il guard.
+      sheetBookings = await syncWithDatabase(sheetBookings, forcing);
     }
 
     await loadRoomStates();
