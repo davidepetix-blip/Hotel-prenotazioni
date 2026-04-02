@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '25'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '27'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -20,6 +20,12 @@ const BLIP_VER_SYNC = '25'; // ← incrementa ad ogni modifica
 let _cestinoBlacklist = null;       // null = non ancora caricata
 let _cestinoBlacklistTs = 0;        // timestamp ultimo caricamento
 const CESTINO_BLACKLIST_TTL = 10 * 60 * 1000; // 10 minuti
+
+// Set dei BLIP_ID trovati nella riga 46 del foglio grafico durante readAnnualSheet.
+// Usato da syncWithDatabase per non cestinare prenotazioni che sono presenti
+// nel foglio (riga 46 aggiornata) ma mancano dalla riga 45 (Apps Script non girato).
+// Reset ad ogni loadFromSheets completo.
+let _row46BlipIds = new Set();
 
 async function loadCestinoBlacklist(force = false) {
   const age = Date.now() - _cestinoBlacklistTs;
@@ -868,6 +874,22 @@ async function readAnnualSheet(entry) {
         if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
       });
 
+      // ── Scansiona TUTTA la riga 46 per raccogliere i BLIP_ID ──────
+      // Anche le colonne con riga 45 vuota (Apps Script non girato):
+      // così syncWithDatabase non cestina prenotazioni presenti nel foglio.
+      idRow.forEach(cell => {
+        if (!cell || !cell.trim()) return;
+        try {
+          const idMap = JSON.parse(String(cell).trim());
+          if (typeof idMap === 'object' && !Array.isArray(idMap)) {
+            Object.keys(idMap).forEach(k => { if (k.startsWith('PRE-')) _row46BlipIds.add(k); });
+          }
+        } catch(e) {
+          const s = String(cell).trim();
+          if (s.startsWith('PRE-')) _row46BlipIds.add(s);
+        }
+      });
+
       jsonRow.forEach(cell => {
         if (!cell || !cell.trim()) return;
         try {
@@ -891,6 +913,9 @@ async function readAnnualSheet(entry) {
               try {
                 // Formato nuovo: JSON map {dbId:[dal,al]}
                 const idMap = JSON.parse(rawId46);
+                // Registra TUTTI i BLIP_ID della colonna nel set globale —
+                // anche quelli non matchati da riga 45 (Apps Script non aggiornata)
+                Object.keys(idMap).forEach(k => { if (k.startsWith('PRE-')) _row46BlipIds.add(k); });
                 // Cerca la prenotazione per dal+al
                 blipId = Object.keys(idMap).find(k => {
                   const [mapDal, mapAl] = idMap[k];
@@ -899,6 +924,7 @@ async function readAnnualSheet(entry) {
               } catch(e) {
                 // Formato vecchio: singolo ID (retrocompatibilità)
                 blipId = rawId46.startsWith('PRE-') ? rawId46 : null;
+                if (blipId) _row46BlipIds.add(blipId);
               }
             }
             result.push({
@@ -957,17 +983,24 @@ async function readJSONAnnuale(sheetId) {
           .map(s => s.properties.title)
           .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-zÀ-ÿ]+\s+\d{4}$/i.test(n));
         if (monthSheets.length > 0) {
-          const ranges = monthSheets
-            .map(sn => encodeURIComponent("'" + sn + "'!B" + HEADER_ROW + ":AJ" + HEADER_ROW))
-            .join('&ranges=');
+          // Legge in una sola chiamata: intestazioni (riga HEADER_ROW) + riga 46 (BLIP_ID_ROW)
+          // per tutti i fogli mensili — nessuna chiamata API aggiuntiva
+          const headerRanges = monthSheets
+            .map(sn => encodeURIComponent("'" + sn + "'!B" + HEADER_ROW + ":AJ" + HEADER_ROW));
+          const blipIdRanges = monthSheets
+            .map(sn => encodeURIComponent("'" + sn + "'!B" + BLIP_ID_ROW + ":AJ" + BLIP_ID_ROW));
+          const allRanges = [...headerRanges, ...blipIdRanges].join('&ranges=');
           const bR = await fetch(
             'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId +
-            '/values:batchGet?ranges=' + ranges + '&valueRenderOption=FORMATTED_VALUE',
+            '/values:batchGet?ranges=' + allRanges + '&valueRenderOption=FORMATTED_VALUE',
             { headers: { Authorization: 'Bearer ' + accessToken } }
           );
           if (bR.ok) {
             const bData = await bR.json();
-            (bData.valueRanges || []).forEach((vr, idx) => {
+            const vRanges = bData.valueRanges || [];
+            const n = monthSheets.length;
+            // Prime n ranges = intestazioni
+            vRanges.slice(0, n).forEach((vr, idx) => {
               const sn = monthSheets[idx];
               const headers = vr.values?.[0] || [];
               sheetColumnMap[sn] = {};
@@ -978,7 +1011,23 @@ async function readJSONAnnuale(sheetId) {
                 if (norm !== raw) sheetColumnMap[sn][norm] = i + 2;
               });
             });
-            console.log('[JSON_ANNUALE] sheetColumnMap popolato per ' + monthSheets.length + ' fogli');
+            // Ultime n ranges = riga 46 → popola _row46BlipIds
+            vRanges.slice(n).forEach(vr => {
+              const idRow = vr.values?.[0] || [];
+              idRow.forEach(cell => {
+                if (!cell || !cell.trim()) return;
+                try {
+                  const idMap = JSON.parse(String(cell).trim());
+                  if (typeof idMap === 'object' && !Array.isArray(idMap)) {
+                    Object.keys(idMap).forEach(k => { if (k.startsWith('PRE-')) _row46BlipIds.add(k); });
+                  }
+                } catch(e) {
+                  const s = String(cell).trim();
+                  if (s.startsWith('PRE-')) _row46BlipIds.add(s);
+                }
+              });
+            });
+            console.log('[JSON_ANNUALE] sheetColumnMap + riga46 popolati per ' + monthSheets.length + ' fogli, _row46BlipIds: ' + _row46BlipIds.size);
           }
         }
       }
@@ -1206,6 +1255,14 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
       s.s && new Date(s.s).getFullYear() === dbYear
     );
     if (!sheetHasYear) {
+      result.push(db); continue;
+    }
+
+    // GUARD riga 46: se il BLIP_ID è presente nella riga 46 del foglio grafico
+    // significa che la prenotazione esiste fisicamente nel foglio ma Apps Script
+    // non ha aggiornato la riga 45 (JSON). Non cestinare — è visibile nel foglio.
+    if (db.dbId && _row46BlipIds.has(db.dbId)) {
+      syncLog(`🛡 Protetta da riga 46: ${db.n} (${db.dbId})`, 'wrn');
       result.push(db); continue;
     }
 
@@ -1867,6 +1924,8 @@ async function loadFromSheets() {
     // Blocca bgSync per tutta la durata del caricamento — lo settiamo subito
     // così bgSync non parte in parallelo mentre siamo già in sync
     _lastFullSyncTs = Date.now();
+    // Reset set riga 46: verrà ricostruito durante readAnnualSheet / readJSONAnnuale
+    _row46BlipIds = new Set();
     const sheetEntry = annualSheets.find(e => e.sheetId);
     let sheetBookings = [];
 
@@ -2036,45 +2095,92 @@ async function segnalaModificaAdAppsScript(sheetId) {
   if (!webAppUrl) {
     if (!window._webAppWarnShown) {
       window._webAppWarnShown = true;
-      showToast('⚠ Configura URL Web App in ⚙ Tariffe per aggiornamento immediato del calendario', 'warning');
+      showToast('⚠ Configura URL Web App in ⚙ Tariffe per aggiornamento automatico calendario', 'warning');
     }
     return;
   }
+
+  const anno = new Date().getFullYear();
+  const url  = `${webAppUrl}?anno=${anno}&ts=${Date.now()}`;
+  syncLog('📡 Chiamata Web App Apps Script…', 'syn');
+
+  // ── Leggi timestamp JSON_ANNUALE prima della chiamata ─────────────
+  // Serve per verificare se Apps Script ha davvero aggiornato il foglio.
+  let tsPreCall = '';
   try {
-    const anno = new Date().getFullYear();
-    const url  = `${webAppUrl}?anno=${anno}&ts=${Date.now()}`;
-    syncLog(`📡 Chiamata Web App: ${url.slice(0,60)}…`, 'syn');
+    const sheetEntry = annualSheets.find(e => e.sheetId);
+    if (sheetEntry) {
+      const mR = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetEntry.sheetId}/values/${encodeURIComponent("'JSON_ANNUALE'!A1:E1")}?valueRenderOption=FORMATTED_VALUE`,
+        { headers: { Authorization: 'Bearer ' + accessToken } }
+      );
+      if (mR.ok) tsPreCall = ((await mR.json()).values?.[0] || []).join(' ');
+    }
+  } catch(e) {}
 
-    // no-cors: non possiamo leggere la risposta, ma la richiesta parte
-    // Usiamo un Image trick come fallback diagnostico
-    await fetch(url, { method:'GET', mode:'no-cors' }).catch(() => {});
+  // ── Chiama Web App: prima CORS (possiamo leggere risposta), poi no-cors ──
+  // Google Apps Script Web App con deploy "chiunque" risponde con CORS per GET.
+  // Se CORS fallisce (redirect, policy) → no-cors come fire-and-forget.
+  let confermaDiretta = false;
+  try {
+    const r = await fetch(url, { method: 'GET', mode: 'cors' });
+    if (r.ok) {
+      const d = await r.json();
+      if (d.ok) {
+        syncLog(`📡 Web App: Apps Script OK — ${d.prenotazioni} pren. in ${d.ms}ms`, 'ok');
+        confermaDiretta = true;
+      }
+    }
+  } catch(corsErr) {
+    // CORS non supportato dal deploy corrente → no-cors (richiesta parte comunque)
+    syncLog('📡 Web App: fallback no-cors (risposta non leggibile)', 'syn');
+    try { await fetch(url, { method: 'GET', mode: 'no-cors' }); } catch(e) {
+      syncLog(`❌ Web App irraggiungibile: ${e.message} — premi 🔄 manualmente`, 'err');
+      return;
+    }
+  }
 
-    // Aspetta che Apps Script elabori (3-8 sec tipicamente)
-    await new Promise(r => setTimeout(r, 7000));
+  // ── Polling: verifica che JSON_ANNUALE sia stato aggiornato ────────
+  // Apps Script impiega 3-20s (dipende dal carico). Poll ogni 8s, max 3 volte (24s).
+  const sheetEntry = annualSheets.find(e => e.sheetId);
+  if (!sheetEntry) return;
 
-    // Rileggi il JSON_ANNUALE per verificare se è stato aggiornato
+  for (let tentativo = 1; tentativo <= 3; tentativo++) {
+    await new Promise(r => setTimeout(r, 8000));
     try {
-      const sheetEntry = annualSheets.find(e => e.sheetId);
-      if (!sheetEntry) return;
+      // Prima controlla solo il timestamp (1 cella, veloce)
+      const mR2 = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetEntry.sheetId}/values/${encodeURIComponent("'JSON_ANNUALE'!A1:E1")}?valueRenderOption=FORMATTED_VALUE`,
+        { headers: { Authorization: 'Bearer ' + accessToken } }
+      );
+      if (!mR2.ok) { syncLog(`⏳ Web App: poll ${tentativo}/3 — attesa…`, 'syn'); continue; }
+      const tsNuovo = ((await mR2.json()).values?.[0] || []).join(' ');
+
+      if (tsNuovo === tsPreCall && !confermaDiretta) {
+        // JSON_ANNUALE non ancora aggiornato
+        syncLog(`⏳ Web App: poll ${tentativo}/3 — Apps Script ancora in elaborazione…`, 'syn');
+        continue;
+      }
+
+      // Aggiornato — rileggi prenotazioni complete
       const freshBookings = await readJSONAnnuale(sheetEntry.sheetId);
       if (freshBookings && freshBookings.length > 0) {
-        syncLog(`✓ Web App OK — JSON_ANNUALE aggiornato (${freshBookings.length} prenotazioni)`, 'ok');
-        // Aggiorna bookings solo se non c'è già un sync in corso
+        syncLog(`✓ JSON_ANNUALE aggiornato (${freshBookings.length} pren. dopo ${tentativo*8}s)`, 'ok');
         if (!_bgSyncRunning) {
           bookings = mergeMultiMonthBookings(freshBookings.filter(b => !isDeletedLocally(b.dbId)));
+          saveDbCache(bookings);
           render();
         }
-      } else {
-        syncLog('⚠ Web App: JSON_ANNUALE vuoto dopo aggiornamento — verifica deploy', 'wrn');
-        showToast('⚠ Web App non risponde correttamente — verifica il deploy in Apps Script', 'warning');
+        return; // successo
       }
     } catch(e2) {
-      syncLog(`⚠ Web App: verifica fallita (${e2.message}) — premi 🔄 per aggiornare manualmente`, 'wrn');
+      syncLog(`⏳ Web App: poll ${tentativo}/3 — ${e2.message}`, 'syn');
     }
-  } catch(e) {
-    console.warn('[WebApp] chiamata fallita:', e.message);
-    syncLog(`❌ Web App errore: ${e.message}`, 'err');
   }
+
+  // Dopo 3 tentativi (24s) nessun aggiornamento rilevato
+  syncLog('⚠ Apps Script non ha aggiornato JSON_ANNUALE entro 24s — premi 🔄', 'wrn');
+  showToast('⚠ Calendario non aggiornato da Apps Script — premi 🔄', 'warning');
 }
 
 async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap, spreadsheetId) {
