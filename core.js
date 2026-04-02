@@ -1,39 +1,91 @@
 // ═══════════════════════════════════════════════════════════════════
-// core.js — Stato globale, costanti, ROOMS, utilities condivise
-// Blip Hotel Management — build 18.11.50
-// Caricato PRIMA di tutti gli altri moduli.
+// core.js — Stato globale e Utilities
+// Blip Hotel Management — build 18.11.51
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_CORE = '5'; // ← incrementa ad ogni modifica
+const BLIP_VER_CORE = '6';
 
 function dbg(msg, isErr) {
   console.log(msg);
   const box = document.getElementById('dbgLog');
-  if (box) { box.style.display='block'; const l=document.createElement('div'); l.style.color=isErr?'#c0392b':'#555'; l.textContent=new Date().toLocaleTimeString()+' '+msg; box.appendChild(l); box.scrollTop=box.scrollHeight; }
-  if (isErr) { const e=document.getElementById('loginErr'); if(e) e.textContent=msg; }
+  if (box) {
+    box.style.display = 'block';
+    const l = document.createElement('div');
+    l.style.color = isErr ? '#ff4d4d' : '#00ff00';
+    l.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+    box.appendChild(l);
+    box.scrollTop = box.scrollHeight;
+  }
+  if (isErr) {
+    const e = document.getElementById('loginErr');
+    if (e) e.textContent = msg;
+  }
 }
-window.onerror = function(msg, src, line) { dbg('❌ JS riga '+line+': '+msg, true); return false; };
-window.addEventListener('unhandledrejection', function(e) { dbg('❌ Promise: '+(e.reason?.message||String(e.reason)), true); });
 
-// ═══════════════════════════════════════════════════════════════════
-// CONFIG
-// ═══════════════════════════════════════════════════════════════════
-const CLIENT_ID = '130663673070-760h41829e0f1hic92v046033qebq2re.apps.googleusercontent.com';
+window.onerror = (m, s, l) => { dbg(`❌ Errore riga ${l}: ${m}`, true); return false; };
+
 const SCRIPT_ID = 'AKfycbzL7QO5o3Xm1Ld60E_3p5I39_57Lw5v0SIn8-sVj8w51VpB16A-iMvPIdfA_FjV2S8'; 
 const BASE_URL  = `https://script.google.com/macros/s/${SCRIPT_ID}/exec`;
 
-// Mappa Colonne Fogli (A=0, B=1, ...)
 const DB_COLS = {
   PRENOTAZIONI: { ID:0, CAMERA:1, NOME:2, DAL:3, AL:4, DISP:5, NOTE:6, COLORE:7, ANNO:8, FONTE:9, TS:10, DELETED:11, CLIENTE_ID:12 },
   CONTI:        { BOOKING_ID:0, EXTRA_JSON:1, OVERRIDE_JSON:2, APPART_MODE:3, CONTO_EMESSO_JSON:4, TS:5 },
   PAGAMENTI:    { PAG_ID:0, CONTO_ID:1, BOOKING_ID:2, DATA:3, IMPORTO:4, TIPO:5, METODO:6, RIF:7, CON_DOC:8, NOTE:9, TS:10 },
-  CLIENTI:      { ID:0, NOME:1, EMAIL:2, TEL:3, DOC_T:4, DOC_N:5, NAZ:6, NASC:7, NOTE:8, PRIMA:9, SOGG:10, TS_C:11, TS_A:12 },
   CAMERE:       { CAMERA:0, MAX:1, LETTI:2, PULIZIA:3, CONFIG:4, NOTE:5, TS:6 }
 };
 
 const DB_SHEETS = {
   PRENOTAZIONI: 'PRENOTAZIONI',
   CONTI: 'CONTI',
+  PAGAMENTI: 'PAGAMENTI'
+};
+
+let bookings = [];
+let gUserToken = null;
+
+function nowISO() { return new Date().toISOString(); }
+
+function diffDays(a, b) {
+  const d1 = new Date(a); d1.setHours(12,0,0,0);
+  const d2 = new Date(b); d2.setHours(12,0,0,0);
+  return Math.round((d2 - d1) / (1000*60*60*24));
+}
+
+function genPagamentoId() {
+  return 'PAG-' + new Date().getFullYear() + '-' + Math.random().toString(36).substring(2, 9).toUpperCase();
+}
+
+// Network con Token Bucket
+let _tokens = 45;
+setInterval(() => { if (_tokens < 45) _tokens++; }, 1500);
+
+async function apiFetch(action, params = {}, retry = 0) {
+  if (!gUserToken && action !== 'login') {
+    throw new Error("Effettuare il login prima di procedere");
+  }
+
+  if (_tokens <= 0) {
+    await new Promise(r => setTimeout(r, 2000));
+    return apiFetch(action, params, retry);
+  }
+
+  _tokens--;
+  const url = `${BASE_URL}?action=${action}${gUserToken ? '&token='+gUserToken : ''}`;
+
+  try {
+    const r = await fetch(url, { method: 'POST', body: JSON.stringify(params) });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    return d.result;
+  } catch (e) {
+    if (retry < 2) return apiFetch(action, params, retry + 1);
+    throw e;
+  }
+}
+
+async function fetchSheet(sheet) {
+  return await apiFetch('readSheet', { sheet });
+}
   PAGAMENTI: 'PAGAMENTI',
   CLIENTI: 'CLIENTI',
   IMPOSTAZIONI: 'IMPOSTAZIONI',
