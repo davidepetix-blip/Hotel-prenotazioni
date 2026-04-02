@@ -6,13 +6,13 @@
 <title>Hotel — Gestione Prenotazioni</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="core.js?v=18.11.50"></script>
-<script src="sync.js?v=18.11.50"></script>
-<script src="gantt.js?v=18.11.50"></script>
-<script src="clienti.js?v=18.11.50"></script>
-<script src="alloggiati-data.js?v=18.11.50"></script>
-<script src="checkin.js?v=18.11.50"></script>
-<script src="billing.js?v=18.11.50"></script>
+<script src="core.js?v=18.11.51"></script>
+<script src="sync.js?v=18.11.51"></script>
+<script src="gantt.js?v=18.11.51"></script>
+<script src="clienti.js?v=18.11.51"></script>
+<script src="alloggiati-data.js?v=18.11.51"></script>
+<script src="checkin.js?v=18.11.51"></script>
+<script src="billing.js?v=18.11.51"></script>
 <style>
 :root {
   --bg: #f8f7f5; --surface: #ffffff; --surface2: #f2f1ef;
@@ -27,88 +27,37 @@ body {
   background: var(--bg); color: var(--text);
   overflow: hidden; height: 100dvh; display: flex; flex-direction: column;
 }
-input, button, select, textarea { font-family: inherit; font-size: 14px; }
-
-/* Header & Layout */
 header {
   height: 60px; background: var(--surface); border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
   flex-shrink: 0; z-index: 10;
 }
 .brand { font-family: 'Playfair Display', serif; font-weight: 600; font-size: 20px; letter-spacing: -0.5px; }
-.actions { display: flex; gap: 8px; align-items: center; }
-
-/* Grid / Gantt Container */
-#gantt-container {
-  flex: 1; overflow: auto; position: relative;
-  background: var(--surface2); contain: size layout style;
-}
+#gantt-container { flex: 1; overflow: auto; position: relative; background: var(--surface2); }
 #gantt-grid { position: relative; display: inline-block; min-width: 100%; }
-
-/* Bottoni e UI */
 .btn {
   height: 36px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   transition: all 0.2s; font-weight: 500;
 }
-.btn:active { transform: scale(0.96); background: var(--surface2); }
 .btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
-.btn.icon { width: 36px; padding: 0; border-radius: 50%; }
-
-/* Modal & Drawer */
 .overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.4); backdrop-filter: blur(2px);
-  z-index: 100; display: none; opacity: 0; transition: opacity 0.3s;
+  z-index: 100; display: none; opacity: 0;
 }
 .drawer {
   position: fixed; top: 0; right: -100%; width: 92%; max-width: 450px; height: 100%;
   background: var(--surface); box-shadow: -5px 0 30px rgba(0,0,0,0.1);
-  z-index: 101; transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex; flex-direction: column;
+  z-index: 101; transition: right 0.3s; display: flex; flex-direction: column;
 }
 .drawer.open { right: 0; }
-.drawer-header {
-  padding: 16px; border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between;
-}
 .drawer-content { flex: 1; overflow-y: auto; padding: 16px; }
-
-/* Tabs */
-.tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 16px; gap: 20px; }
-.tab {
-  padding: 12px 4px; color: var(--text-light); cursor: pointer;
-  font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-}
-.tab.active { color: var(--text); border-bottom-color: var(--primary); }
-
-/* Form Elements */
-.f-group { margin-bottom: 16px; }
-.fl { display: block; font-size: 12px; color: var(--text-light); margin-bottom: 4px; font-weight: 500; }
-.fi {
-  width: 100%; height: 40px; padding: 0 12px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--bg);
-}
-.fi:focus { border-color: var(--accent); outline: none; background: var(--surface); }
-
-/* Utility Classes */
-.flex { display: flex; }
-.gap-8 { gap: 8px; }
-.mt-16 { margin-top: 16px; }
-.w-full { width: 100%; }
-
-/* Badge Stati */
-.badge {
-  padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;
-}
+.badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
 .badge.bozza { background: #eee; color: #666; }
 .badge.emesso { background: #e3f2fd; color: #1976d2; }
-.badge.fatturato { background: #f3e5f5; color: #7b1fa2; }
 .badge.pagato { background: #e8f5e9; color: #2e7d32; }
-
-/* Login */
 #loginScreen {
   position: fixed; inset: 0; background: var(--bg); z-index: 200;
   display: flex; align-items: center; justify-content: center; padding: 20px;
@@ -117,11 +66,10 @@ header {
   background: var(--surface); padding: 32px; border-radius: var(--radius);
   box-shadow: var(--shadow); width: 100%; max-width: 360px; text-align: center;
 }
-
 #dbgLog {
   position: fixed; bottom: 0; left: 0; right: 0; max-height: 150px;
   background: rgba(0,0,0,0.8); color: #0f0; font-family: monospace; font-size: 10px;
-  padding: 8px; overflow-y: auto; z-index: 9999; display: none; pointer-events: none;
+  padding: 8px; overflow-y: auto; z-index: 9999; display: none;
 }
 </style>
 </head>
@@ -130,130 +78,51 @@ header {
 <header>
   <div class="brand">Blip Hotel</div>
   <div class="actions">
-    <button class="btn" onclick="openSearch()"><span id="searchIcon">🔍</span></button>
     <button class="btn primary" onclick="openNewBooking()">+ Prenota</button>
-    <button class="btn icon" onclick="toggleMenu()">⋮</button>
   </div>
 </header>
 
 <div id="gantt-container">
-  <div id="gantt-grid">
-    </div>
+  <div id="gantt-grid"></div>
 </div>
 
 <div id="drawerOverlay" class="overlay" onclick="closeDrawer()"></div>
 <div id="bookingDrawer" class="drawer">
-  <div class="drawer-header">
-    <h3 id="drawerTitle" style="margin:0; font-family:'Playfair Display'">Dettagli</h3>
-    <button class="btn icon" onclick="closeDrawer()">✕</button>
+  <div class="drawer-header" style="padding:16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+    <h3 id="drawerTitle" style="margin:0">Dettagli</h3>
+    <button class="btn" onclick="closeDrawer()">✕</button>
   </div>
-  <div class="tabs">
+  <div class="tabs" style="display:flex; border-bottom:1px solid var(--border); padding:0 16px; gap:20px;">
     <div class="tab active" data-tab="info" onclick="switchTab('info')">Info</div>
-    <div class="tab" data-tab="checkin" onclick="switchTab('checkin')">Check-in</div>
     <div class="tab" data-tab="billing" onclick="switchTab('billing')">Conto</div>
-    <div class="tab" data-tab="history" onclick="switchTab('history')">Log</div>
   </div>
-  <div id="tab-info" class="drawer-content">
-    </div>
-  <div id="tab-checkin" class="drawer-content" style="display:none">
-    </div>
-  <div id="tab-billing" class="drawer-content" style="display:none">
-    </div>
-  <div id="tab-history" class="drawer-content" style="display:none">
-    <div id="historyLog" style="font-size:12px; color:var(--text-light)"></div>
-  </div>
-  <div id="drawerFooter" style="padding:16px; border-top:1px solid var(--border); display:flex; gap:8px;">
-    </div>
-</div>
-
-<div id="modalOverlay" class="overlay" style="z-index:110"></div>
-<div id="paymentModal" class="drawer" style="height:auto; bottom:0; top:auto; border-radius:20px 20px 0 0; z-index:111">
-  <div class="drawer-header">
-    <h3 style="margin:0">Registra Pagamento</h3>
-    <button class="btn icon" onclick="closePaymentModal()">✕</button>
-  </div>
-  <div class="drawer-content" id="paymentModalContent">
-    </div>
+  <div id="tab-info" class="drawer-content"></div>
+  <div id="tab-billing" class="drawer-content" style="display:none"></div>
 </div>
 
 <div id="loginScreen">
   <div class="login-card">
-    <h1 style="font-family:'Playfair Display'; margin-bottom:8px;">Blip</h1>
-    <p style="color:var(--text-light); font-size:14px; margin-bottom:24px;">Gestionale Semplice per Piccoli Hotel</p>
+    <h1 style="font-family:'Playfair Display'">Blip</h1>
+    <p style="color:var(--text-light); font-size:14px; margin-bottom:24px;">Gestionale Semplice</p>
     <div id="g_id_onload"
          data-client_id="130663673070-760h41829e0f1hic92v046033qebq2re.apps.googleusercontent.com"
          data-callback="handleCredentialResponse"
          data-auto_prompt="false">
     </div>
     <div class="g_id_signin" data-type="standard"></div>
-    <p id="loginErr" style="color:#c0392b; font-size:12px; mt-16"></p>
+    <p id="loginErr" style="color:#c0392b; font-size:12px; margin-top:16px;"></p>
   </div>
 </div>
 
 <div id="dbgLog"></div>
 
-<div id="rstateModal" class="overlay" style="z-index:200; display:none; align-items:center; justify-content:center;">
-  <div style="background:var(--surface); width:90%; max-width:320px; padding:20px; border-radius:var(--radius); box-shadow:var(--shadow);">
-    <h3 id="rstateTitle" style="margin-top:0">Stato Camera</h3>
-    <div class="f-group">
-      <label class="fl">Seleziona stato</label>
-      <select id="rstateSelect" class="fi">
-        <option value="pulita">✨ Pulita</option>
-        <option value="da-pulire">🧹 Da pulire</option>
-        <option value="occupata">🛌 Occupata</option>
-        <option value="manutenzione">🛠 Manutenzione</option>
-      </select>
-    </div>
-    <div class="f-group">
-      <label class="fl">Note operative</label>
-      <input type="text" class="fi" id="rstateNote" placeholder="es. guasto bagno, in manutenzione…">
-    </div>
-    <div style="display:flex;gap:8px;">
-      <button class="btn" style="flex:1" onclick="closeRstateModal()">Annulla</button>
-      <button class="btn primary" style="flex:2" onclick="saveRoomState()">✓ Salva stato</button>
-    </div>
-  </div>
-</div>
-
 <script>
-// ── Versione build ──
-const BLIP_BUILD = '18.11.50'; // ← build complessiva (major.minor.patch)
-
-// Assembla la versione completa dai moduli appena caricati
-function blipFullVersion() {
-  const mods = [
-    typeof BLIP_VER_CORE    !== 'undefined' ? BLIP_VER_CORE    : '?',
-    typeof BLIP_VER_SYNC    !== 'undefined' ? BLIP_VER_SYNC    : '?',
-    typeof BLIP_VER_GANTT   !== 'undefined' ? BLIP_VER_GANTT   : '?',
-    typeof BLIP_VER_CHECKIN !== 'undefined' ? BLIP_VER_CHECKIN : '?',
-    typeof BLIP_VER_BILLING !== 'undefined' ? BLIP_VER_BILLING : '?',
-  ];
-  return BLIP_BUILD + '.' + mods.join('.');
-}
-
-// Popola i segnaposto versione nel DOM
-function blipInjectVersion() {
-  const v = blipFullVersion();
-  document.querySelectorAll('[data-blip-version]').forEach(el => {
-    el.textContent = v;
-  });
-  console.log('🚀 Blip Version:', v);
-}
-
-document.addEventListener('DOMContentLoaded', blipInjectVersion);
+const BLIP_BUILD = '18.11.51';
+console.log('🚀 Blip Build:', BLIP_BUILD);
 </script>
-
 </body>
 </html>
-
-  box-shadow: var(--shadow-sm);
-}
-#loginBtn:hover { box-shadow: var(--shadow-md); border-color: #bbb; }
-.login-err { font-size: 11px; color: var(--danger); margin-top: 12px; min-height: 16px; }
-
-/* ── LOADING OVERLAY ── */
-#loadingOverlay {
-  position: fixed; inset: 0; background: rgba(248,247,245,.9);
+0; background: rgba(248,247,245,.9);
   display: none; align-items: center; justify-content: center;
   flex-direction: column; gap: 16px; z-index: 900;
   backdrop-filter: blur(4px);
