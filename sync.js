@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '29'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '30'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -2043,6 +2043,10 @@ async function loadFromSheets() {
         hideLoading();
         render();
         showToast(`✓ ${bookings.length} prenotazioni (cache)`, 'success');
+        // Carica la blacklist CESTINO in background — senza await per non ritardare il render.
+        // In fast path syncWithDatabase non viene chiamata, quindi senza questo
+        // _cestinoBlacklist resterebbe null per tutta la sessione.
+        loadCestinoBlacklist().catch(() => {});
         // Aspetta 90s prima del primo bgSync: preloadContoDati e CI data
         // caricano in questo intervallo — partire prima causa burst 429
         _lastFullSyncTs = Date.now() - BGSYNC_COOLDOWN_MS + 90 * 1000;
