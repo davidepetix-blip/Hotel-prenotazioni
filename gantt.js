@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '21'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '23'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -612,8 +612,10 @@ async function saveBooking(){
 
   try {
     // Se è una modifica, cancella sempre il vecchio dal foglio (bidirezionale)
+    // skipSegnala=true: writeBookingToSheet chiamerà segnalaModifica da solo,
+    // evitiamo la doppia chiamata alla Web App
     const oldB = existingB || bookings.find(b=>b.id===newB.id);
-    if(oldB && oldB.id === newB.id) await clearBookingFromSheet({...oldB, fromSheet:true});
+    if(oldB && oldB.id === newB.id) await clearBookingFromSheet({...oldB, fromSheet:true}, { skipSegnala: true });
 
     await writeBookingToSheet(newB);
     // Segna come salvato

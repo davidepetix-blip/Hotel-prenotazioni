@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '28'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '29'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -1975,7 +1975,29 @@ async function bgSync() {
     }
 
     if (changed || rimossi > 0) {
-      bookings = mergeMultiMonthBookings(active);
+      // GUARD post-scrittura: se ci sono prenotazioni scritte dall'app negli ultimi 5 minuti
+      // e il DB non le ha ancora (latenza di scrittura + Apps Script 20-30s),
+      // le preserviamo nel merge per non perdere l'ottimistic UI.
+      const RECENTE_APP_MS = 5 * 60 * 1000;
+      const recenteApp = bookings.filter(b =>
+        b.fonte === 'app' && b.ts && (Date.now() - new Date(b.ts).getTime()) < RECENTE_APP_MS
+      );
+      let merged = mergeMultiMonthBookings(active);
+      if (recenteApp.length > 0) {
+        recenteApp.forEach(localB => {
+          // Se il DB non ha ancora questa prenotazione (o ha una versione più vecchia)
+          // la manteniamo dalla memoria locale
+          const inDb = merged.find(db =>
+            db.dbId === localB.dbId ||
+            (db.n === localB.n && db.r === localB.r && Math.abs(db.s - localB.s) < 86400000)
+          );
+          if (!inDb) {
+            syncLog(`🛡 bgSync: preservata prenotazione locale recente: ${localB.n} (${localB.dbId||'no dbId'})`, 'wrn');
+            merged.push(localB);
+          }
+        });
+      }
+      bookings = merged;
       saveDbCache(active);
       render();
       const diff = active.length - prevCount;
@@ -2185,6 +2207,12 @@ async function writeBookingToSheet(b) {
   }
 
   syncLog(`✏ Prenotazione scritta: ${b.n} cam.${b.cameraName} ${b.s?.toLocaleDateString('it-IT')||''}→${b.e?.toLocaleDateString('it-IT')||''} (${fragments.length} mesi)`, 'ok');
+
+  // Blocca bgSync per tutta la durata dell'elaborazione Apps Script (20-30s tipici)
+  // + il polling di segnalaModifica (max 24s). Senza questo, bgSync legge il DB
+  // prima che la prenotazione sia consolidata e sovrascrive bookings[] con dati vecchi.
+  _lastFullSyncTs = Date.now();
+
   segnalaModificaAdAppsScript(annualSheets[0]?.sheetId).catch(e => console.warn('[segnaModifica]:', e.message));
 
   if (DATABASE_SHEET_ID) {
@@ -2326,7 +2354,7 @@ async function clearFragment(sName, cameraName, startDay, endDay, sheetIdMap, sp
   if (!cr.ok) console.warn(`clearFragment HTTP ${cr.status}`);
 }
 
-async function clearBookingFromSheet(b) {
+async function clearBookingFromSheet(b, { skipSegnala = false } = {}) {
   const fragments = splitBookingByMonth(b);
   for (const frag of fragments) {
     const colorEnd = frag.isLastFrag ? frag.endDay - 1 : frag.endDay;
@@ -2340,8 +2368,12 @@ async function clearBookingFromSheet(b) {
       await triggerAppsScriptUpdate(frag.sName, b.cameraName, sid);
     } catch(e) { console.warn(`Errore pulizia frammento ${frag.sName}:`, e.message); }
   }
-  segnalaModificaAdAppsScript(annualSheets[0]?.sheetId)
-    .catch(e => console.warn('[clearBooking→WebApp]:', e.message));
+  // skipSegnala=true quando clearBookingFromSheet è chiamata da saveBooking in modalità edit:
+  // writeBookingToSheet chiamerà segnalaModifica alla fine — evitiamo la doppia chiamata
+  if (!skipSegnala) {
+    segnalaModificaAdAppsScript(annualSheets[0]?.sheetId)
+      .catch(e => console.warn('[clearBooking→WebApp]:', e.message));
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
