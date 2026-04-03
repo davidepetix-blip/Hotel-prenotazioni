@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '24'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '25'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -656,10 +656,7 @@ async function preloadContoDati() {
         const rows = d.values || [];
         _pagamentiCache = rows.map((row, i) => ({
           id: (row[0]||'').trim(), contoId:(row[1]||'').trim(),
-          // bookingId può essere un BLIP_ID stringa (PRE-2026-...) o un id numerico legacy.
-          // parseInt distruggeva i BLIP_ID → 0, rendendo i pagamenti invisibili dopo reload.
-          bookingId: (row[2]||'').trim(),
-          data:(row[3]||'').trim(),
+          bookingId:parseInt(row[2])||0, data:(row[3]||'').trim(),
           importo:parseFloat(row[4])||0, tipo:(row[5]||'saldo').trim(),
           metodo:(row[6]||'Contanti').trim(), riferimento:(row[7]||'').trim(),
           conDocumento:(row[8]||'').trim()==='true', note:(row[9]||'').trim(),
@@ -1823,7 +1820,7 @@ function renderContiLista() {
         ].filter(Boolean).join(' · ');
         return `<div class="bill-list-item">
           <div class="bill-list-dot" style="background:${dot}"></div>
-          <div class="bill-list-info" onclick="riapriFoglio(${c.bookingId})" style="cursor:pointer;flex:1">
+          <div class="bill-list-info" onclick="riapriFoglio('${c.bookingId}')" style="cursor:pointer;flex:1">
             <div class="bill-list-name">${c.nome} ${isGruppo?'<span style="font-size:9px;background:#e8f4fd;color:#1a6fa8;padding:1px 5px;border-radius:8px;margin-left:4px">GRUPPO</span>':''}</div>
             <div class="bill-list-sub">Cam. ${c.camera} · ${fmt(ci)} → ${fmt(co)}</div>
             ${metaExtra?`<div style="font-size:10px;color:var(--text3);margin-top:2px">${metaExtra}</div>`:''}
@@ -2075,13 +2072,16 @@ function confermaPagamento(contoId, importo, tipo, modalita, dataStr, riferiment
 
 function riapriFoglio(bid, apriTabConto) {
   closeConti();
-  const b = bookings.find(x=>x.id===bid);
+  // bookingId può essere un BLIP_ID stringa ("PRE-2026-...") o un id numerico legacy.
+  // Cerca prima per dbId (BLIP_ID), poi per id numerico come fallback.
+  const bidStr = String(bid);
+  const b = bookings.find(x => x.dbId === bidStr)
+         || bookings.find(x => String(x.id) === bidStr);
   if (b) {
     setTimeout(() => {
       if (typeof selBook === 'function') {
         selBook(b.id, null);
         if (apriTabConto) {
-          // Attiva il tab Conto dopo che il drawer si è aperto
           setTimeout(() => {
             const tabBill = document.querySelector('.dr-bill-tab:nth-child(2)');
             if (tabBill && typeof drTab === 'function') drTab(tabBill, 'drTabBill');
@@ -2089,6 +2089,9 @@ function riapriFoglio(bid, apriTabConto) {
         }
       }
     }, 80);
+  } else {
+    showToast('Prenotazione non trovata — ricarica la pagina', 'error');
+    console.warn('[riapriFoglio] booking non trovato per bid:', bid);
   }
 }
 
