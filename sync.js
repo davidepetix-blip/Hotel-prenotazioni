@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '27'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '28'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -1743,7 +1743,7 @@ function diagnosticaAppScript(sheetBookings, dbBookings) {
 // ═══════════════════════════════════════════════════════════════════
 
 let _logEntries = [];
-const MAX_LOG   = 200;
+const MAX_LOG   = 500; // aumentato per avere storico completo nel file di log
 
 function syncLog(msg, type='inf') {
   const now  = new Date();
@@ -1780,6 +1780,116 @@ function clearSyncLog(e) {
   if (el) el.innerHTML = '';
   const btn = document.getElementById('syncLogBtn');
   if (btn) btn.textContent = '📋 LOG (0)';
+}
+
+// ─────────────────────────────────────────────────────────────────
+// ESPORTA LOG SESSIONE — genera un file .txt da inviare al supporto
+// Contiene: versioni, stato sistema, log completo + prompt di
+// continuazione per iniziare una nuova chat AI già contestualizzata.
+// ─────────────────────────────────────────────────────────────────
+function esportaLogSessione() {
+  const now    = new Date();
+  const ts     = now.toISOString().replace('T',' ').slice(0,19);
+  const tsFile = now.toISOString().slice(0,16).replace(/[:T]/g,'-');
+
+  // ── Raccoglie versioni ─────────────────────────────────────────
+  const vers = [
+    typeof BLIP_BUILD        !== 'undefined' ? 'BLIP_BUILD='       + BLIP_BUILD        : '',
+    typeof BLIP_VER_CORE     !== 'undefined' ? 'BLIP_VER_CORE='    + BLIP_VER_CORE     : '',
+    typeof BLIP_VER_SYNC     !== 'undefined' ? 'BLIP_VER_SYNC='    + BLIP_VER_SYNC     : '',
+    typeof BLIP_VER_GANTT    !== 'undefined' ? 'BLIP_VER_GANTT='   + BLIP_VER_GANTT    : '',
+    typeof BLIP_VER_CHECKIN  !== 'undefined' ? 'BLIP_VER_CHECKIN=' + BLIP_VER_CHECKIN  : '',
+    typeof BLIP_VER_BILLING  !== 'undefined' ? 'BLIP_VER_BILLING=' + BLIP_VER_BILLING  : '',
+    typeof BLIP_VER_CLIENTI  !== 'undefined' ? 'BLIP_VER_CLIENTI=' + BLIP_VER_CLIENTI  : '',
+  ].filter(Boolean).join('  ');
+
+  // ── Raccoglie stato sistema ────────────────────────────────────
+  const stato = [
+    'Prenotazioni in memoria : ' + (typeof bookings !== 'undefined' ? bookings.length : '?'),
+    'DATABASE_SHEET_ID       : ' + (typeof DATABASE_SHEET_ID !== 'undefined' && DATABASE_SHEET_ID ? DATABASE_SHEET_ID.slice(0,12) + '…' : 'non configurato'),
+    'ciData.keys             : ' + (typeof ciData !== 'undefined' ? Object.keys(ciData).length : '?'),
+    '_pagamentiCache         : ' + (typeof _pagamentiCache !== 'undefined' && _pagamentiCache ? _pagamentiCache.length + ' record' : 'null'),
+    '_cestinoBlacklist       : ' + (typeof _cestinoBlacklist !== 'undefined' && _cestinoBlacklist ? _cestinoBlacklist.size + ' ID' : 'null'),
+    '_row46BlipIds           : ' + (typeof _row46BlipIds !== 'undefined' ? _row46BlipIds.size + ' ID' : '?'),
+    '_tbTokens               : ' + (typeof _tbTokens !== 'undefined' ? _tbTokens : '?'),
+    'annualSheets            : ' + (typeof annualSheets !== 'undefined' ? annualSheets.map(s => s.label||s.year).join(', ') : '?'),
+  ].join('\n');
+
+  // ── Log entries (dal più recente) ─────────────────────────────
+  const logTxt = [..._logEntries].map(e =>
+    `${e.time}  [${(e.type||'inf').toUpperCase().padEnd(3)}]  ${e.msg}`
+  ).join('\n');
+
+  // ── Prompt di continuazione ───────────────────────────────────
+  const prompt = `
+═══════════════════════════════════════════════════════════════
+PROMPT DI CONTINUAZIONE — incolla questo testo in una nuova chat
+═══════════════════════════════════════════════════════════════
+
+Sto sviluppando Blip, un'app di gestione prenotazioni hotel in
+vanilla JavaScript con Google Sheets come DB remoto (GitHub Pages).
+
+Repository: https://github.com/davidepetix-blip/Hotel-prenotazioni
+App:        https://davidepetix-blip.github.io/Hotel-prenotazioni/
+
+Versioni attuali:
+${vers}
+
+Architettura file (ordine caricamento):
+core.js → sync.js → gantt.js → clienti.js → alloggiati-data.js → checkin.js → billing.js
+
+File principali modificati in sessioni recenti:
+- sync.js   : OAuth, Sheets API, DB CRUD, sync engine, token bucket, CESTINO blacklist,
+              _row46BlipIds guard, bgSync cooldown, segnalaModificaAdAppsScript con polling
+- gantt.js  : Render Gantt, drawer, renderCheckinDrawerTab (_reloaded guard anti-loop)
+- billing.js: Conti, pagamenti, PDF — bookingId sempre stringa BLIP_ID,
+              confermaPagamento con push cache pre-render, saveConti strip campi calcolati
+- checkin.js: Check-in, Alloggiati Web export, OCR Gemini
+
+Decisioni architetturali chiave:
+- bookingId è sempre stringa BLIP_ID (mai parseInt)
+- stato conto calcolato da getStatoContoCalcolato(), mai persistito
+- apiFetch ha token bucket (45 token, 900ms/token) + retry 429
+- syncWithDatabase: MAX_ARCHIVE_PER_SYNC=20 guard + _row46BlipIds protezione
+- bgSync cooldown 3min dopo ogni loadFromSheets completo
+- CESTINO blacklist caricata ad ogni sync (TTL 10min)
+
+Allega: billing.js, sync.js, gantt.js, checkin.js, core.js, index.html
+(scaricali da GitHub prima di modificarli)
+
+Problema / richiesta attuale:
+[DESCRIVI QUI IL PROBLEMA O LA FUNZIONALITÀ DA IMPLEMENTARE]
+════════════════════════════════════════════════════════════════`.trim();
+
+  // ── Assembla il file ──────────────────────────────────────────
+  const contenuto = [
+    '═══════════════════════════════════════════════════════════════',
+    'BLIP — LOG DI SESSIONE',
+    `Data/ora : ${ts}`,
+    `UserAgent: ${navigator.userAgent.slice(0,80)}`,
+    '═══════════════════════════════════════════════════════════════',
+    '',
+    '── VERSIONI ──',
+    vers,
+    '',
+    '── STATO SISTEMA ──',
+    stato,
+    '',
+    '── LOG EVENTI (' + _logEntries.length + ' voci, più recenti prima) ──',
+    logTxt || '(nessun evento registrato)',
+    '',
+    prompt,
+  ].join('\n');
+
+  // ── Download ──────────────────────────────────────────────────
+  const blob = new Blob([contenuto], { type: 'text/plain;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `blip-log-${tsFile}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  syncLog('📥 Log sessione esportato: blip-log-' + tsFile + '.txt', 'ok');
 }
 
 // ═══════════════════════════════════════════════════════════════════

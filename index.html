@@ -8,13 +8,13 @@
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- Moduli Blip -->
-<script src="core.js?v=18.11.52"></script>
-<script src="sync.js?v=18.11.52"></script>
-<script src="gantt.js?v=18.11.52"></script>
-<script src="clienti.js?v=18.11.52"></script>
-<script src="alloggiati-data.js?v=18.11.52"></script>
-<script src="checkin.js?v=18.11.52"></script>
-<script src="billing.js?v=18.11.52"></script>
+<script src="core.js?v=18.11.53"></script>
+<script src="sync.js?v=18.11.53"></script>
+<script src="gantt.js?v=18.11.53"></script>
+<script src="clienti.js?v=18.11.53"></script>
+<script src="alloggiati-data.js?v=18.11.53"></script>
+<script src="checkin.js?v=18.11.53"></script>
+<script src="billing.js?v=18.11.53"></script>
 <style>
 :root {
   --bg: #f8f7f5; --surface: #ffffff; --surface2: #f2f1ef;
@@ -788,6 +788,21 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .pag-del:hover { color:var(--danger); background:rgba(220,53,69,.1); }
 .pag-add-btn { display:block; width:calc(100% - 24px); margin:8px 12px; text-align:center;
   font-size:12px; color:var(--accent); border-color:var(--accent); }
+
+/* ── STAMPA: mostra solo il documento, nascondi tutto il resto ── */
+@media print {
+  body > *:not(#pdfOverlay) { display: none !important; }
+  #pdfOverlay { display: block !important; position: static !important;
+    background: none !important; padding: 0 !important; }
+  .pdf-modal { box-shadow: none !important; border: none !important;
+    max-height: none !important; width: 100% !important; }
+  .pdf-modal-hdr, .pdf-actions { display: none !important; }
+  .pdf-body { overflow: visible !important; }
+  #syncLog, #syncLogBtn, .fab-group, .toast, .bg-sync-toast,
+  #loadingOverlay, .topbar, .doverlay, .drawer,
+  .moverlay, #searchOverlay, #settingsPage, #checkinPage,
+  #contiScreen, #roomDashPage, #loginScreen { display: none !important; }
+}
 </style>
 </head>
 <body>
@@ -797,7 +812,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="margin-top:6px;font-size:10px;color:#aaa;font-family:monospace;" data-blip-version="full">v18.11.52</div>
+    <div style="margin-top:6px;font-size:10px;color:#aaa;font-family:monospace;" data-blip-version="full">v18.11.53</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
@@ -1065,6 +1080,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     <div style="display:flex;gap:8px;align-items:center">
       <span id="syncLogCount" style="font-size:9px;color:#888">0 eventi</span>
       <button onclick="clearSyncLog(event)">🗑 pulisci</button>
+      <button onclick="event.stopPropagation();esportaLogSessione()" title="Salva log come file .txt">⬇ salva</button>
       <button onclick="toggleSyncLog()">✕</button>
     </div>
   </div>
