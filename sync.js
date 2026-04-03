@@ -9,17 +9,35 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '30'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '31'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
-// Costruito una volta per sessione da loadCestinoBlacklist().
-// Impedisce a syncWithDatabase di reimportare prenotazioni che
-// l'utente ha cancellato (anche manualmente dal DB remoto).
+//
+// IMPORTANTE: mette in blacklist SOLO le cancellazioni esplicite utente.
+// Le cancellazioni automatiche da sync ("Rimossa dal foglio Gantt")
+// NON entrano in blacklist: se la prenotazione torna nel foglio grafico
+// deve poter essere reimportata normalmente.
+// Questo evita che booking finiti nel CESTINO per errore durante una
+// sync anomala (es. il caso dei 103 booking) blocchino per sempre
+// il reimport di prenotazioni valide.
 // ─────────────────────────────────────────────────────────────────
 let _cestinoBlacklist = null;       // null = non ancora caricata
 let _cestinoBlacklistTs = 0;        // timestamp ultimo caricamento
 const CESTINO_BLACKLIST_TTL = 10 * 60 * 1000; // 10 minuti
+
+// Reason che indicano cancellazione AUTOMATICA da sync — NON vanno in blacklist
+const CESTINO_AUTO_REASONS = [
+  'Rimossa dal foglio Gantt',
+  'Rimossa dal foglio',
+  'sync del',
+  'Pulizia residui DELETED',
+];
+function _isCestinoAutoSync(reason) {
+  if (!reason) return false;
+  const r = String(reason).toLowerCase();
+  return CESTINO_AUTO_REASONS.some(k => r.includes(k.toLowerCase()));
+}
 
 // Set dei BLIP_ID trovati nella riga 46 del foglio grafico durante readAnnualSheet.
 // Usato da syncWithDatabase per non cestinare prenotazioni che sono presenti
@@ -32,13 +50,25 @@ async function loadCestinoBlacklist(force = false) {
   if (!force && _cestinoBlacklist && age < CESTINO_BLACKLIST_TTL) return _cestinoBlacklist;
   if (!DATABASE_SHEET_ID) { _cestinoBlacklist = new Set(); return _cestinoBlacklist; }
   try {
-    const d = await dbGet(`${CESTINO_SHEET_NAME}!A2:A9999`);
-    const ids = (d.values || []).map(r => (r[0] || '').trim()).filter(Boolean);
-    _cestinoBlacklist = new Set(ids);
+    // Legge ID (col A) e REASON (col N) — includi solo cancellazioni esplicite utente
+    const d = await dbGet(`${CESTINO_SHEET_NAME}!A2:N9999`);
+    const rows = d.values || [];
+    const blacklisted = [];
+    const autoSync    = [];
+    rows.forEach(r => {
+      const id     = (r[0]  || '').trim();
+      const reason = (r[13] || '').trim(); // colonna N = REASON
+      if (!id) return;
+      if (_isCestinoAutoSync(reason)) {
+        autoSync.push(id); // cancellazione da sync: NON in blacklist
+      } else {
+        blacklisted.push(id); // cancellazione esplicita utente: in blacklist
+      }
+    });
+    _cestinoBlacklist = new Set(blacklisted);
     _cestinoBlacklistTs = Date.now();
-    if (ids.length > 0) syncLog(`🗑 Blacklist CESTINO: ${ids.length} ID caricati`, 'syn');
+    syncLog(`🗑 Blacklist CESTINO: ${blacklisted.length} ID (utente) + ${autoSync.length} da sync (esclusi)`, 'syn');
   } catch(e) {
-    // Se il foglio CESTINO non esiste ancora, blacklist vuota — non bloccante
     _cestinoBlacklist = new Set();
     _cestinoBlacklistTs = Date.now();
   }
@@ -799,9 +829,12 @@ async function archiviaInCestino(lista, reason) {
     }
   }
   console.log(`[CESTINO] ${lista.length} righe archiviate e rimosse dal DB`);
-  // Aggiorna la blacklist in-memory subito — così la sync successiva nella stessa
-  // sessione non reimporta immediatamente le stesse prenotazioni appena cestinate
-  lista.forEach(b => { if (b.dbId) addToCestinoBlacklist(b.dbId); });
+  // Aggiorna la blacklist in-memory solo per cancellazioni esplicite utente.
+  // Le cancellazioni da sync automatica NON entrano in blacklist: se la prenotazione
+  // torna nel foglio grafico (es. dopo una sync anomala) deve poter essere reimportata.
+  if (!_isCestinoAutoSync(reason)) {
+    lista.forEach(b => { if (b.dbId) addToCestinoBlacklist(b.dbId); });
+  }
 }
 
 let _cestinoHeadersChecked = false;
