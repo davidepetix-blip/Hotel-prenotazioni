@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '31'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '32'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -44,6 +44,10 @@ function _isCestinoAutoSync(reason) {
 // nel foglio (riga 46 aggiornata) ma mancano dalla riga 45 (Apps Script non girato).
 // Reset ad ogni loadFromSheets completo.
 let _row46BlipIds = new Set();
+// Mappa per assegnare dbId alle prenotazioni lette da JSON_ANNUALE (che non hanno dbId).
+// Formato: "sheetName|cameraName|dal" → dbId (BLIP_ID)
+// Costruita durante la batchGet in readJSONAnnuale leggendo la riga 46.
+let _row46BookingMap = {};
 
 async function loadCestinoBlacklist(force = false) {
   const age = Date.now() - _cestinoBlacklistTs;
@@ -1044,15 +1048,30 @@ async function readJSONAnnuale(sheetId) {
                 if (norm !== raw) sheetColumnMap[sn][norm] = i + 2;
               });
             });
-            // Ultime n ranges = riga 46 → popola _row46BlipIds
-            vRanges.slice(n).forEach(vr => {
-              const idRow = vr.values?.[0] || [];
-              idRow.forEach(cell => {
+            // Ultime n ranges = riga 46 → popola _row46BlipIds e _row46BookingMap
+            vRanges.slice(n).forEach((vr, idx) => {
+              const sn     = monthSheets[idx];
+              const idRow  = vr.values?.[0] || [];
+              const hdrs   = sheetColumnMap[sn] || {};
+              // Costruisce mappa inversa: colIdx → cameraName
+              const colToCamera = {};
+              Object.entries(hdrs).forEach(([cam, col]) => { colToCamera[col - 2] = cam; });
+
+              idRow.forEach((cell, colI) => {
                 if (!cell || !cell.trim()) return;
                 try {
                   const idMap = JSON.parse(String(cell).trim());
                   if (typeof idMap === 'object' && !Array.isArray(idMap)) {
-                    Object.keys(idMap).forEach(k => { if (k.startsWith('PRE-')) _row46BlipIds.add(k); });
+                    const camName = colToCamera[colI] || '';
+                    Object.entries(idMap).forEach(([k, v]) => {
+                      if (!k.startsWith('PRE-')) return;
+                      _row46BlipIds.add(k);
+                      // v = [dal, al] es. ["24/07/2026","07/08/2026"]
+                      const dal = Array.isArray(v) ? v[0] : '';
+                      if (camName && dal) {
+                        _row46BookingMap[sn + '|' + camName + '|' + dal] = k;
+                      }
+                    });
                   }
                 } catch(e) {
                   const s = String(cell).trim();
@@ -1060,7 +1079,7 @@ async function readJSONAnnuale(sheetId) {
                 }
               });
             });
-            console.log('[JSON_ANNUALE] sheetColumnMap + riga46 popolati per ' + monthSheets.length + ' fogli, _row46BlipIds: ' + _row46BlipIds.size);
+            console.log('[JSON_ANNUALE] sheetColumnMap + riga46 popolati per ' + monthSheets.length + ' fogli, _row46BlipIds: ' + _row46BlipIds.size + ', bookingMap: ' + Object.keys(_row46BookingMap).length);
           }
         }
       }
@@ -1089,12 +1108,17 @@ function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
     // Assegna _sheetCol se sheetColumnMap è già popolato per questo foglio
     const _colMap = sheetColumnMap[sName] || {};
     const _sheetCol = _colMap[room.name] || _colMap[String(room.name).trim()] || null;
+    // Cerca il BLIP_ID dalla riga 46 tramite la mappa sheetName|camera|dal
+    // Questo permette a findMatch di usare la PRIORITÀ 1 (ID) invece della fuzzy
+    // evitando duplicati quando il nome in DB differisce leggermente (es. trailing +)
+    const _mapKey = sName + '|' + room.name + '|' + b.dal;
+    const _dbId   = _row46BookingMap[_mapKey] || null;
     result.push({
       id: nid++, r: room.id, n: b.nome||'—', d: b.disposizione||'',
       c: color, s: new Date(yy,mm-1,dd,12), e: new Date(ye,me-1,de,12),
       note: b.note||'', fromSheet:true, fromJSONAnnuale:true,
       sheetName:sName, sheetId, cameraName:room.name,
-      dbId:null, dbRow:null, ts:null, fonte:'manuale',
+      dbId: _dbId, dbRow:null, ts:null, fonte:'manuale',
       _sheetCol: _sheetCol || undefined,
     });
   }
@@ -1133,6 +1157,17 @@ function invalidateDbCache() { localStorage.removeItem(DB_CACHE_KEY); }
 // SYNC ENGINE
 // ═══════════════════════════════════════════════════════════════════
 
+// Normalizza il nome per il confronto in findMatch:
+// - lowercase e trim
+// - rimuove '+' isolati finali (lasciati da Apps Script come separatore)
+// - normalizza spazi multipli interni
+function _normName(s) {
+  return (s||'').toLowerCase().trim()
+    .replace(/\s*\+\s*$/, '')   // trailing + con spazi opzionali
+    .replace(/\s+/g, ' ')       // spazi multipli interni
+    .trim();
+}
+
 function findMatch(target, list) {
   // PRIORITÀ 1: match per BLIP_ID dalla riga 46 — match perfetto, immune a spostamenti
   if (target.dbId) {
@@ -1141,21 +1176,21 @@ function findMatch(target, list) {
   }
 
   const camT  = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
-  const nomT  = (target.n || '').toLowerCase().trim();
+  const nomT  = _normName(target.n);
   const dayT  = Math.round((target.s?.getTime?.() || 0) / DAY_MS);
   const dispT = (target.d || '').trim().toLowerCase();
 
-  // PRIORITÀ 2: match esatto per nome + camera + data
+  // PRIORITÀ 2: match esatto per nome normalizzato + camera + data
   let m = list.find(b => {
-    if ((b.n||'').toLowerCase().trim() !== nomT) return false;
+    if (_normName(b.n) !== nomT) return false;
     if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
     return Math.round((b.s?.getTime?.() || 0) / DAY_MS) === dayT;
   });
   if (m) return m;
 
-  // PRIORITÀ 3: fuzzy — nome + camera + data ±1 giorno
+  // PRIORITÀ 3: fuzzy — nome normalizzato + camera + data ±1 giorno
   m = list.find(b => {
-    if ((b.n||'').toLowerCase().trim() !== nomT) return false;
+    if (_normName(b.n) !== nomT) return false;
     if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
     if (dispT && (b.d||'').trim().toLowerCase() !== dispT) return false;
     return Math.abs(Math.round((b.s?.getTime?.() || 0) / DAY_MS) - dayT) <= 1;
@@ -2094,7 +2129,8 @@ async function loadFromSheets() {
     // così bgSync non parte in parallelo mentre siamo già in sync
     _lastFullSyncTs = Date.now();
     // Reset set riga 46: verrà ricostruito durante readAnnualSheet / readJSONAnnuale
-    _row46BlipIds = new Set();
+    _row46BlipIds   = new Set();
+    _row46BookingMap = {};
     const sheetEntry = annualSheets.find(e => e.sheetId);
     let sheetBookings = [];
 
