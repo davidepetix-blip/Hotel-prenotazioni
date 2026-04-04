@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '32'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '33'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -495,7 +495,11 @@ function bookingToDbRow(b, fonte = 'app') {
     ? `${String(b.e.getDate()).padStart(2,'0')}/${String(b.e.getMonth()+1).padStart(2,'0')}/${b.e.getFullYear()}`
     : (b.al || '');
   const anno = b.s instanceof Date ? b.s.getFullYear() : (b.anno || new Date().getFullYear());
-  const arr = new Array(12).fill('');
+
+  // PRENOTAZIONI ha 13 colonne (A-M): ID,CAMERA,NOME,DAL,AL,DISP,NOTE,COLORE,ANNO,FONTE,TS,DELETED,CLIENTE_ID
+  // deletedAt e deleteReason sono usati SOLO dal foglio CESTINO (colonne N-O) e vengono
+  // aggiunti separatamente da archiviaInCestino — NON fanno parte di questo array base.
+  const arr = new Array(13).fill('');
   arr[DB_COLS.ID-1]         = b.dbId || b.id || genBookingId(anno);
   arr[DB_COLS.CAMERA-1]     = b.cameraName || roomName(b.r) || '';
   arr[DB_COLS.NOME-1]       = b.n || '';
@@ -508,8 +512,6 @@ function bookingToDbRow(b, fonte = 'app') {
   arr[DB_COLS.FONTE-1]      = fonte;
   arr[DB_COLS.TS-1]         = b.ts || nowISO();
   arr[DB_COLS.DELETED-1]    = b.deleted ? 'true' : '';
-  arr[12]                   = b.deletedAt || '';
-  arr[13]                   = b.deleteReason || '';
   arr[DB_COLS.CLIENTE_ID-1] = b.clienteId || '';
   return arr;
 }
@@ -779,10 +781,16 @@ async function archiviaInCestino(lista, reason) {
   await ensureCestinoHeaders();
 
   const righe = lista.map(b => {
-    const row = bookingToDbRow(b, b.fonte || 'app');
-    row[DB_COLS.DELETED-1] = 'true';
-    row[12] = ts; row[13] = reason || 'motivo non specificato'; row[14] = b.dbRow || '';
-    return row;
+    // CESTINO ha 15 colonne: le prime 12 (ID→DELETED) coincidono con PRENOTAZIONI,
+    // poi DELETED_AT(13), REASON(14), RIGA_ORIGINALE(15) — senza CLIENTE_ID.
+    // Prendiamo solo i primi 12 elementi da bookingToDbRow (slice esclude CLIENTE_ID),
+    // poi aggiungiamo le 3 colonne specifiche del CESTINO.
+    const base = bookingToDbRow(b, b.fonte || 'app').slice(0, 12);
+    base[DB_COLS.DELETED-1] = 'true'; // indice 11 = DELETED
+    base.push(ts);                     // indice 12 = DELETED_AT
+    base.push(reason || 'motivo non specificato'); // indice 13 = REASON
+    base.push(b.dbRow || '');          // indice 14 = RIGA_ORIGINALE
+    return base;
   });
   const urlAppend = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
   await apiFetch(urlAppend, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({values:righe}) });
@@ -818,10 +826,13 @@ async function archiviaInCestino(lista, reason) {
       }
     } else {
       // Fallback: aggiorna con DELETED=true se non riusciamo a ottenere lo sheetId
+      // Scrive solo le colonne PRENOTAZIONI (A-M), senza aggiungere DELETED_AT/REASON
       const data = conRiga.map(b => {
         const row = bookingToDbRow(b, b.fonte || 'app');
-        row[DB_COLS.DELETED-1] = 'true'; row[DB_COLS.TS-1] = ts; row[12] = ts; row[13] = reason;
-        const lastCol = String.fromCharCode(64 + row.length);
+        row[DB_COLS.DELETED-1] = 'true';
+        row[DB_COLS.TS-1]      = ts;
+        // CLIENTE_ID rimane in posizione 12 — non aggiungiamo campi del CESTINO
+        const lastCol = String.fromCharCode(64 + row.length); // 'M' per 13 colonne
         return { range: `${DB_SHEET_NAME}!A${b.dbRow}:${lastCol}${b.dbRow}`, values: [row] };
       });
       for (let i = 0; i < data.length; i += 1000) {
