@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '33'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '34'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -535,7 +535,7 @@ function dbRowToBooking(row, rowNum) {
     dbRow:      rowNum,
     r:          room.id,
     cameraName: camName,
-    n:          get(DB_COLS.NOME),
+    n:          get(DB_COLS.NOME).replace(/\s*\+\s*$/, '').trim(),
     d:          get(DB_COLS.DISP),
     c:          get(DB_COLS.COLORE) || '#D9D9D9',
     s:          sd,
@@ -976,7 +976,7 @@ async function readAnnualSheet(entry) {
               }
             }
             result.push({
-              id:nid++, r:room.id, n:b.nome||'—', d:b.disposizione||'',
+              id:nid++, r:room.id, n:(b.nome||'—').replace(/\s*\+\s*$/, '').trim(), d:b.disposizione||'',
               c:colorHex, s:new Date(yy,mm-1,dd,12), e:new Date(ye,me-1,de,12),
               note:b.note||'', fromSheet:true, sheetName:sName,
               cameraName:room.name, sheetId,
@@ -1125,7 +1125,7 @@ function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
     const _mapKey = sName + '|' + room.name + '|' + b.dal;
     const _dbId   = _row46BookingMap[_mapKey] || null;
     result.push({
-      id: nid++, r: room.id, n: b.nome||'—', d: b.disposizione||'',
+      id: nid++, r: room.id, n: (b.nome||'—').replace(/\s*\+\s*$/, '').trim(), d: b.disposizione||'',
       c: color, s: new Date(yy,mm-1,dd,12), e: new Date(ye,me-1,de,12),
       note: b.note||'', fromSheet:true, fromJSONAnnuale:true,
       sheetName:sName, sheetId, cameraName:room.name,
