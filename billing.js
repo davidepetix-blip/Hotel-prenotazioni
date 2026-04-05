@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '25'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '27'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -521,12 +521,13 @@ function getAppartMode(bid, notti) {
 }
 function toggleAppartMode(bid) {
   const b = bookings.find(x=>x.id===bid); if(!b) return;
-  const cur = getAppartMode(bid, nights(b.s,b.e));
+  const ck = b.dbId || String(bid);
+  const cur = getAppartMode(ck, nights(b.s,b.e));
   const ciclo = { 'giornaliera':'mensile', 'mensile':'standard', 'standard':'giornaliera' };
   const next = ciclo[cur] || 'giornaliera';
-  if (_contiDatiCache[bid]) _contiDatiCache[bid].appartMode = next;
-  else _contiDatiCache[bid] = { extra:[], override:null, appartMode:next, contoEmesso:null, dbRow:null };
-  saveContoDati(bid, { appartMode: next });
+  if (_contiDatiCache[ck]) _contiDatiCache[ck].appartMode = next;
+  else _contiDatiCache[ck] = { extra:[], override:null, appartMode:next, contoEmesso:null, dbRow:null };
+  saveContoDati(ck, { appartMode: next });
   refreshBillTab(bid);
 }
 
@@ -1025,12 +1026,13 @@ function resetOverride(bid, btn) {
 function renderDrawerBill(b) {
   const room     = ROOMS.find(r=>r.id===b.r);
   const isAppart = room?.g === 'Appartamenti';
-  const ext      = getExtraForBooking(b.id);
-  const base     = isAppart ? calcolaContoAppart(b, room, ext) : calcolaConto(b, ext);
-  // Applica override se presenti
-  const ovs      = getContoOverrides(b.id);
-  // Usa sempre getContoEffettivo per avere totale e righe corretti (incluso sconto ricalcolato)
-  const _eff   = ovs ? getContoEffettivo(b.id) : null;
+  // Cache key: sempre BLIP_ID se disponibile — il numeric b.id è diverso dalla chiave
+  // usata da preloadContoDati che indicizza per b.dbId
+  const ck   = b.dbId || String(b.id);
+  const ext  = getExtraForBooking(ck);
+  const base = isAppart ? calcolaContoAppart(b, room, ext) : calcolaConto(b, ext);
+  const ovs  = getContoOverrides(ck);
+  const _eff = ovs ? getContoEffettivo(b.id) : null;
   const righe  = _eff ? _eff.righe : base.righe;
   const totale = _eff ? _eff.totale : parseFloat(base.righe.reduce((s,r)=>s+r.total,0).toFixed(2));
   const hasOv  = ovs !== null;
@@ -1230,6 +1232,15 @@ function refreshBillTab(bid) {
   }
 }
 
+// ── Helper: risolve la chiave corretta per _contiDatiCache ──────────
+// b.id è numerico (rowNum*10000+1), ma _contiDatiCache è indicizzato
+// per b.dbId (BLIP_ID). Usare il numeric id causa una chiave sbagliata
+// e gli extra sembrano non aggiungersi o sparire tra sessioni.
+function _ck(bid) {
+  const b = bookings.find(x => x.id === bid);
+  return b?.dbId || String(bid);
+}
+
 function addExtraVoce(bid) {
   const cfg   = loadBillSettings();
   const sel   = document.getElementById(`extraType_${bid}`);
@@ -1240,9 +1251,10 @@ function addExtraVoce(bid) {
   const price = parseFloat(document.getElementById(`extraPrice_${bid}`)?.value||(def?.prezzo||0));
   const label = def?.label || id;
   const unita = def?.unita || '';
-  const extras = getExtraForBooking(bid);
+  const ck = _ck(bid);
+  const extras = getExtraForBooking(ck);
   extras.push({ label, qty, unitPrice:price, unita });
-  setExtraForBooking(bid, extras);
+  setExtraForBooking(ck, extras);
   refreshBillTab(bid);
 }
 
@@ -1251,15 +1263,17 @@ function addExtraLibero(bid) {
   const qty   = parseFloat(document.getElementById(`extraQty_${bid}`)?.value||1);
   const price = parseFloat(document.getElementById(`extraPrice_${bid}`)?.value||0);
   if (!label) return;
-  const extras = getExtraForBooking(bid);
+  const ck = _ck(bid);
+  const extras = getExtraForBooking(ck);
   extras.push({ label, qty, unitPrice:price, unita:'' });
-  setExtraForBooking(bid, extras);
+  setExtraForBooking(ck, extras);
   refreshBillTab(bid);
 }
 
 function aggiungiConsumi(bid) {
   const cfg    = loadBillSettings();
-  const extras = getExtraForBooking(bid);
+  const ck     = _ck(bid);
+  const extras = getExtraForBooking(ck);
   const kwhS   = parseFloat(document.getElementById(`kwh_start_${bid}`)?.value||0);
   const kwhE   = parseFloat(document.getElementById(`kwh_end_${bid}`)?.value||0);
   const mcS    = parseFloat(document.getElementById(`mc_start_${bid}`)?.value||0);
@@ -1278,14 +1292,15 @@ function aggiungiConsumi(bid) {
     const price = defAcqua?.prezzo||0;
     extras.push({ label:'💧 Consumo idrico', qty:diff, unitPrice:price, unita:'m³' });
   }
-  setExtraForBooking(bid, extras);
+  setExtraForBooking(ck, extras);
   refreshBillTab(bid);
 }
 
 function removeExtra(bid, idx) {
-  const extras = getExtraForBooking(bid);
+  const ck = _ck(bid);
+  const extras = getExtraForBooking(ck);
   extras.splice(idx, 1);
-  setExtraForBooking(bid, extras);
+  setExtraForBooking(ck, extras);
   refreshBillTab(bid);
 }
 
@@ -1305,11 +1320,12 @@ function drTab(el, showId) {
 
 function getContoEffettivo(bid) {
   const b    = bookings.find(x=>x.id===bid); if(!b) return null;
+  const ck   = b.dbId || String(bid);
   const room = ROOMS.find(r=>r.id===b.r);
   const isA  = room?.g==='Appartamenti';
-  const ext  = getExtraForBooking(bid);
+  const ext  = getExtraForBooking(ck);
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
-  const ovs  = getContoOverrides(bid);
+  const ovs  = getContoOverrides(ck);
   if (ovs) {
     // Righe base dagli ovs (pernottamento, modifiche manuali) — escludi sconti automatici
     // che vanno sempre ricalcolati sul totale attuale
@@ -1333,7 +1349,7 @@ function getContoEffettivo(bid) {
 
     // Extras manuali dagli ovs (flag _manuale) o da getExtraForBooking
     const extrasMan = ovsBase.filter(r => r.tipo === 'extra');
-    const extrasExt = getExtraForBooking(bid).filter(e =>
+    const extrasExt = getExtraForBooking(ck).filter(e =>
       !extrasMan.some(m => m.label === e.label)
     ).map(e => ({ label:e.label, qty:e.qty, unitPrice:e.unitPrice,
       total:parseFloat((e.qty*e.unitPrice).toFixed(2)), tipo:'extra', _manuale:true }));
@@ -1754,6 +1770,11 @@ function esportaXML() {
 // ─────────────────────────────────────────────────────────────────
 
 let _contiTab = 'lista';
+// Filtro periodo conti: null = nessun filtro, altrimenti {dal, al} in formato YYYY-MM-DD
+let _contiFiltro = (() => {
+  const n = new Date();
+  return { dal: `${n.getFullYear()}-01-01`, al: `${n.getFullYear()}-12-31` };
+})();
 
 function openConti()  { document.getElementById('contiScreen').classList.add('open'); renderContiTab(_contiTab); }
 function closeConti() { document.getElementById('contiScreen').classList.remove('open'); }
@@ -1769,12 +1790,37 @@ function switchContiTab(tab) {
 }
 function renderContiTab(tab) {
   const body = document.getElementById('contiBody');
+  // Barra filtro periodo — solo nei tab con lista conti
+  const showFilter = (tab === 'lista' || tab === 'appart');
+  const n = new Date();
+  const filterBar = showFilter ? `
+    <div style="display:flex;align-items:center;gap:6px;padding:8px 12px 4px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">📅 Periodo:</span>
+      <input type="date" id="filtroDal" value="${_contiFiltro?.dal||''}"
+        style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text)"
+        onchange="_contiFiltro=_contiFiltro||{};_contiFiltro.dal=this.value;renderContiTab('${tab}')">
+      <span style="font-size:10px;color:var(--text3)">→</span>
+      <input type="date" id="filtroAl" value="${_contiFiltro?.al||''}"
+        style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text)"
+        onchange="_contiFiltro=_contiFiltro||{};_contiFiltro.al=this.value;renderContiTab('${tab}')">
+      <button onclick="_contiFiltro={dal:'${n.getFullYear()}-01-01',al:'${n.getFullYear()}-12-31'};renderContiTab('${tab}')"
+        style="font-size:10px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">
+        ${n.getFullYear()}
+      </button>
+      <button onclick="_contiFiltro=null;renderContiTab('${tab}')"
+        style="font-size:10px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">
+        Tutti
+      </button>
+    </div>` : '';
+
   if (tab==='lista') {
-    try { body.innerHTML = renderContiLista(); }
-    catch(e) { body.innerHTML = '<div style="padding:20px;color:var(--danger)">⚠ Errore lista conti: ' + e.message + '</div>'; console.error('renderContiLista:', e); }
+    let html = '';
+    try { html = renderContiLista(); }
+    catch(e) { html = '<div style="padding:20px;color:var(--danger)">⚠ Errore lista conti: ' + e.message + '</div>'; console.error('renderContiLista:', e); }
+    body.innerHTML = filterBar + html;
   }
-  if (tab==='gruppo')  { body.innerHTML = renderContoGruppo(); bindContoGruppo(); }
-  if (tab==='appart')  body.innerHTML = renderContiAppart();
+  if (tab==='gruppo')  { body.innerHTML = filterBar.replace(/renderContiTab\('lista'\)/g,"renderContiTab('gruppo')") + renderContoGruppo(); bindContoGruppo(); }
+  if (tab==='appart')  body.innerHTML = filterBar + renderContiAppart();
   if (tab==='tariffe') body.innerHTML = renderListino();
 }
 
@@ -1787,10 +1833,26 @@ const STATO_CFG = {
 };
 
 function renderContiLista() {
-  const conti = loadConti();
-  if (!conti.length) return `<div class="empty" style="padding:40px 0">
+  const tuttiConti = loadConti();
+  // Applica filtro periodo sul check-in del conto
+  const conti = _contiFiltro
+    ? tuttiConti.filter(c => {
+        if (!c.checkin) return true;
+        const ci = c.checkin.slice(0, 10);
+        const ok_dal = !_contiFiltro.dal || ci >= _contiFiltro.dal;
+        const ok_al  = !_contiFiltro.al  || ci <= _contiFiltro.al;
+        return ok_dal && ok_al;
+      })
+    : tuttiConti;
+
+  if (!tuttiConti.length) return `<div class="empty" style="padding:40px 0">
     <div class="emptyicon">📋</div>
     <div style="font-size:12px;color:var(--text3)">Nessun conto emesso.<br>Apri una prenotazione → tab 💶 Conto.</div>
+  </div>`;
+
+  if (!conti.length) return `<div class="empty" style="padding:30px 0">
+    <div class="emptyicon">🔍</div>
+    <div style="font-size:12px;color:var(--text3)">Nessun conto nel periodo selezionato.</div>
   </div>`;
 
   const ordine = ['pagato','fatturato','emesso','bozza'];
