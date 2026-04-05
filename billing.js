@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '28'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '29'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -804,11 +804,11 @@ function calcolaConto(booking, extraRows = []) {
 
   if (convenzione) {
     const sc = parseFloat((subtotale * convenzione.sconto / 100).toFixed(2));
-    righe.push({ label:`Conv. "${convenzione.nome}" -${convenzione.sconto}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'conv', _auto:true });
+    righe.push({ label:`Conv. "${convenzione.nome}" -${convenzione.sconto}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'conv' });
     subtotale -= sc;
   } else if (scontoDurata > 0) {
     const sc = parseFloat((subtotale * scontoDurata / 100).toFixed(2));
-    righe.push({ label:`Sconto lunga durata (${notti} notti) -${scontoDurata}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'lunga', _auto:true });
+    righe.push({ label:`Sconto lunga durata (${notti} notti) -${scontoDurata}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'lunga' });
     subtotale -= sc;
   }
 
@@ -829,11 +829,13 @@ function calcolaContoAppart(b, room, extras) {
   const cfg    = loadBillSettings();
   const notti  = nights(b.s, b.e);
   const ov     = cfg.tariffeCamere?.[room.id] || {};
-  const modo   = getAppartMode(b.id, notti); // 'giornaliera' | 'mensile' | 'standard'
+  const ck     = b.dbId || String(b.id);
+  const modo   = getAppartMode(ck, notti); // 'giornaliera' | 'mensile' | 'standard'
 
   // Modalità standard: usa disposizione letti come un normale albergo
+  // calcolaConto include già gli sconti per lunga durata
   if (modo === 'standard') {
-    return calcolaConto(b, extras); // delega al calcolo albergo
+    return calcolaConto(b, extras);
   }
 
   const usaM   = modo === 'mensile';
@@ -1327,23 +1329,32 @@ function getContoEffettivo(bid) {
   const ovs  = getContoOverrides(ck);
   if (ovs) {
     // Righe base dagli ovs (pernottamento, modifiche manuali) — escludi sconti automatici
-    // che vanno sempre ricalcolati sul totale attuale
-    const ovsBase = ovs.filter(r => r.tipo !== 'sconto' || r._manuale);
-    // Calcola totale pernottamento dagli ovs base
+    // Separa le righe: base/extra restano, sconti vengono gestiti separatamente
+    const ovsBase   = ovs.filter(r => r.tipo !== 'sconto' || r._manuale);
+    const ovsSconti = ovs.filter(r => r.tipo === 'sconto');
+    // Se in ovs è presente uno sconto (aggiunto manualmente o rimasto dal calcolo base)
+    // lo usiamo così com'è. Se in ovs NON c'è nessuno sconto significa che l'utente lo
+    // ha rimosso esplicitamente — non lo ricalcoliamo.
+    const hasUserSconto = ovsSconti.length > 0;
+
+    // Calcola totale pernottamento dagli ovs base (esclusi sconti ed extra)
     const totaleBase = parseFloat(ovsBase.filter(r=>r.tipo!=='extra').reduce((s,r)=>s+r.total,0).toFixed(2));
 
-    // Ricalcola sconto lungo periodo sul totale attuale (non sul valore in ovs)
+    // Ricalcola sconto lungo periodo SOLO se l'utente non ha rimosso tutti gli sconti
     const cfg = loadBillSettings();
     const notti = nights(b.s, b.e);
     const scontiLp = (cfg.scontiLungoPeriodo || [])
       .filter(s => s.minNotti > 0 && s.percSconto > 0)
       .sort((a,b) => b.minNotti - a.minNotti);
     const sconto = scontiLp.find(s => notti >= s.minNotti);
-    const scontoAutoLp = sconto && totaleBase > 0 ? {
+    // Ricrea lo sconto solo se il conto base ne aveva uno (da calcolo) e l'utente
+    // non lo ha rimosso esplicitamente da ovs
+    const baseHadSconto = base.righe.some(r => r.tipo === 'sconto');
+    const scontoAutoLp = (sconto && totaleBase > 0 && hasUserSconto && baseHadSconto) ? {
       label: sconto.label || `Sconto lunga durata (${notti} notti) -${sconto.percSconto}%`,
       qty: null, unitPrice: null,
       total: -parseFloat((totaleBase * sconto.percSconto / 100).toFixed(2)),
-      tipo: 'sconto', badge: 'lunga', _auto: true
+      tipo: 'sconto', badge: 'lunga'
     } : null;
 
     // Extras manuali dagli ovs (flag _manuale) o da getExtraForBooking
@@ -2122,11 +2133,20 @@ function confermaPagamento(contoId, importo, tipo, modalita, dataStr, riferiment
     showToast(`✓ Acconto €${importo.toFixed(2)} registrato — residuo €${(totaleConto-nuovoTotale).toFixed(2)}`, 'success');
   }
   renderContiTab('lista');
-  // Aggiorna anche il drawer se è aperto sulla stessa prenotazione
+  // Aggiorna drawer per la prenotazione principale
   const _bid = conto.bookingId;
   if (_bid && typeof refreshBillTab === 'function') {
     const _b = bookings.find(b => b.dbId === String(_bid) || String(b.id) === String(_bid));
     if (_b) refreshBillTab(_b.id);
+  }
+  // Se è un conto di gruppo, aggiorna il drawer anche per le altre prenotazioni del gruppo
+  if (conto.bookingIds?.length > 1 && typeof refreshBillTab === 'function') {
+    conto.bookingIds.forEach(bid => {
+      const _b = bookings.find(b => b.dbId === String(bid) || String(b.id) === String(bid));
+      if (_b && _b.id !== (bookings.find(x => x.dbId === String(_bid) || String(x.id) === String(_bid))?.id)) {
+        refreshBillTab(_b.id);
+      }
+    });
   }
   if (typeof render === 'function') render();
 }
@@ -2462,57 +2482,67 @@ function aggiornaRiepilogoGruppo() {
 function emettiContoGruppo() {
   const g = window._gruppoCorrente;
   if (!g || !g.bookings?.length) return;
-  const conti  = loadConti();
+  const conti   = loadConti();
   const groupId = 'G' + Date.now();
-  const ora    = new Date().toISOString();
+  const ora     = new Date().toISOString();
 
-  // Crea una riga per ogni prenotazione del gruppo, collegate dallo stesso groupId
+  // ── Documento unico con totale unificato ─────────────────────────
+  // Tutte le camere del gruppo confluiscono in un solo conto con groupId.
+  // I bookingId delle singole prenotazioni sono elencati in bookingIds[].
+  // bookingId = primo bookingId (per compatibilità con il drawer singola camera).
+  const righeGruppo = [];
+  let totaleGruppo  = 0;
+
   g.bookings.forEach(b => {
-    const room = ROOMS.find(r=>r.id===b.r);
-    const n    = nights(b.s, b.e);
-    const conto= calcolaConto(b, getExtraForBooking(b.id));
-    const idx  = conti.findIndex(x => x.bookingId === b.id);
-    const doc  = {
-      id:          idx >= 0 ? conti[idx].id : ('C'+Date.now()+b.id),
-      bookingId:   b.id,
-      groupId:     groupId,
-      nome:        b.n,
-      camera:      room?.name || roomName(b.r),
-      checkin:     b.s.toISOString(),
-      checkout:    b.e.toISOString(),
-      righe:       conto.righe,
-      totale:      conto.totale,
-      status:      'emesso',
-      emessoIl:    ora,
-      fatturatoIl: null, tipoDoc:null, numDoc:null,
-      pagatoIl:    null, modalitaPag:null,
-      isAppart:    false, ts: ora
-    };
-    if (idx >= 0) conti[idx] = doc; else conti.unshift(doc);
+    const room  = ROOMS.find(r => r.id === b.r);
+    const conto = calcolaConto(b, getExtraForBooking(_ck(b.id)));
+    const camLabel = room?.name || roomName(b.r);
+    // Aggiungi una riga-intestazione per la camera
+    conto.righe.forEach(r => {
+      righeGruppo.push({ ...r, label: `[${camLabel}] ${r.label}` });
+    });
+    totaleGruppo += conto.totale;
   });
 
-  // Se ci sono extra di gruppo, aggiungi una riga extra con groupId
+  // Extra di gruppo se presenti
   if (g.extraGruppo?.length) {
-    const extraDoc = {
-      id: 'CE' + Date.now(),
-      bookingId: null,
-      groupId: groupId,
-      nome: g.nome + ' (extra gruppo)',
-      camera: '—',
-      checkin: (g.dalD||new Date()).toISOString(),
-      checkout: (g.alD||new Date()).toISOString(),
-      righe: g.extraGruppo,
-      totale: g.extraGruppo.reduce((s,r)=>s+r.total, 0),
-      status: 'emesso', emessoIl: ora,
-      fatturatoIl:null, tipoDoc:null, numDoc:null,
-      pagatoIl:null, modalitaPag:null, ts:ora
-    };
-    conti.unshift(extraDoc);
+    g.extraGruppo.forEach(r => righeGruppo.push({ ...r, label: `[Extra gruppo] ${r.label}` }));
+    totaleGruppo += g.extraGruppo.reduce((s, r) => s + r.total, 0);
   }
+  totaleGruppo = parseFloat(totaleGruppo.toFixed(2));
 
+  const primoBookingId = g.bookings[0]?.dbId || g.bookings[0]?.id;
+  const tuttiBookingIds = g.bookings.map(b => b.dbId || String(b.id));
+
+  // Cerca se esiste già un conto gruppo per questi booking
+  const existingIdx = conti.findIndex(c => c.groupId &&
+    tuttiBookingIds.includes(String(c.bookingId)));
+
+  const doc = {
+    id:          existingIdx >= 0 ? conti[existingIdx].id : ('C' + Date.now()),
+    bookingId:   primoBookingId,          // riferimento principale (per drill-down)
+    bookingIds:  tuttiBookingIds,          // tutti i booking del gruppo
+    groupId:     groupId,
+    nome:        g.nome,
+    camera:      g.bookings.map(b => ROOMS.find(r=>r.id===b.r)?.name || roomName(b.r)).join(', '),
+    checkin:     g.dalD ? g.dalD.toISOString() : g.bookings[0]?.s.toISOString(),
+    checkout:    g.alD  ? g.alD.toISOString()  : g.bookings[g.bookings.length-1]?.e.toISOString(),
+    righe:       righeGruppo,
+    totale:      totaleGruppo,
+    status:      'emesso',
+    emessoIl:    ora,
+    fatturatoIl: existingIdx >= 0 ? conti[existingIdx].fatturatoIl : null,
+    tipoDoc:     existingIdx >= 0 ? conti[existingIdx].tipoDoc     : null,
+    numDoc:      existingIdx >= 0 ? conti[existingIdx].numDoc      : null,
+    pagatoIl:    existingIdx >= 0 ? conti[existingIdx].pagatoIl    : null,
+    modalitaPag: existingIdx >= 0 ? conti[existingIdx].modalitaPag : null,
+    isAppart: false, ts: ora,
+  };
+
+  if (existingIdx >= 0) conti[existingIdx] = doc; else conti.unshift(doc);
   saveConti(conti);
   apriPdfGruppo();
-  showToast(`✓ Conto gruppo salvato — ${g.bookings.length} prenotazioni`, 'success');
+  showToast(`✓ Conto gruppo salvato — ${g.bookings.length} camere · ${totaleGruppo.toFixed(2)}€`, 'success');
 }
 
 function apriPdfGruppo() {
