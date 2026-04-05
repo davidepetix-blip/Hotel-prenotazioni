@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '29'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '30'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -300,12 +300,21 @@ async function loadPagamentiPerBooking(bid) {
 function getPagamentiPerBookingSync(bid) {
   if (!_pagamentiCache) return [];
   const key = String(bid);
-  // Cerca per bid esatto, poi fallback con dbId/id della prenotazione
+  // Cerca per bid esatto (BLIP_ID o numerico)
   const exact = _pagamentiCache.filter(p => String(p.bookingId) === key);
   if (exact.length > 0) return exact;
-  // Fallback: cerca anche per id numerico se bid è BLIP_ID
+  // Fallback 1: bid è BLIP_ID → cerca pagamenti con id numerico della prenotazione
   const b = bookings.find(x => x.dbId === key);
-  if (b) return _pagamentiCache.filter(p => String(p.bookingId) === String(b.id));
+  if (b) {
+    const byNumeric = _pagamentiCache.filter(p => String(p.bookingId) === String(b.id));
+    if (byNumeric.length > 0) return byNumeric;
+  }
+  // Fallback 2: bid è numerico → cerca la prenotazione e prova con il suo dbId
+  const bByNum = bookings.find(x => String(x.id) === key);
+  if (bByNum?.dbId) {
+    const byBlip = _pagamentiCache.filter(p => String(p.bookingId) === String(bByNum.dbId));
+    if (byBlip.length > 0) return byBlip;
+  }
   return [];
 }
 
@@ -533,12 +542,15 @@ function toggleAppartMode(bid) {
 
 // Conti emessi: salvati nella riga del conto specifica
 // Stato conto SEMPRE calcolato dai movimenti — non persistito
-// Questo evita stati incoerenti dopo pagamenti/eliminazioni/modifiche
 function getStatoContoCalcolato(conto) {
   if (!conto) return null;
   const totale = parseFloat(conto.totale || 0);
   const pagato = getTotalePagatoPerBooking(String(conto.bookingId));
+  // Pagamento trovato in cache → usa quello
   if (totale > 0 && pagato >= totale - 0.01) return 'pagato';
+  // Nessun pagamento in cache ma il conto ha pagatoIl salvato → considera pagato
+  // (si verifica quando il pagamento era registrato con un bookingId legacy diverso)
+  if (totale > 0 && pagato === 0 && conto.pagatoIl) return 'pagato';
   if (conto.tipoDoc || conto.numDoc || conto.fatturatoIl) return 'fatturato';
   if (conto.emessoIl || conto.status === 'emesso' || conto.status === 'fatturato' || conto.status === 'pagato') return 'emesso';
   return 'bozza';
