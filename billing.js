@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '27'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '28'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -804,11 +804,11 @@ function calcolaConto(booking, extraRows = []) {
 
   if (convenzione) {
     const sc = parseFloat((subtotale * convenzione.sconto / 100).toFixed(2));
-    righe.push({ label:`Conv. "${convenzione.nome}" -${convenzione.sconto}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'conv' });
+    righe.push({ label:`Conv. "${convenzione.nome}" -${convenzione.sconto}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'conv', _auto:true });
     subtotale -= sc;
   } else if (scontoDurata > 0) {
     const sc = parseFloat((subtotale * scontoDurata / 100).toFixed(2));
-    righe.push({ label:`Sconto lunga durata (${notti} notti) -${scontoDurata}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'lunga' });
+    righe.push({ label:`Sconto lunga durata (${notti} notti) -${scontoDurata}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', badge:'lunga', _auto:true });
     subtotale -= sc;
   }
 
@@ -881,11 +881,12 @@ function calcolaContoAppart(b, room, extras) {
 // Apri editor inline per una riga del conto (override)
 function editRigaConto(bid, idx) {
   const b = bookings.find(x=>x.id===bid); if(!b) return;
+  const ck   = _ck(bid);
   const room = ROOMS.find(r=>r.id===b.r);
   const isA  = room?.g==='Appartamenti';
-  const ext  = getExtraForBooking(bid);
+  const ext  = getExtraForBooking(ck);
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
-  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const ovs  = getContoOverrides(ck) || base.righe.map(r=>({...r}));
   const r    = ovs[idx]; if(!r) return;
 
   const overlay = document.createElement('div');
@@ -927,11 +928,12 @@ function editRigaConto(bid, idx) {
 
 function salvaOverrideRiga(bid, idx, btn) {
   const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const ck   = _ck(bid);
   const room = ROOMS.find(r=>r.id===b.r);
   const isA  = room?.g==='Appartamenti';
-  const ext  = getExtraForBooking(bid);
+  const ext  = getExtraForBooking(ck);
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
-  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const ovs  = getContoOverrides(ck) || base.righe.map(r=>({...r}));
 
   const label    = document.getElementById('_ovLabel')?.value.trim() || ovs[idx].label;
   const qty      = parseFloat(document.getElementById('_ovQty')?.value);
@@ -951,7 +953,7 @@ function salvaOverrideRiga(bid, idx, btn) {
   const priceFinal = !isNaN(price) ? price : null;
 
   ovs[idx] = { ...ovs[idx], label, qty:qtyFinal, unitPrice:priceFinal, total: parseFloat(total.toFixed(2)) };
-  setContoOverrides(bid, ovs);
+  setContoOverrides(ck, ovs);
   markContoDirty(bid);
   btn.closest('[style*=fixed]').remove();
   refreshBillTab(bid);
@@ -959,19 +961,20 @@ function salvaOverrideRiga(bid, idx, btn) {
 
 function rimuoviRigaPerLabel(bid, label) {
   const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const ck   = _ck(bid);
   const room = ROOMS.find(r=>r.id===b.r);
   const isA  = room?.g==='Appartamenti';
-  const ext  = getExtraForBooking(bid);
+  const ext  = getExtraForBooking(ck);
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
-  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const ovs  = getContoOverrides(ck) || base.righe.map(r=>({...r}));
   const idx  = ovs.findIndex(r => r.label === label);
   if (idx < 0) { showToast('Voce non trovata', 'error'); return; }
   // Rimuovi anche dagli extras se presente
-  const extras = getExtraForBooking(bid);
+  const extras = getExtraForBooking(ck);
   const ei = extras.findIndex(e => e.label === label);
-  if (ei >= 0) { extras.splice(ei, 1); setExtraForBooking(bid, extras); }
+  if (ei >= 0) { extras.splice(ei, 1); setExtraForBooking(ck, extras); }
   ovs.splice(idx, 1);
-  setContoOverrides(bid, ovs.length ? ovs : null);
+  setContoOverrides(ck, ovs.length ? ovs : null);
   markContoDirty(bid);
   refreshBillTab(bid);
 }
@@ -979,46 +982,42 @@ function rimuoviRigaPerLabel(bid, label) {
 function editRigaContoPerLabel(bid, label, isAuto) {
   if (isAuto) { showToast('Sconto automatico — non modificabile manualmente', 'info'); return; }
   const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const ck   = _ck(bid);
   const room = ROOMS.find(r=>r.id===b.r);
   const isA  = room?.g==='Appartamenti';
-  const ext  = getExtraForBooking(bid);
+  const ext  = getExtraForBooking(ck);
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
-  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const ovs  = getContoOverrides(ck) || base.righe.map(r=>({...r}));
   const idx  = ovs.findIndex(r => r.label === label);
   if (idx >= 0) { editRigaConto(bid, idx); return; }
   // Non trovato in ovs — crea ovs dalla base e poi modifica
   const baseOvs = base.righe.map(r=>({...r}));
   const bi = baseOvs.findIndex(r => r.label === label);
-  if (bi >= 0) { setContoOverrides(bid, baseOvs); editRigaConto(bid, bi); }
+  if (bi >= 0) { setContoOverrides(ck, baseOvs); editRigaConto(bid, bi); }
 }
 
 function rimuoviOverrideRiga(bid, idx, btn) {
   const b    = bookings.find(x=>x.id===bid); if(!b) return;
+  const ck   = _ck(bid);
   const room = ROOMS.find(r=>r.id===b.r);
   const isA  = room?.g==='Appartamenti';
-  const ext  = getExtraForBooking(bid);
+  const ext  = getExtraForBooking(ck);
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
-  const ovs  = getContoOverrides(bid) || base.righe.map(r=>({...r}));
+  const ovs  = getContoOverrides(ck) || base.righe.map(r=>({...r}));
   const riga = ovs[idx];
-  // Se la riga è un extra aggiunto manualmente, rimuovila anche da extras
   if (riga && (riga.tipo === 'extra' || riga.tipo === 'sconto')) {
-    const extras = getExtraForBooking(bid);
+    const extras = getExtraForBooking(ck);
     const ei = extras.findIndex(e => e.label === riga.label);
-    if (ei >= 0) { extras.splice(ei, 1); setExtraForBooking(bid, extras); }
+    if (ei >= 0) { extras.splice(ei, 1); setExtraForBooking(ck, extras); }
   }
   ovs.splice(idx, 1);
-  // Se rimane solo la riga base, togli gli ovs (torna al calcolo automatico)
-  if (ovs.length === 0) {
-    setContoOverrides(bid, null);
-  } else {
-    setContoOverrides(bid, ovs);
-  }
+  setContoOverrides(ck, ovs.length ? ovs : null);
   try { btn.closest('[style*=fixed]').remove(); } catch(e) {}
   refreshBillTab(bid);
 }
 
 function resetOverride(bid, btn) {
-  setContoOverrides(bid, null);
+  setContoOverrides(_ck(bid), null);
   btn.closest('[style*=fixed]').remove();
   refreshBillTab(bid);
 }
@@ -1054,7 +1053,7 @@ function renderDrawerBill(b) {
   let toggleHtml = '';
   if (isAppart) {
     const notti  = nights(b.s, b.e);
-    const modo   = getAppartMode(b.id, notti);
+    const modo   = getAppartMode(ck, notti);
     const cfg    = loadBillSettings();
     const ov     = cfg.tariffeCamere?.[b.r]||{};
     const modoLabel = { giornaliera:'Giornaliero', mensile:'Mensile', standard:'Std. letti' };
