@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '31'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '32'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -557,15 +557,21 @@ function getStatoContoCalcolato(conto) {
 }
 
 function loadConti() {
+  const seen = new Set(); // deduplica per id conto — evita che gli stub dei membri del gruppo
+                          // appaiano come voci separate nella lista
   return Object.entries(_contiDatiCache)
     .filter(([,d]) => d.contoEmesso)
     .map(([,d]) => {
       const c = { ...d.contoEmesso };
-      // Stato sempre calcolato dai pagamenti reali — mai dal campo salvato
       c.status    = getStatoContoCalcolato(c);
       c.totPagato = getTotalePagatoPerBooking(String(c.bookingId));
       c.residuo   = Math.max(0, parseFloat(c.totale || 0) - (c.totPagato || 0));
       return c;
+    })
+    .filter(c => {
+      if (seen.has(c.id)) return false; // stub duplicato già inserito
+      seen.add(c.id);
+      return true;
     })
     .sort((a,b) => (b.emessoIl||'').localeCompare(a.emessoIl||''));
 }
@@ -2409,6 +2415,18 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
   let righeGruppo = [];
   let totaleGruppo = 0;
 
+  // ── Cerca il master già salvato per questo gruppo ──────────────
+  // Confronta i bookingId delle prenotazioni trovate con quelli del master
+  const tuttiIds = trovate.map(b => b.dbId || String(b.id));
+  const masterEsistente = Object.values(_contiDatiCache)
+    .map(d => d.contoEmesso)
+    .find(c => c?.isGroupMaster && c.bookingIds?.some(id => tuttiIds.includes(String(id))));
+
+  // Extra di gruppo già salvati nel master (Cene, Pranzi, ecc.)
+  const extraSalvati = masterEsistente
+    ? (masterEsistente.righe || []).filter(r => r.tipo === 'extra')
+    : [];
+
   const righeHtml = trovate.map(b => {
     const room   = ROOMS.find(r=>r.id===b.r);
     const n      = nights(b.s, b.e);
@@ -2444,6 +2462,19 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
     </div>`;
   }).join('');
 
+  // Aggiungi gli extra salvati al totale e alle righe
+  let extraSalvatiHtml = '';
+  extraSalvati.forEach(ex => {
+    // Rimuovi il prefisso "[Extra] " dal label per la visualizzazione
+    const lbl = ex.label.replace(/^\[Extra\]\s*/i, '');
+    righeGruppo.push({ ...ex, label: ex.label });
+    totaleGruppo += ex.total;
+    extraSalvatiHtml += `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)">
+      <span>${lbl} (${ex.qty} × ${ex.unitPrice?.toFixed(2)}€)</span>
+      <span style="font-weight:600;color:var(--accent)">${ex.total.toFixed(2)}€</span>
+    </div>`;
+  });
+
   // Applica eventuale convenzione al totale di gruppo
   const nomeCliente = nome;
   const convenzione = (cfg.convenzioni||[]).find(cv =>
@@ -2474,7 +2505,7 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
     </div>
     <div class="conti-section">
       <div class="conti-section-title">Extra di gruppo</div>
-      <div id="grpExtraList" style="margin-bottom:8px"></div>
+      <div id="grpExtraList" style="margin-bottom:8px">${extraSalvatiHtml}</div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <input id="grpExtraLabel" placeholder="Descrizione (es. Cene)" 
           style="flex:2;min-width:100px;border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px;background:var(--surface2);color:var(--text)">
@@ -2514,11 +2545,12 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
   window._gruppoCorrente = {
     nome:      trovate[0]?.n || nome,
     righe:     righeGruppo,
-    totaleBase:parseFloat(totaleGruppo.toFixed(2)),
+    totaleBase:parseFloat((totaleGruppo - extraSalvati.reduce((s,e)=>s+e.total,0)).toFixed(2)),
     totale:    parseFloat(totaleGruppo.toFixed(2)),
     aliquotaIVA: aliqIVA,
     bookings:  trovate,
-    extraGruppo: [],
+    // Pre-popola con gli extra già salvati nel master — l'utente può aggiungerne altri
+    extraGruppo: extraSalvati.map(e => ({ ...e, label: e.label.replace(/^\[Extra\]\s*/i,'') })),
     dalD, alD
   };
 }
