@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '30'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '31'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -601,14 +601,27 @@ function markContoDirty(bid) {
 // ─────────────────────────────────────────────────────────────────
 // HELPER: stato conto per una prenotazione (usato dal Gantt)
 // Legge solo la cache in-memory — nessuna chiamata API, sempre sincrono.
+// Se la prenotazione appartiene a un gruppo, usa lo stato del Conto Master.
 // Ritorna: null | 'bozza' | 'emesso' | 'fatturato' | 'pagato'
 // ─────────────────────────────────────────────────────────────────
 function getBillingStatusForBooking(bid) {
-  // Cerca per dbId (BLIP_ID) o id numerico
-  const dati = _contiDatiCache[bid] || _contiDatiCache[String(bid)];
-  if (!dati?.contoEmesso) return null;
-  // Stato sempre calcolato, non letto dal campo salvato
-  return getStatoContoCalcolato(dati.contoEmesso);
+  const key  = String(bid);
+  const bObj = bookings.find(x => String(x.id) === key || x.dbId === key);
+  const bidKey = bObj?.dbId || key;
+
+  // 1. Ha un conto diretto?
+  const dati = _contiDatiCache[bidKey] || _contiDatiCache[bid];
+  if (dati?.contoEmesso) return getStatoContoCalcolato(dati.contoEmesso);
+
+  // 2. Cerca un conto master di gruppo che include questo booking
+  const masterEntry = Object.values(_contiDatiCache).find(d => {
+    const c = d.contoEmesso;
+    if (!c?.bookingIds) return false;
+    return c.bookingIds.some(id => String(id) === bidKey || String(id) === key);
+  });
+  if (masterEntry?.contoEmesso) return getStatoContoCalcolato(masterEntry.contoEmesso);
+
+  return null;
 }
 
 // Colore bordo sinistro Gantt per stato conto
@@ -661,6 +674,25 @@ async function preloadContoDati() {
       _contiDatiCache[id] = dati;
     });
     console.log(`[CONTI] Precaricati ${rows.length} record`);
+
+    // ── Propaga i conti master di gruppo a tutte le prenotazioni membro ──
+    // Al momento del salvataggio lo stub viene scritto per ogni booking,
+    // ma al riavvio la cache viene ricostruita dalla scheda CONTI che ha
+    // un solo record master. Questo passaggio ricrea gli stub in-memory
+    // senza fare chiamate API aggiuntive.
+    Object.values(_contiDatiCache).forEach(dati => {
+      const ce = dati.contoEmesso;
+      if (!ce?.isGroupMaster || !ce.bookingIds?.length) return;
+      ce.bookingIds.forEach(bid => {
+        const bidStr = String(bid);
+        if (_contiDatiCache[bidStr]?.contoEmesso) return; // ha già un conto proprio
+        if (!_contiDatiCache[bidStr]) {
+          _contiDatiCache[bidStr] = { extra:[], override:null, appartMode:null, contoEmesso:null, dbRow:null };
+        }
+        _contiDatiCache[bidStr].contoEmesso = { ...ce, bookingId: bidStr };
+      });
+    });
+
     // Re-render Gantt per mostrare i bordi stato conto sulle barre
     if (typeof render === 'function') render();
     // Precarica anche i pagamenti in background
@@ -669,7 +701,8 @@ async function preloadContoDati() {
         const rows = d.values || [];
         _pagamentiCache = rows.map((row, i) => ({
           id: (row[0]||'').trim(), contoId:(row[1]||'').trim(),
-          bookingId:parseInt(row[2])||0, data:(row[3]||'').trim(),
+          bookingId: (row[2]||'').trim(),  // preserva come stringa — può essere BLIP_ID o numerico
+          data:(row[3]||'').trim(),
           importo:parseFloat(row[4])||0, tipo:(row[5]||'saldo').trim(),
           metodo:(row[6]||'Contanti').trim(), riferimento:(row[7]||'').trim(),
           conDocumento:(row[8]||'').trim()==='true', note:(row[9]||'').trim(),
@@ -1117,11 +1150,45 @@ function renderDrawerBill(b) {
   // Calcola stato conto UNA VOLTA sola — usato sia nel badge che nel bottone
   const _contiOuter = loadConti();
   // Cerca per dbId (nuovo formato) o per id numerico (legacy)
-  const _ceOuter = _contiOuter.find(x => x.bookingId === b.dbId) ||
-                   _contiOuter.find(x => x.bookingId === b.id) || null;
+  // o tramite bookingIds del master di gruppo
+  const _bidStr = String(b.dbId || b.id);
+  let _ceOuter = _contiOuter.find(x => String(x.bookingId) === String(b.dbId)) ||
+                 _contiOuter.find(x => String(x.bookingId) === String(b.id)) || null;
+  // Fallback: cerca tra i master di gruppo che includono questo booking
+  if (!_ceOuter) {
+    _ceOuter = _contiOuter.find(x =>
+      x.isGroupMaster && x.bookingIds?.some(id => String(id) === _bidStr)
+    ) || null;
+  }
   const _isEmesso = _ceOuter && _ceOuter.status && _ceOuter.status !== 'bozza';
 
+  // ── Banner di stato dinamico ──────────────────────────────────
+  const _statoCalc = _ceOuter ? getStatoContoCalcolato(_ceOuter) : null;
+  const _isGruppo  = !!_ceOuter?.isGroupMaster || !!_ceOuter?.groupId;
+  const _bannerCfg = {
+    null:        { bg:'var(--surface2)', icon:'📝', txt:'Nuova bozza — non ancora emesso', col:'var(--text3)' },
+    bozza:       { bg:'#fff8e1', icon:'📝', txt:'Bozza salvata', col:'#b8860b' },
+    emesso:      { bg:'#fff3e0', icon:'📤', txt:'Documento Emesso', col:'#e65100' },
+    fatturato:   { bg:'#e3f2fd', icon:'🧾', txt:'Fatturato', col:'#1565c0' },
+    pagato:      { bg:'#e8f5e9', icon:'✅', txt:'Pagato', col:'#2e7d32' },
+  };
+  const _bc = _bannerCfg[_statoCalc] || _bannerCfg[null];
+  const _bannerDetail = _ceOuter ? [
+    _ceOuter.emessoIl ? `emesso ${new Date(_ceOuter.emessoIl).toLocaleDateString('it-IT')}` : '',
+    _ceOuter.numDoc   ? `Doc. ${_ceOuter.numDoc}` : '',
+    _isGruppo         ? `🏠 Gruppo (${_ceOuter.bookingIds?.length||'?'} camere)` : '',
+  ].filter(Boolean).join(' · ') : '';
+  const _bannerHtml = `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:10px;background:${_bc.bg}">
+    <span style="font-size:16px">${_bc.icon}</span>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:11px;font-weight:700;color:${_bc.col}">${_bc.txt}</div>
+      ${_bannerDetail ? `<div style="font-size:10px;color:var(--text3);margin-top:1px">${_bannerDetail}</div>` : ''}
+    </div>
+    ${_isGruppo ? `<button onclick="riapriFogliGruppo('${_ceOuter?.groupId||''}')" style="border:1px solid var(--border);background:var(--surface2);border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer" title="Apri tab Gruppo">👥 Gruppo</button>` : ''}
+  </div>`;
+
   return `
+    ${_bannerHtml}
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px">
       <span style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase">Conto preventivo${hasOv?' <span style="font-size:9px;color:var(--accent);margin-left:4px">● modificato</span>':''}</span>
       <span style="font-size:20px;font-weight:700;color:var(--accent);font-family:'Playfair Display',serif">${totale.toFixed(2)}€</span>
@@ -2163,6 +2230,32 @@ function confermaPagamento(contoId, importo, tipo, modalita, dataStr, riferiment
   if (typeof render === 'function') render();
 }
 
+// Apre il tab Gruppo nel pannello Conti e mostra il conto master del groupId
+function riapriFogliGruppo(groupId) {
+  if (!groupId) return;
+  // Cerca il conto master nelle cache
+  const master = Object.values(_contiDatiCache)
+    .map(d => d.contoEmesso)
+    .find(c => c?.groupId === groupId && c?.isGroupMaster);
+  if (!master) { showToast('Conto di gruppo non trovato', 'error'); return; }
+
+  // Apri il pannello conti al tab Gruppo
+  if (typeof openConti === 'function') {
+    openConti();
+    setTimeout(() => {
+      if (typeof switchContiTab === 'function') switchContiTab('gruppo');
+      // Precompila il nome del gruppo e cerca
+      setTimeout(() => {
+        const el = document.getElementById('grpNome');
+        if (el) {
+          el.value = master.nome || '';
+          if (typeof cercaContoGruppo === 'function') cercaContoGruppo();
+        }
+      }, 100);
+    }, 50);
+  }
+}
+
 function riapriFoglio(bid, apriTabConto) {
   closeConti();
   // bookingId può essere un BLIP_ID stringa ("PRE-2026-...") o un id numerico legacy.
@@ -2495,66 +2588,80 @@ function emettiContoGruppo() {
   const g = window._gruppoCorrente;
   if (!g || !g.bookings?.length) return;
   const conti   = loadConti();
-  const groupId = 'G' + Date.now();
+  const anno    = new Date().getFullYear();
+  const newGrpId = 'GRP-' + anno + '-' + Date.now().toString(36).toUpperCase().slice(-6);
   const ora     = new Date().toISOString();
 
-  // ── Documento unico con totale unificato ─────────────────────────
-  // Tutte le camere del gruppo confluiscono in un solo conto con groupId.
-  // I bookingId delle singole prenotazioni sono elencati in bookingIds[].
-  // bookingId = primo bookingId (per compatibilità con il drawer singola camera).
+  // Righe unificate: una sezione per ogni camera + extra di gruppo
   const righeGruppo = [];
-  let totaleGruppo  = 0;
-
+  let   totaleGruppo = 0;
   g.bookings.forEach(b => {
     const room  = ROOMS.find(r => r.id === b.r);
     const conto = calcolaConto(b, getExtraForBooking(_ck(b.id)));
-    const camLabel = room?.name || roomName(b.r);
-    // Aggiungi una riga-intestazione per la camera
-    conto.righe.forEach(r => {
-      righeGruppo.push({ ...r, label: `[${camLabel}] ${r.label}` });
-    });
+    const cam   = room?.name || roomName(b.r);
+    conto.righe.forEach(r => righeGruppo.push({ ...r, label: `[${cam}] ${r.label}` }));
     totaleGruppo += conto.totale;
   });
-
-  // Extra di gruppo se presenti
   if (g.extraGruppo?.length) {
-    g.extraGruppo.forEach(r => righeGruppo.push({ ...r, label: `[Extra gruppo] ${r.label}` }));
+    g.extraGruppo.forEach(r => righeGruppo.push({ ...r, label: `[Extra] ${r.label}` }));
     totaleGruppo += g.extraGruppo.reduce((s, r) => s + r.total, 0);
   }
   totaleGruppo = parseFloat(totaleGruppo.toFixed(2));
 
-  const primoBookingId = g.bookings[0]?.dbId || g.bookings[0]?.id;
   const tuttiBookingIds = g.bookings.map(b => b.dbId || String(b.id));
+  const primoBookingId  = tuttiBookingIds[0];
 
-  // Cerca se esiste già un conto gruppo per questi booking
-  const existingIdx = conti.findIndex(c => c.groupId &&
-    tuttiBookingIds.includes(String(c.bookingId)));
+  // Cerca conto master già esistente per uno dei bookingId del gruppo
+  const existingIdx = conti.findIndex(c =>
+    c.isGroupMaster && c.bookingIds &&
+    c.bookingIds.some(id => tuttiBookingIds.includes(String(id)))
+  );
+  const esistente = existingIdx >= 0 ? conti[existingIdx] : null;
 
-  const doc = {
-    id:          existingIdx >= 0 ? conti[existingIdx].id : ('C' + Date.now()),
-    bookingId:   primoBookingId,          // riferimento principale (per drill-down)
-    bookingIds:  tuttiBookingIds,          // tutti i booking del gruppo
-    groupId:     groupId,
-    nome:        g.nome,
-    camera:      g.bookings.map(b => ROOMS.find(r=>r.id===b.r)?.name || roomName(b.r)).join(', '),
-    checkin:     g.dalD ? g.dalD.toISOString() : g.bookings[0]?.s.toISOString(),
-    checkout:    g.alD  ? g.alD.toISOString()  : g.bookings[g.bookings.length-1]?.e.toISOString(),
-    righe:       righeGruppo,
-    totale:      totaleGruppo,
-    status:      'emesso',
-    emessoIl:    ora,
-    fatturatoIl: existingIdx >= 0 ? conti[existingIdx].fatturatoIl : null,
-    tipoDoc:     existingIdx >= 0 ? conti[existingIdx].tipoDoc     : null,
-    numDoc:      existingIdx >= 0 ? conti[existingIdx].numDoc      : null,
-    pagatoIl:    existingIdx >= 0 ? conti[existingIdx].pagatoIl    : null,
-    modalitaPag: existingIdx >= 0 ? conti[existingIdx].modalitaPag : null,
+  // Documento Master — unico record che rappresenta tutto il gruppo
+  const master = {
+    id:            esistente?.id || ('C' + Date.now()),
+    bookingId:     primoBookingId,
+    bookingIds:    tuttiBookingIds,
+    groupId:       esistente?.groupId || newGrpId,
+    isGroupMaster: true,
+    nome:          g.nome,
+    camera:        g.bookings.map(b => ROOMS.find(r=>r.id===b.r)?.name || roomName(b.r)).join(', '),
+    checkin:       g.dalD ? g.dalD.toISOString() : g.bookings[0].s.toISOString(),
+    checkout:      g.alD  ? g.alD.toISOString()  : g.bookings[g.bookings.length-1].e.toISOString(),
+    righe:         righeGruppo,
+    totale:        totaleGruppo,
+    status:        'emesso',
+    emessoIl:      ora,
+    fatturatoIl:   esistente?.fatturatoIl || null,
+    tipoDoc:       esistente?.tipoDoc     || null,
+    numDoc:        esistente?.numDoc      || null,
+    pagatoIl:      esistente?.pagatoIl    || null,
+    modalitaPag:   esistente?.modalitaPag || null,
     isAppart: false, ts: ora,
   };
 
-  if (existingIdx >= 0) conti[existingIdx] = doc; else conti.unshift(doc);
+  if (existingIdx >= 0) conti[existingIdx] = master; else conti.unshift(master);
+
+  // Stub per ogni prenotazione: punta al master per lookup Gantt/drawer
+  g.bookings.forEach(b => {
+    const bid = b.dbId || String(b.id);
+    if (!_contiDatiCache[bid]) {
+      _contiDatiCache[bid] = { extra:[], override:null, appartMode:null, contoEmesso:null, dbRow:null };
+    }
+    // Non sovrascrivere un conto individuale già emesso separatamente
+    const hasOwnConto = _contiDatiCache[bid].contoEmesso && !_contiDatiCache[bid].contoEmesso.isGroupMaster;
+    if (!hasOwnConto) {
+      const stub = { ...master, bookingId: bid };
+      _contiDatiCache[bid].contoEmesso = stub;
+      saveContoDati(bid, { contoEmesso: stub });
+    }
+  });
+
   saveConti(conti);
+  if (typeof render === 'function') render(); // aggiorna bordi Gantt
   apriPdfGruppo();
-  showToast(`✓ Conto gruppo salvato — ${g.bookings.length} camere · ${totaleGruppo.toFixed(2)}€`, 'success');
+  showToast(`✓ Conto gruppo emesso — ${g.bookings.length} camere · ${totaleGruppo.toFixed(2)}€`, 'success');
 }
 
 function apriPdfGruppo() {
