@@ -6,7 +6,7 @@
 
 // ── Error handler globale per debug mobile ──
 
-const BLIP_VER_CORE = '5'; // ← incrementa ad ogni modifica
+const BLIP_VER_CORE = '6'; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
   console.log(msg);
@@ -116,6 +116,28 @@ const PALETTE = [
   {h:'#76D7EA',n:'Ciano'},       {h:'#76A5AF',n:'Petrolio'},
 ];
 
+/**
+ * Restituisce un colore dalla PALETTE per una nuova prenotazione da app,
+ * scegliendo quello più "distante" dai colori già usati nella stessa camera.
+ * bookingsInRoom: array di prenotazioni già esistenti nella camera.
+ * Algoritmo: scorre la PALETTE e sceglie il primo colore non uguale
+ * agli ultimi 3 colori usati. Garantisce alternanza visiva.
+ */
+function nextBookingColor(bookingsInRoom) {
+  const usedRecent = (bookingsInRoom || [])
+    .sort((a, b) => (b.s || 0) - (a.s || 0))
+    .slice(0, 3)
+    .map(b => (b.c || '').toLowerCase().trim());
+
+  // Escludi i colori usati di recente — preferisci i pastello standard
+  const candidates = PALETTE.filter(p => !usedRecent.includes(p.h.toLowerCase()));
+  if (candidates.length > 0) return candidates[0].h;
+
+  // Fallback: ruota sulla palette in base al numero di prenotazioni
+  const idx = (bookingsInRoom?.length || 0) % PALETTE.length;
+  return PALETTE[idx].h;
+}
+
 const BED_TYPES = [
   { id:'m',   label:'Matrimoniale',             short:'m'   },
   { id:'ms',  label:'Matrimoniale uso singolo', short:'ms'  },
@@ -186,7 +208,7 @@ function saveRoomSettingsLS(settings) {
 let accessToken  = null;
 let curM         = new Date().getMonth();
 let curY         = new Date().getFullYear();
-let selColor     = '#D9D9D9';
+let selColor     = PALETTE[0].h; // viene aggiornato da nextBookingColor all'apertura modal
 let editId       = null;
 let nid          = 1000;
 let bedCounts    = { m:0, ms:0, s:0, c:0, aff:0 };

@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '23'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '24'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -23,13 +23,16 @@ function render() {
   document.getElementById('mlabel').textContent = `${MONTHS_S[curM]} ${curY}`;
 
   let h = `<div class="legend">
-    <span class="leg" style="text-transform:uppercase;letter-spacing:.08em;">Legenda</span>
+    <span class="leg" style="text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">Colori</span>
     <span class="lsep"></span>`;
-  [{c:'#D9D9D9',l:'Lungo'},{c:'#FCE5CD',l:'Affitto'},{c:'#B6D7A8',l:'Prenotato'},{c:'#00FFFF',l:'Breve'},{c:'#00FF00',l:'Confermato'}]
-    .forEach(({c,l})=>{ h+=`<span class="leg"><span class="ldot" style="background:${c}"></span>${l}</span>`; });
+  // Mostra le prime 10 sfumature della palette come riferimento visivo —
+  // non hanno etichette fisse perché ogni struttura usa i colori liberamente
+  PALETTE.slice(0, 10).forEach(({h: hx, n}) => {
+    h += `<span class="leg" title="${n}"><span class="ldot" style="background:${hx};border:1px solid rgba(0,0,0,.12)"></span></span>`;
+  });
   h+=`<span class="lsep"></span>
     <span class="leg"><span style="display:inline-block;width:2px;height:9px;background:var(--accent);margin-right:4px;"></span>Oggi</span>
-    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;outline:2px dashed #ff6b6b;margin-right:4px;"></span>Col. adiacente</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;outline:2px dashed #ff6b6b;margin-right:4px;"></span>Adiacente</span>
     <span class="lsep"></span>
     <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:repeating-linear-gradient(-45deg,#9b9,#9b9 2px,#fff 2px,#fff 4px);border:1px solid rgba(0,0,0,.1);margin-right:4px;"></span>Ultima notte</span>
   </div>`;
@@ -64,7 +67,7 @@ function render() {
         const vs=b.s<ms?ms:b.s, ve=b.e>me?me:b.e;
         const sd=vs.getDate(), ed=ve.getDate();
         const lx=(sd-1)*CW+1, w=(ed-sd+1)*CW-2;
-        const tc=light(b.c)?'#1a1916':'#e8e4dc';
+        const tc = '#1a1916'; // testo sempre scuro — tutti i colori della palette sono pastello
         const adj=adjConflict(b).length>0;
         // 'continues' = prenotazione continua nel mese successivo → no striscia checkout
         const continues = b.e > me;
@@ -398,7 +401,25 @@ function closeDrawer(){
 // MODAL
 // ═══════════════════════════════════════════════════════════════════
 function openModal(isEdit=false){
-  if(!isEdit){ editId=null; document.getElementById('fName').value=''; document.getElementById('fNotes').value=''; if(!document.getElementById('fIn').value){ const t=new Date(); document.getElementById('fIn').value=t.toISOString().slice(0,10); const t2=new Date(t);t2.setDate(t2.getDate()+1);document.getElementById('fOut').value=t2.toISOString().slice(0,10); } bedCounts={m:0,ms:0,s:0,c:0,aff:0}; }
+  if(!isEdit){
+    editId=null;
+    document.getElementById('fName').value='';
+    document.getElementById('fNotes').value='';
+    if(!document.getElementById('fIn').value){
+      const t=new Date();
+      document.getElementById('fIn').value=t.toISOString().slice(0,10);
+      const t2=new Date(t); t2.setDate(t2.getDate()+1);
+      document.getElementById('fOut').value=t2.toISOString().slice(0,10);
+    }
+    bedCounts={m:0,ms:0,s:0,c:0,aff:0};
+    // Scegli automaticamente un colore alternato rispetto alle prenotazioni
+    // già presenti nella camera selezionata
+    const _rid = document.getElementById('fRoom')?.value;
+    const _camBookings = _rid ? bookings.filter(b => b.r === _rid) : bookings;
+    if (typeof nextBookingColor === 'function') {
+      selColor = nextBookingColor(_camBookings);
+    }
+  }
   document.getElementById('mtitle').textContent=isEdit?'Modifica Prenotazione':'Nuova Prenotazione';
 
   // Gestione campo camera
