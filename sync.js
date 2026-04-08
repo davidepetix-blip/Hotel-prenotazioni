@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '34'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '35'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -727,11 +727,13 @@ async function readDatabase() {
   return result;
 }
 
+let _dbHeadersChecked = false;
 async function ensureDbHeaders() {
+  if (_dbHeadersChecked) return; // già verificato in questa sessione
   try {
     const d = await dbGet(`${DB_SHEET_NAME}!A1:L1`);
     const row = d.values?.[0] || [];
-    if (row[0] === 'ID') return;
+    if (row[0] === 'ID') { _dbHeadersChecked = true; return; }
   } catch(e) {}
   const id = DATABASE_SHEET_ID;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(DB_SHEET_NAME+'!A1:L1')}?valueInputOption=RAW`;
@@ -740,6 +742,7 @@ async function ensureDbHeaders() {
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
     body: JSON.stringify({ values: [['ID','CAMERA','NOME','DAL','AL','DISPOSIZIONE','NOTE','COLORE','ANNO','FONTE','TS_MODIFICA','DELETED']] })
   });
+  _dbHeadersChecked = true;
 }
 
 async function dbUpsert(b, fonte = 'app') {
@@ -1437,9 +1440,11 @@ async function writeBlipIdsToRow46(bookings) {
     if (!data.length) continue;
     try {
       const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId + '/values:batchUpdate';
-      const resp = await apiFetch(url, {
+      // Usa fetch diretto (non apiFetch) — la scrittura riga 46 è fire-and-forget
+      // e non deve consumare il token bucket già esaurito dopo il caricamento
+      const resp = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ valueInputOption: 'RAW', data })
       });
       if (resp.ok) syncLog('✓ BLIP_ID scritti riga 46 in ' + sName + ': ' + data.length + ' celle', 'ok');
@@ -2139,6 +2144,7 @@ async function loadFromSheets() {
     // Blocca bgSync per tutta la durata del caricamento — lo settiamo subito
     // così bgSync non parte in parallelo mentre siamo già in sync
     _lastFullSyncTs = Date.now();
+    const _t0 = Date.now();
     // Reset set riga 46: verrà ricostruito durante readAnnualSheet / readJSONAnnuale
     _row46BlipIds   = new Set();
     _row46BookingMap = {};
@@ -2150,6 +2156,7 @@ async function loadFromSheets() {
       showLoading('Lettura JSON_ANNUALE…');
       try {
         sheetBookings = await readJSONAnnuale(sheetEntry.sheetId);
+        syncLog(`⏱ JSON_ANNUALE: ${sheetBookings.length} pren. in ${Date.now()-_t0}ms`, 'syn');
         showLoading(`Foglio: ${sheetBookings.length} prenotazioni`);
       } catch(err) {
         console.warn('[JSON_ANNUALE] Fallback fogli mensili:', err.message);
@@ -2164,12 +2171,12 @@ async function loadFromSheets() {
     }
 
     if (DATABASE_SHEET_ID) {
+      const _t1 = Date.now();
       syncLog('Sincronizzazione DB…', 'syn');
       showLoading('Sincronizzazione database…');
       await ensureDbHeaders();
-      // Passa `forcing` (non true fisso): il guard MAX_ARCHIVE_PER_SYNC si applica
-      // al caricamento normale. Solo il 🔄 esplicito dell'utente bypassa il guard.
       sheetBookings = await syncWithDatabase(sheetBookings, forcing);
+      syncLog(`⏱ Sync DB: ${Date.now()-_t1}ms`, 'syn');
     }
 
     await loadRoomStates();

@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '24'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '25'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -23,18 +23,14 @@ function render() {
   document.getElementById('mlabel').textContent = `${MONTHS_S[curM]} ${curY}`;
 
   let h = `<div class="legend">
-    <span class="leg" style="text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">Colori</span>
-    <span class="lsep"></span>`;
-  // Mostra le prime 10 sfumature della palette come riferimento visivo —
-  // non hanno etichette fisse perché ogni struttura usa i colori liberamente
-  PALETTE.slice(0, 10).forEach(({h: hx, n}) => {
-    h += `<span class="leg" title="${n}"><span class="ldot" style="background:${hx};border:1px solid rgba(0,0,0,.12)"></span></span>`;
-  });
-  h+=`<span class="lsep"></span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #34a853;background:var(--surface2);margin-right:4px;"></span>Pagato</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #4285f4;background:var(--surface2);margin-right:4px;"></span>Fatturato</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #fa7b17;background:var(--surface2);margin-right:4px;"></span>Emesso</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #9e9e9e;background:var(--surface2);margin-right:4px;"></span>Bozza</span>
+    <span class="lsep"></span>
     <span class="leg"><span style="display:inline-block;width:2px;height:9px;background:var(--accent);margin-right:4px;"></span>Oggi</span>
     <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;outline:2px dashed #ff6b6b;margin-right:4px;"></span>Adiacente</span>
-    <span class="lsep"></span>
-    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:repeating-linear-gradient(-45deg,#9b9,#9b9 2px,#fff 2px,#fff 4px);border:1px solid rgba(0,0,0,.1);margin-right:4px;"></span>Ultima notte</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:repeating-linear-gradient(-45deg,#9b9,#9b9 2px,#fff 2px,#fff 4px);border:1px solid rgba(0,0,0,.1);margin-right:4px;"></span>Uscita</span>
   </div>`;
 
   h+=`<div class="dheader">`;
