@@ -6,7 +6,7 @@
 
 // ── Error handler globale per debug mobile ──
 
-const BLIP_VER_CORE = '6'; // ← incrementa ad ogni modifica
+const BLIP_VER_CORE = '8'; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
   console.log(msg);
@@ -67,6 +67,7 @@ const FIRST_DATA_ROW  = 3;
 const HEADER_ROW      = 2;
 const OUTPUT_ROW      = 45;
 const BLIP_ID_ROW     = 46; // Riga dove Blip scrive i propri ID per ogni camera
+const FINGERPRINT_ROW = 47; // Riga con formule di fingerprint per rilevare modifiche
 const DATES_COL       = 1;
 const FIRST_ROOM_COL  = 2;
 const EXCLUDED_SHEETS = ['Dati Centralizzati Realtime','Non toccare','Ricettività','LOG COMPLESSIVO','PRENOTAZIONI'];

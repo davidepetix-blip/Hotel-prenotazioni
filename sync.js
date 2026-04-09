@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '35'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '37'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -48,6 +48,23 @@ let _row46BlipIds = new Set();
 // Formato: "sheetName|cameraName|dal" → dbId (BLIP_ID)
 // Costruita durante la batchGet in readJSONAnnuale leggendo la riga 46.
 let _row46BookingMap = {};
+
+// ─────────────────────────────────────────────────────────────────
+// FINGERPRINT — riga 47 del foglio grafico
+//
+// Ogni colonna del foglio mensile ha una formula in riga 47:
+//   =SUMPRODUCT(LEN(B3:B44)*ROW(B3:B44))+COUNTA(B3:B44)*100000
+//
+// Questa formula si ricalcola automaticamente ogni volta che il
+// contenuto della colonna cambia — indipendentemente da chi ha
+// fatto la modifica (utente, Apps Script, o Blip via API).
+//
+// bgSync legge solo la riga 47 (1 chiamata leggera), confronta
+// con i valori memorizzati, e rilegge il JSON_ANNUALE SOLO se
+// almeno un foglio mensile è cambiato.
+// ─────────────────────────────────────────────────────────────────
+// _sheetFingerprints[sheetName] = "val1|val2|...|valN" (stringify della riga 47)
+let _sheetFingerprints = {};
 
 async function loadCestinoBlacklist(force = false) {
   const age = Date.now() - _cestinoBlacklistTs;
@@ -996,7 +1013,9 @@ async function readAnnualSheet(entry) {
 
 async function readJSONAnnuale(sheetId) {
   const TAB   = 'JSON_ANNUALE';
-  const range = encodeURIComponent("'" + TAB + "'!A2:A13");
+  // Legge A2:O13: colonna A = JSON mensile, colonna O = fingerprint mensile
+  // In una sola chiamata otteniamo sia i dati che il fingerprint — zero costo aggiuntivo.
+  const range = encodeURIComponent("'" + TAB + "'!A2:O13");
   const url   = "https://sheets.googleapis.com/v4/spreadsheets/" + sheetId + "/values/" + range + "?valueRenderOption=FORMATTED_VALUE";
 
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -1007,10 +1026,23 @@ async function readJSONAnnuale(sheetId) {
     const rows = data.values;
     if (!rows || rows.length === 0) throw new Error(TAB + ' vuoto — esegui "Rigenera JSON_ANNUALE" dal menu del foglio');
 
+    // Colonna A (indice 0) = JSON, colonna O (indice 14) = fingerprint
+    // Aggiorna i fingerprint in memoria (usati da bgSync per skip intelligente)
+    const MESI_NOMI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
+                       'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+    rows.forEach((row, i) => {
+      const fp = row?.[14]; // colonna O = indice 14
+      if (fp) {
+        const anno = new Date().getFullYear();
+        const sName = (MESI_NOMI[i] || '') + ' ' + anno;
+        _sheetFingerprints[sName] = String(fp).trim();
+      }
+    });
+
     const allPren = [];
     let parseErrors = 0;
     for (const row of rows) {
-      const raw = row?.[0];
+      const raw = row?.[0]; // colonna A
       if (!raw || raw.trim()==='' || raw.startsWith('—')) continue;
       try {
         const chunk = JSON.parse(raw);
@@ -1035,7 +1067,8 @@ async function readJSONAnnuale(sheetId) {
           .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-zÀ-ÿ]+\s+\d{4}$/i.test(n));
         if (monthSheets.length > 0) {
           // Legge in una sola chiamata: intestazioni (riga HEADER_ROW) + riga 46 (BLIP_ID_ROW)
-          // per tutti i fogli mensili — nessuna chiamata API aggiuntiva
+          // per tutti i fogli mensili. I fingerprint ora sono in JSON_ANNUALE!O2:O13 — letti
+          // da readJSONAnnuale senza costo aggiuntivo.
           const headerRanges = monthSheets
             .map(sn => encodeURIComponent("'" + sn + "'!B" + HEADER_ROW + ":AJ" + HEADER_ROW));
           const blipIdRanges = monthSheets
@@ -2023,6 +2056,52 @@ function setSyncPulsing(on) {
   if (!on) dot.classList.remove('show');
 }
 
+// Legge JSON_ANNUALE!O2:O13 (12 celle — 1 per mese) e confronta con i fingerprint
+// memorizzati. Costo API: 1 range su 1 foglio — il minimo possibile.
+// Restituisce { changed: bool, changedMonths: string[] } dove changedMonths
+// sono i nomi dei mesi (es. ["Luglio 2026"]) dove le prenotazioni sono cambiate.
+async function checkFingerprintsChanged(sheetId) {
+  if (!sheetId) return { changed: true, changedMonths: [] };
+
+  try {
+    const range = encodeURIComponent("'JSON_ANNUALE'!O2:O13");
+    const r = await fetch(
+      'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId +
+      '/values/' + range + '?valueRenderOption=FORMATTED_VALUE',
+      { headers: { Authorization: 'Bearer ' + accessToken } }
+    );
+    if (!r.ok) return { changed: true, changedMonths: [] };
+
+    const data = await r.json();
+    const fpRows = data.values || [];
+    const MESI_NOMI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
+                       'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+    const anno = new Date().getFullYear();
+    const changedMonths = [];
+
+    fpRows.forEach((row, i) => {
+      const sName  = (MESI_NOMI[i] || '') + ' ' + anno;
+      const fpNew  = String(row?.[0] || '').trim();
+      const fpOld  = _sheetFingerprints[sName] || '';
+      if (!fpNew) return; // formula non ancora installata → ignora
+      if (fpNew !== fpOld) {
+        changedMonths.push(sName);
+        _sheetFingerprints[sName] = fpNew;
+      }
+    });
+
+    // Se non ci sono fingerprint in memoria (primo avvio, no formule installate)
+    // → considera tutto cambiato per sicurezza
+    const hasSomeFingerprint = Object.keys(_sheetFingerprints).length > 0;
+    if (!hasSomeFingerprint) return { changed: true, changedMonths: [] };
+
+    return { changed: changedMonths.length > 0, changedMonths };
+  } catch(e) {
+    console.warn('[fingerprint] errore:', e.message);
+    return { changed: true, changedMonths: [] };
+  }
+}
+
 async function bgSync() {
   if (!accessToken || _bgSyncRunning) return;
   // Non partire se una sync completa è avvenuta da meno di BGSYNC_COOLDOWN_MS:
@@ -2036,6 +2115,21 @@ async function bgSync() {
   syncLog('⟳ bgSync avviato', 'syn');
   try {
     if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
+
+    // ── Controllo fingerprint riga 47 (1 chiamata leggera) ─────────
+    // Se nessun foglio mensile è cambiato, aggiorniamo solo il DB
+    // e saltiamo la rilettura del JSON_ANNUALE (risparmio ~2 chiamate)
+    const sheetEntry = annualSheets.find(e => e.sheetId);
+    const fpResult = sheetEntry
+      ? await checkFingerprintsChanged(sheetEntry.sheetId)
+      : { changed: true, changedSheets: [] };
+
+    if (!fpResult.changed) {
+      syncLog('⟳ bgSync: foglio grafico invariato (fingerprint ok) — solo DB', 'syn');
+    } else if (fpResult.changedMonths?.length > 0) {
+      syncLog('⟳ bgSync: modifiche in ' + fpResult.changedMonths.join(', '), 'syn');
+    }
+
     const dbFresh = await readDatabase();
     const active  = dbFresh.filter(b => !b.deleted && !isDeletedLocally(b.dbId));
 
