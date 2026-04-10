@@ -30,7 +30,7 @@ function render() {
     <span class="lsep"></span>
     <span class="leg"><span style="display:inline-block;width:2px;height:9px;background:var(--accent);margin-right:4px;"></span>Oggi</span>
     <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;outline:2px dashed #ff6b6b;margin-right:4px;"></span>Adiacente</span>
-    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:repeating-linear-gradient(-45deg,#9b9,#9b9 2px,#fff 2px,#fff 4px);border:1px solid rgba(0,0,0,.1);margin-right:4px;"></span>Uscita</span>
+    <span class="leg"><span style="display:inline-block;width:14px;height:9px;border-radius:2px;background:var(--text3);opacity:.25;margin-right:1px;vertical-align:middle"></span><span style="display:inline-block;width:6px;height:9px;margin-right:4px;vertical-align:middle"></span>Checkout (parziale)</span>
   </div>`;
 
   h+=`<div class="dheader">`;
@@ -62,11 +62,18 @@ function render() {
       rb.forEach(b=>{
         const vs=b.s<ms?ms:b.s, ve=b.e>me?me:b.e;
         const sd=vs.getDate(), ed=ve.getDate();
-        const lx=(sd-1)*CW+1, w=(ed-sd+1)*CW-2;
+        // 'continues' = prenotazione continua nel mese successivo → larghezza piena
+        const continues = b.e > me;
+        // Giorno di checkout: la barra occupa solo il 40% della cella —
+        // così la camera risulta visivamente libera per il pomeriggio
+        // e un check-in nella stessa giornata non si sovrappone.
+        const checkoutFrac = 0.40;
+        const w = continues
+          ? (ed-sd+1)*CW - 2                          // continua: piena
+          : (ed-sd)*CW + Math.round(CW*checkoutFrac); // ultimo giorno: 40%
+        const lx=(sd-1)*CW+1;
         const tc = '#1a1916'; // testo sempre scuro — tutti i colori della palette sono pastello
         const adj=adjConflict(b).length>0;
-        // 'continues' = prenotazione continua nel mese successivo → no striscia checkout
-        const continues = b.e > me;
         const _billBorder = (typeof billingBorderColor === 'function') ? billingBorderColor(b.dbId || b.id) : null;
         const _borderStyle = _billBorder ? `border-left:3px solid ${_billBorder};` : '';
         bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"

@@ -8,13 +8,13 @@
 <!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- Moduli Blip -->
-<script src="core.js?v=18.11.73"></script>
-<script src="sync.js?v=18.11.73"></script>
-<script src="gantt.js?v=18.11.73"></script>
-<script src="clienti.js?v=18.11.73"></script>
-<script src="alloggiati-data.js?v=18.11.73"></script>
-<script src="checkin.js?v=18.11.73"></script>
-<script src="billing.js?v=18.11.73"></script>
+<script src="core.js?v=18.11.74"></script>
+<script src="sync.js?v=18.11.74"></script>
+<script src="gantt.js?v=18.11.74"></script>
+<script src="clienti.js?v=18.11.74"></script>
+<script src="alloggiati-data.js?v=18.11.74"></script>
+<script src="checkin.js?v=18.11.74"></script>
+<script src="billing.js?v=18.11.74"></script>
 <style>
 :root {
   --bg: #f8f7f5; --surface: #ffffff; --surface2: #f2f1ef;
@@ -171,16 +171,8 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .bbar:hover { filter: brightness(.94); box-shadow: 0 3px 8px rgba(0,0,0,.15); transform: translateY(-1px); z-index: 5; }
 .bbar.adj { outline: 2px dashed #e74c3c; outline-offset: 1px; }
 .bbar.pending { opacity: .65; border-style: dashed; }
-/* Striscia checkout: pseudo-elemento sull'ultima cella della barra */
-.bbar::after { content:''; position:absolute; top:0; right:0; bottom:0;
-  width:calc(var(--CW) * 0.4); border-radius:0 4px 4px 0; pointer-events:none;
-  background: repeating-linear-gradient(
-    -45deg,
-    transparent, transparent 3px,
-    rgba(255,255,255,.35) 3px, rgba(255,255,255,.35) 5px
-  );
-}
-/* Se la prenotazione continua nel mese successivo non mostrare la striscia */
+/* Checkout: la barra occupa solo il 40% dell'ultimo giorno (larghezza gestita in JS).
+   Nessun pseudo-elemento necessario — la cella appare visivamente libera. */
 .bbar.continues::after { display:none; }
 .bdisp { opacity: .6; font-size: 9px; margin-left: 4px; font-weight: 400; }
 .tvline { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--today); opacity: .5; pointer-events: none; z-index: 4; }
@@ -812,7 +804,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div>
     <div class="login-logo">Albergo</div>
     <div class="login-sub">GESTIONE PRENOTAZIONI</div>
-    <div style="margin-top:6px;font-size:10px;color:#aaa;font-family:monospace;" data-blip-version="full">v18.11.73</div>
+    <div style="margin-top:6px;font-size:10px;color:#aaa;font-family:monospace;" data-blip-version="full">v18.11.74</div>
   </div>
   <div class="login-card">
     <p>Accedi con il tuo account Google per visualizzare e gestire le prenotazioni.</p>
