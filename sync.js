@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '37'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '38'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -2019,7 +2019,7 @@ let _bgSyncRunning = false;
 // bgSync aspetta almeno BGSYNC_COOLDOWN_MS dopo una sync completa
 // per evitare di scatenare un nuovo burst di chiamate API.
 let _lastFullSyncTs = 0;
-const BGSYNC_COOLDOWN_MS = 3 * 60 * 1000; // 3 minuti
+const BGSYNC_COOLDOWN_MS = 6 * 60 * 1000; // 6 minuti (anti-429: sync completa può durare 60s+ più scritture riga 46)
 // Blacklist locale: dbId cancellati localmente, ignorati dal bgSync
 // per evitare il "ghost reappearance" prima che il DB si aggiorni
 const _deletedLocally = new Map(); // dbId → timestamp cancellazione
@@ -2235,9 +2235,8 @@ async function loadFromSheets() {
     }
 
     // FULL PATH
-    // Blocca bgSync per tutta la durata del caricamento — lo settiamo subito
-    // così bgSync non parte in parallelo mentre siamo già in sync
-    _lastFullSyncTs = Date.now();
+    // Nota: _lastFullSyncTs viene impostato ALLA FINE della sync (dopo tutte le chiamate API),
+    // così il cooldown parte quando la quota è davvero libera.
     const _t0 = Date.now();
     // Reset set riga 46: verrà ricostruito durante readAnnualSheet / readJSONAnnuale
     _row46BlipIds   = new Set();
@@ -2285,7 +2284,7 @@ async function loadFromSheets() {
     showToast(`✓ ${bookings.length} prenotazioni`, 'success');
     syncLog(`✓ ${bookings.length} prenotazioni caricate`, 'ok');
     saveDbCache(DATABASE_SHEET_ID ? sheetBookings : bookings);
-    _lastFullSyncTs = Date.now(); // cooldown: bgSync non parte per i prossimi 3 min
+    _lastFullSyncTs = Date.now(); // cooldown: bgSync non parte per i prossimi 6 min
     startBgSync();
   } catch(e) {
     hideLoading();
