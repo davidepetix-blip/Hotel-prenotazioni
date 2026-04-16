@@ -293,7 +293,7 @@ function processSingleColumnBookings(sheet, column) {
   }
   if (currentRes) {
     let lastD = parseDateToDateObject(parseDate(dates[dates.length-1][0], sheet));
-    if (lastD) { lastD.setDate(lastD.getDate()+1); currentRes.al = Utilities.formatDate(lastD,"GMT+0100","dd/MM/yyyy"); }
+    if (lastD) { lastD.setDate(lastD.getDate()+1); currentRes.al = Utilities.formatDate(lastD,Session.getScriptTimeZone(),"dd/MM/yyyy"); }
     validateAndPush(bookings, currentRes, sheet, startRow, column);
   }
   sheet.getRange(OUTPUT_ROW, column).setValue(JSON.stringify(bookings));
@@ -327,14 +327,14 @@ function cleanAndExtractNameAndNotes(text) {
   return isNotName ? { name:"", notes:text } : { name:text, notes:"" };
 }
 function parseDate(val, sheet) {
-  if (val instanceof Date) return Utilities.formatDate(val,"GMT+0100","dd/MM/yyyy");
+  if (val instanceof Date) return Utilities.formatDate(val,Session.getScriptTimeZone(),"dd/MM/yyyy");
   const s = String(val).trim();
   if (/^\d{1,2}$/.test(s)) {
     const sn = sheet.getName().toLowerCase();
     let m = 0, y = new Date().getFullYear();
     for (const [name,idx] of Object.entries(MONTH_NAMES)) { if (sn.includes(name)) { m=idx; break; } }
     const ym = sn.match(/\d{4}/); if (ym) y = parseInt(ym[0]);
-    return Utilities.formatDate(new Date(Date.UTC(y,m,parseInt(s))),"GMT+0100","dd/MM/yyyy");
+    return Utilities.formatDate(new Date(y,m,parseInt(s)),Session.getScriptTimeZone(),"dd/MM/yyyy");
   }
   return s.includes('/') ? s : null;
 }
