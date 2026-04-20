@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '25'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '26'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -594,7 +594,61 @@ async function saveBooking(){
 
   // ── OVERLAP BLOCK ──
   const conf=bookings.filter(b=>b.r===rid&&b.id!==editId&&b.s<ed&&b.e>sd);
-  if(conf.length>0){ show(`⛔ Sovrapposizione con "${conf[0].n}" (${fmt(conf[0].s)} → ${fmt(conf[0].e)}). Impossibile salvare.`); return; }
+  if(conf.length>0){
+    // Caso speciale: stiamo modificando una prenotazione lunga (stessa camera, stesso nome)
+    // e la "sovrapposizione" è con un frammento mensile della stessa prenotazione originale.
+    const existingBCheck = editId ? bookings.find(b=>b.id===editId) : null;
+    const isSelfOverlap  = existingBCheck &&
+      conf.every(c => c.n === existingBCheck.n && c.r === existingBCheck.r && c.c === existingBCheck.c);
+    if (!isSelfOverlap) {
+      show(`⛔ Sovrapposizione con "${conf[0].n}" (${fmt(conf[0].s)} → ${fmt(conf[0].e)}). Impossibile salvare.`);
+      return;
+    }
+    // isSelfOverlap → lascia passare, clearBookingFromSheet pulirà tutto il vecchio
+  }
+
+  // ── MODIFICA PRENOTAZIONE MULTI-MESE — conferma esplicita ──
+  // Se stiamo modificando una prenotazione che copre più mesi mostriamo un riepilogo
+  // di cosa verrà cancellato e cosa verrà scritto prima di procedere.
+  if (editId) {
+    const _eb4confirm = bookings.find(b=>b.id===editId);
+    if (_eb4confirm) {
+      const oldFrags   = splitBookingByMonth(_eb4confirm);
+      const newFrags   = splitBookingByMonth({..._eb4confirm, s:sd, e:ed});
+      const isMulti    = oldFrags.length > 1 || newFrags.length > 1;
+      const dateChanged= Math.abs(_eb4confirm.s - sd) > 43200000 || Math.abs(_eb4confirm.e - ed) > 43200000;
+      if (isMulti && dateChanged) {
+        const oldFogli = [...new Set(oldFrags.map(f=>f.sName))].join(', ');
+        const newFogli = [...new Set(newFrags.map(f=>f.sName))].join(', ');
+        const msg =
+          `📋 RIEPILOGO MODIFICA PRENOTAZIONE
+` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+` +
+          `Cliente : ${_eb4confirm.n}
+` +
+          `Camera  : ${roomName(_eb4confirm.r)}
+
+` +
+          `🗑 VERRÀ CANCELLATO:
+` +
+          `  ${fmt(_eb4confirm.s)} → ${fmt(_eb4confirm.e)}
+` +
+          `  Fogli: ${oldFogli}
+
+` +
+          `✏ VERRÀ SCRITTO:
+` +
+          `  ${fmt(sd)} → ${fmt(ed)}
+` +
+          `  Fogli: ${newFogli}
+
+` +
+          `Confermi la modifica?`;
+        if (!confirm(msg)) return;
+      }
+    }
+  }
 
   // ── ADJACENT COLOR WARNING ──
   const adj=bookings.filter(b=>b.id!==editId&&b.r===rid&&b.c===selColor&&(b.e.getTime()===sd.getTime()||b.s.getTime()===ed.getTime()));
