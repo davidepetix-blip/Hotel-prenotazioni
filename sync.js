@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '38'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '39'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -71,19 +71,28 @@ async function loadCestinoBlacklist(force = false) {
   if (!force && _cestinoBlacklist && age < CESTINO_BLACKLIST_TTL) return _cestinoBlacklist;
   if (!DATABASE_SHEET_ID) { _cestinoBlacklist = new Set(); return _cestinoBlacklist; }
   try {
-    // Legge ID (col A) e REASON (col N) — includi solo cancellazioni esplicite utente
-    const d = await dbGet(`${CESTINO_SHEET_NAME}!A2:N9999`);
-    const rows = d.values || [];
+    // Legge solo ID(A) e REASON(N) con batchGet per minimizzare il trasferimento.
+    // Con 4872 righe leggere A:N era il principale collo di bottiglia (~3s).
+    // Ora leggiamo solo le due colonne necessarie in una batchGet.
+    const enc = s => encodeURIComponent(s);
+    const batchUrl = 'https://sheets.googleapis.com/v4/spreadsheets/' + DATABASE_SHEET_ID
+      + '/values:batchGet?ranges=' + enc(`${CESTINO_SHEET_NAME}!A2:A9999`)
+      + '&ranges=' + enc(`${CESTINO_SHEET_NAME}!N2:N9999`)
+      + '&valueRenderOption=FORMATTED_VALUE';
+    const br = await apiFetch(batchUrl);
+    const bj = br.ok ? await br.json() : { valueRanges: [] };
+    const idsCol    = bj.valueRanges?.[0]?.values || [];
+    const reasonCol = bj.valueRanges?.[1]?.values || [];
     const blacklisted = [];
     const autoSync    = [];
-    rows.forEach(r => {
-      const id     = (r[0]  || '').trim();
-      const reason = (r[13] || '').trim(); // colonna N = REASON
+    idsCol.forEach((row, i) => {
+      const id     = (row[0]  || '').trim();
+      const reason = ((reasonCol[i] || [])[0] || '').trim();
       if (!id) return;
       if (_isCestinoAutoSync(reason)) {
-        autoSync.push(id); // cancellazione da sync: NON in blacklist
+        autoSync.push(id);
       } else {
-        blacklisted.push(id); // cancellazione esplicita utente: in blacklist
+        blacklisted.push(id);
       }
     });
     _cestinoBlacklist = new Set(blacklisted);
@@ -794,6 +803,19 @@ async function dbDelete(b, reason = 'cancellata dal foglio') {
   try { await archiviaInCestino([target], reason); } catch(e) { console.warn('[dbDelete]:', e.message); }
 }
 
+// Cache sheetId numerico del foglio PRENOTAZIONI (per batchUpdate delete)
+let _dbSheetIdCache = null;
+async function _getDbSheetId(spreadsheetId) {
+  if (_dbSheetIdCache) return _dbSheetIdCache;
+  try {
+    const r = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`);
+    const j = await r.json();
+    const sh = (j.sheets||[]).find(s => s.properties.title === DB_SHEET_NAME);
+    _dbSheetIdCache = sh?.properties?.sheetId ?? 0;
+  } catch(e) { _dbSheetIdCache = 0; }
+  return _dbSheetIdCache;
+}
+
 async function archiviaInCestino(lista, reason) {
   const id = DATABASE_SHEET_ID;
   if (!id || lista.length === 0) return;
@@ -812,6 +834,14 @@ async function archiviaInCestino(lista, reason) {
     base.push(b.dbRow || '');          // indice 14 = RIGA_ORIGINALE
     return base;
   });
+
+  // Non scrivere nel foglio CESTINO le cancellazioni automatiche da sync —
+  // mantiene il foglio leggibile e veloce (evita 4000+ righe inutili).
+  if (_isCestinoAutoSync(reason)) {
+    syncLog(`🗑 Auto-sync: ${lista.length} pren. rimossa/e da DB senza scrivere nel CESTINO`, 'syn');
+    return;
+  }
+
   const urlAppend = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
   await apiFetch(urlAppend, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({values:righe}) });
 
@@ -867,6 +897,9 @@ async function archiviaInCestino(lista, reason) {
   // Aggiorna la blacklist in-memory solo per cancellazioni esplicite utente.
   // Le cancellazioni da sync automatica NON entrano in blacklist: se la prenotazione
   // torna nel foglio grafico (es. dopo una sync anomala) deve poter essere reimportata.
+  // Non scrivere nel foglio CESTINO le cancellazioni automatiche da sync:
+  // ingombrano il foglio (4872+ righe!) senza utilità — la protezione
+  // è garantita da _row46BlipIds e dai guard in syncWithDatabase.
   if (!_isCestinoAutoSync(reason)) {
     lista.forEach(b => { if (b.dbId) addToCestinoBlacklist(b.dbId); });
   }
@@ -2234,25 +2267,113 @@ async function loadFromSheets() {
       }
     }
 
-    // FULL PATH
-    // Nota: _lastFullSyncTs viene impostato ALLA FINE della sync (dopo tutte le chiamate API),
-    // così il cooldown parte quando la quota è davvero libera.
+    // ── DB-FIRST FULL PATH ──────────────────────────────────────────
+    // STEP 1: legge il DB locale → render immediato (~1s)
+    // STEP 2: in background legge JSON_ANNUALE + sincronizza → re-render silenzioso
+    // Se non c'è DATABASE_SHEET_ID, cade direttamente al path JSON_ANNUALE.
     const _t0 = Date.now();
-    // Reset set riga 46: verrà ricostruito durante readAnnualSheet / readJSONAnnuale
-    _row46BlipIds   = new Set();
+    _row46BlipIds    = new Set();
     _row46BookingMap = {};
+
+    if (DATABASE_SHEET_ID) {
+      // ── STEP 1: DB → render veloce ──────────────────────────────
+      showLoading('Lettura database…');
+      await ensureDbHeaders();
+      const _t1db = Date.now();
+      const dbRowsFast = await readDatabase();
+      const dbActiveFast = dbRowsFast.filter(b => !b.deleted);
+      syncLog(`⏱ DB fast-read: ${dbActiveFast.length} pren. in ${Date.now()-_t1db}ms`, 'syn');
+
+      bookings = mergeMultiMonthBookings(dbActiveFast);
+      await loadRoomStates();
+      hideLoading();
+      render();
+      showToast(`✓ ${bookings.length} prenotazioni (DB)`, 'success');
+      syncLog(`✓ ${bookings.length} prenotazioni caricate dal DB`, 'ok');
+
+      // Imposta una cache veloce con i dati DB per il fast-path al prossimo avvio
+      saveDbCache(dbActiveFast);
+
+      // Mostra indicatore sync in corso sul syncDot
+      setSyncPulsing(true);
+      syncLog('📖 Aggiornamento da JSON_ANNUALE in background…', 'syn');
+
+      // ── STEP 2: JSON_ANNUALE + sync in background ───────────────
+      // Non blocca l'UI — eseguito dopo che l'utente vede già il calendario
+      ;(async () => {
+        try {
+          const _t2 = Date.now();
+          const sheetEntry = annualSheets.find(e => e.sheetId);
+          let sheetBookings = [];
+
+          if (sheetEntry) {
+            try {
+              sheetBookings = await readJSONAnnuale(sheetEntry.sheetId);
+              syncLog(`⏱ JSON_ANNUALE: ${sheetBookings.length} pren. in ${Date.now()-_t2}ms`, 'syn');
+            } catch(err) {
+              syncLog('⚠ JSON_ANNUALE fallback fogli mensili: ' + err.message, 'wrn');
+              for (let i = 0; i < annualSheets.length; i++) {
+                const entry = annualSheets[i];
+                if (!entry.sheetId) continue;
+                try { sheetBookings.push(...(await readAnnualSheet(entry))); } catch(e2) {}
+                if (i < annualSheets.length-1) await new Promise(r => setTimeout(r, 300));
+              }
+            }
+          }
+
+          const _t3 = Date.now();
+          syncLog('Sincronizzazione DB…', 'syn');
+          sheetBookings = await syncWithDatabase(sheetBookings, forcing);
+          syncLog(`⏱ Sync DB: ${Date.now()-_t3}ms`, 'syn');
+
+          await loadRoomStates();
+          const updated = mergeMultiMonthBookings(sheetBookings);
+
+          // Re-render solo se i dati sono cambiati rispetto a quelli già mostrati
+          const prevIds = new Set(bookings.map(b => b.dbId).filter(Boolean));
+          const newIds  = new Set(updated.map(b => b.dbId).filter(Boolean));
+          const hasChanges = updated.length !== bookings.length
+            || updated.some(b => b.dbId && !prevIds.has(b.dbId))
+            || bookings.some(b => b.dbId && !newIds.has(b.dbId));
+
+          if (hasChanges) {
+            bookings = updated;
+            render();
+            const diff = updated.length - dbActiveFast.length;
+            if (diff !== 0) {
+              showBgToast(diff > 0 ? `↻ +${diff} nuove da foglio` : `↻ ${Math.abs(diff)} rimosse da foglio`);
+            }
+            syncLog(`✓ ${bookings.length} prenotazioni dopo sync foglio`, 'ok');
+          } else {
+            syncLog('✓ Nessuna modifica rilevata dal foglio', 'ok');
+          }
+
+          const fromJSON = sheetBookings.some(b => b.fromJSONAnnuale);
+          syncLog(fromJSON ? 'Fonte: JSON_ANNUALE' : 'Fonte: 12 fogli mensili (fallback)', 'inf');
+          saveDbCache(DATABASE_SHEET_ID ? sheetBookings : bookings);
+
+        } catch(e2) {
+          syncLog('⚠ Aggiornamento foglio: ' + e2.message, 'wrn');
+        } finally {
+          setSyncPulsing(false);
+          _lastFullSyncTs = Date.now();
+          startBgSync();
+        }
+      })();
+
+      return; // STEP 1 completato — STEP 2 gira in background
+    }
+
+    // ── PATH senza DB: solo JSON_ANNUALE (come prima) ────────────
     const sheetEntry = annualSheets.find(e => e.sheetId);
     let sheetBookings = [];
-
     if (sheetEntry) {
       syncLog('📖 Lettura JSON_ANNUALE da foglio…', 'syn');
       showLoading('Lettura JSON_ANNUALE…');
       try {
         sheetBookings = await readJSONAnnuale(sheetEntry.sheetId);
         syncLog(`⏱ JSON_ANNUALE: ${sheetBookings.length} pren. in ${Date.now()-_t0}ms`, 'syn');
-        showLoading(`Foglio: ${sheetBookings.length} prenotazioni`);
       } catch(err) {
-        console.warn('[JSON_ANNUALE] Fallback fogli mensili:', err.message);
         for (let i = 0; i < annualSheets.length; i++) {
           const entry = annualSheets[i];
           if (!entry.sheetId) continue;
@@ -2262,29 +2383,14 @@ async function loadFromSheets() {
         }
       }
     }
-
-    if (DATABASE_SHEET_ID) {
-      const _t1 = Date.now();
-      syncLog('Sincronizzazione DB…', 'syn');
-      showLoading('Sincronizzazione database…');
-      await ensureDbHeaders();
-      sheetBookings = await syncWithDatabase(sheetBookings, forcing);
-      syncLog(`⏱ Sync DB: ${Date.now()-_t1}ms`, 'syn');
-    }
-
     await loadRoomStates();
     bookings = mergeMultiMonthBookings(sheetBookings);
     hideLoading();
     render();
-
-    const fromJSON = sheetBookings.some(b => b.fromJSONAnnuale);
-    // Badge rimosso dal topbar — info solo nel LOG
-    const _srcMsg = fromJSON ? 'Fonte: JSON_ANNUALE (1 chiamata API)' : 'Fonte: 12 fogli mensili (fallback)';
-    syncLog(_srcMsg, 'inf');
     showToast(`✓ ${bookings.length} prenotazioni`, 'success');
     syncLog(`✓ ${bookings.length} prenotazioni caricate`, 'ok');
-    saveDbCache(DATABASE_SHEET_ID ? sheetBookings : bookings);
-    _lastFullSyncTs = Date.now(); // cooldown: bgSync non parte per i prossimi 6 min
+    saveDbCache(bookings);
+    _lastFullSyncTs = Date.now();
     startBgSync();
   } catch(e) {
     hideLoading();
