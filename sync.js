@@ -66,6 +66,32 @@ let _row46BookingMap = {};
 // _sheetFingerprints[sheetName] = "val1|val2|...|valN" (stringify della riga 47)
 let _sheetFingerprints = {};
 
+// ─────────────────────────────────────────────────────────────────
+// CACHE METADATA FOGLI — evita chiamate duplicate ?fields=sheets.properties.title
+//
+// Ogni chiamata a spreadsheets/{id}?fields=sheets.properties.title costa 1 quota.
+// readJSONAnnuale la eseguiva 2 volte (una per il JSON, una per le intestazioni).
+// Questa cache (TTL 30 min) la riduce a 1 per sessione di sync.
+// ─────────────────────────────────────────────────────────────────
+const _metaCacheTitles = {}; // spreadsheetId → { ts, titles: string[] }
+const _META_CACHE_TTL  = 30 * 60 * 1000; // 30 minuti
+
+async function _getMonthSheetTitles(spreadsheetId) {
+  const cached = _metaCacheTitles[spreadsheetId];
+  if (cached && Date.now() - cached.ts < _META_CACHE_TTL) return cached.titles;
+  const r = await fetch(
+    'https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '?fields=sheets.properties.title',
+    { headers: { Authorization: 'Bearer ' + accessToken } }
+  );
+  if (!r.ok) return [];
+  const j = await r.json();
+  const titles = (j.sheets || [])
+    .map(s => s.properties.title)
+    .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-zÀ-ÿ]+\s+\d{4}$/i.test(n));
+  _metaCacheTitles[spreadsheetId] = { ts: Date.now(), titles };
+  return titles;
+}
+
 async function loadCestinoBlacklist(force = false) {
   const age = Date.now() - _cestinoBlacklistTs;
   if (!force && _cestinoBlacklist && age < CESTINO_BLACKLIST_TTL) return _cestinoBlacklist;
@@ -244,6 +270,7 @@ function logout() {
   accessToken = null;
   bookings = [];
   Object.keys(_sheetIdCaches).forEach(k => delete _sheetIdCaches[k]);
+  Object.keys(_metaCacheTitles).forEach(k => delete _metaCacheTitles[k]);
   invalidateDbCache();
   stopBgSync();
   document.getElementById('loginScreen').style.display = 'flex';
@@ -944,15 +971,9 @@ async function ensureCestinoHeaders() {
 async function readAnnualSheet(entry) {
   const { sheetId } = entry;
   const result = [];
-  const metaR = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
-    { headers: { Authorization: 'Bearer ' + accessToken } }
-  );
-  if (!metaR.ok) return result;
-  const meta = await metaR.json();
-  const sheetNames = meta.sheets
-    .map(s => s.properties.title)
-    .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF]+\s+\d{4}$/i.test(n));
+  // _getMonthSheetTitles usa cache TTL 30min → 0 chiamate aggiuntive se già letta da readJSONAnnuale
+  const sheetNames = await _getMonthSheetTitles(sheetId);
+  if (!sheetNames.length) return result;
 
   for (const sName of sheetNames) {
     try {
@@ -1087,17 +1108,11 @@ async function readJSONAnnuale(sheetId) {
       throw new Error(TAB + ': nessuna prenotazione — rigenera dal menu del foglio');
     }
     // Popola sheetColumnMap leggendo le intestazioni di tutti i fogli mensili
-    // in una sola chiamata batchGet — necessario per assegnare _sheetCol ai booking
+    // in una sola chiamata batchGet — necessario per assegnare _sheetCol ai booking.
+    // _getMonthSheetTitles usa la cache (TTL 30min) → 0 chiamate aggiuntive se già letta.
     try {
-      const metaR = await fetch(
-        'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId + '?fields=sheets.properties.title',
-        { headers: { Authorization: 'Bearer ' + accessToken } }
-      );
-      if (metaR.ok) {
-        const metaJ = await metaR.json();
-        const monthSheets = (metaJ.sheets || [])
-          .map(s => s.properties.title)
-          .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-zÀ-ÿ]+\s+\d{4}$/i.test(n));
+      const monthSheets = await _getMonthSheetTitles(sheetId);
+      {
         if (monthSheets.length > 0) {
           // Legge in una sola chiamata: intestazioni (riga HEADER_ROW) + riga 46 (BLIP_ID_ROW)
           // per tutti i fogli mensili. I fingerprint ora sono in JSON_ANNUALE!O2:O13 — letti
@@ -1290,18 +1305,87 @@ async function cleanupDeletedFromDb(dbRows) {
   return alreadyDeleted.length;
 }
 
+// ─────────────────────────────────────────────────────────────────
+// readDatabaseAndCestino — batchGet unico per PRENOTAZIONI + CESTINO
+//
+// Fonde readDatabase() + loadCestinoBlacklist() in 1 sola chiamata API
+// invece di 2. Risparmio critico in syncWithDatabase, che è il momento
+// in cui il token bucket è già consumato dal caricamento iniziale.
+//
+// Restituisce { dbRows, blacklist } dove:
+//   dbRows    = array di booking (già filtrati !deleted) come readDatabase()
+//   blacklist = Set<string> di BLIP_ID cestinati dall'utente (non da sync auto)
+// ─────────────────────────────────────────────────────────────────
+async function readDatabaseAndCestino() {
+  const id = DATABASE_SHEET_ID;
+  if (!id) return { dbRows: [], blacklist: new Set() };
+
+  const enc = s => encodeURIComponent(s);
+  const batchUrl = 'https://sheets.googleapis.com/v4/spreadsheets/' + id
+    + '/values:batchGet?ranges=' + enc(`${DB_SHEET_NAME}!A${DB_FIRST_ROW}:O3000`)
+    + '&ranges=' + enc(`${CESTINO_SHEET_NAME}!A2:A9999`)
+    + '&ranges=' + enc(`${CESTINO_SHEET_NAME}!N2:N9999`)
+    + '&valueRenderOption=FORMATTED_VALUE';
+
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), 30000);
+  let batchResp;
+  try {
+    batchResp = await apiFetch(batchUrl, { signal: ctrl.signal });
+  } catch(e) {
+    if (e.name === 'AbortError') throw new Error('DB+CESTINO batchGet timeout (>30s)');
+    throw e;
+  } finally { clearTimeout(tid); }
+
+  if (!batchResp.ok) throw new Error(`DB+CESTINO batchGet error ${batchResp.status}: ${await batchResp.text()}`);
+  const bj = await batchResp.json();
+  const vr = bj.valueRanges || [];
+
+  // ── Parsing PRENOTAZIONI ──────────────────────────────────────
+  const dbRawRows = vr[0]?.values || [];
+  dbRowCache = [];
+  const dbRows = [];
+  dbRawRows.forEach((row, i) => {
+    const rowNum = DB_FIRST_ROW + i;
+    const b = dbRowToBooking(row, rowNum);
+    dbRowCache.push({ rowNum, raw: row });
+    if (b && !b.deleted) dbRows.push(b);
+  });
+
+  // ── Parsing CESTINO blacklist ─────────────────────────────────
+  const idsCol    = vr[1]?.values || [];
+  const reasonCol = vr[2]?.values || [];
+  const blacklisted = [];
+  idsCol.forEach((row, i) => {
+    const id_     = (row[0]  || '').trim();
+    const reason  = ((reasonCol[i] || [])[0] || '').trim();
+    if (!id_) return;
+    if (!_isCestinoAutoSync(reason)) blacklisted.push(id_);
+  });
+  const blacklist = new Set(blacklisted);
+
+  // Aggiorna la blacklist globale (TTL reset)
+  _cestinoBlacklist    = blacklist;
+  _cestinoBlacklistTs  = Date.now();
+  syncLog(`🗑 Blacklist CESTINO: ${blacklisted.length} ID (utente) [batchGet fusione DB+CESTINO]`, 'syn');
+
+  return { dbRows, blacklist };
+}
+
 async function syncWithDatabase(sheetBookings, forceFullSync = false) {
   if (!DATABASE_SHEET_ID) return sheetBookings;
 
+  // ── 1 sola chiamata batchGet per PRENOTAZIONI + CESTINO blacklist ──
+  // (sostituisce readDatabase() + loadCestinoBlacklist() separati = -1 chiamata API)
   showLoading('Lettura database…');
-  const allDbRows = await readDatabase();
+  const { dbRows: allDbRows } = await readDatabaseAndCestino();
   const cleanedN  = await cleanupDeletedFromDb(allDbRows);
-  if (cleanedN > 0) showLoading(`Cestino: ${cleanedN} righe spostate…`);
-
-  // Carica blacklist CESTINO — impedisce reimport di prenotazioni cancellate
-  // anche se ancora presenti nel foglio grafico o nel JSON_ANNUALE.
-  // Forza ricarico se abbiamo appena spostato righe nel cestino.
-  await loadCestinoBlacklist(cleanedN > 0);
+  if (cleanedN > 0) {
+    showLoading(`Cestino: ${cleanedN} righe spostate…`);
+    // Righe DELETED residue trovate: ricarica blacklist aggiornata (1 chiamata extra, rara)
+    await loadCestinoBlacklist(true);
+  }
+  // _cestinoBlacklist già aggiornata da readDatabaseAndCestino — nessuna chiamata aggiuntiva
 
   const dbActive      = allDbRows.filter(b => !b.deleted);
   const result        = [];
