@@ -1069,7 +1069,7 @@ async function readJSONAnnuale(sheetId) {
   const TAB   = 'JSON_ANNUALE';
   // Legge A2:O13: colonna A = JSON mensile, colonna O = fingerprint mensile
   // In una sola chiamata otteniamo sia i dati che il fingerprint — zero costo aggiuntivo.
-  const range = encodeURIComponent("'" + TAB + "'!A2:O13");
+  const range = encodeURIComponent(TAB + "!A2:O13");
   const url   = "https://sheets.googleapis.com/v4/spreadsheets/" + sheetId + "/values/" + range + "?valueRenderOption=FORMATTED_VALUE";
 
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -2196,7 +2196,7 @@ async function checkFingerprintsChanged(sheetId) {
   if (!sheetId) return { changed: true, changedMonths: [] };
 
   try {
-    const range = encodeURIComponent("'JSON_ANNUALE'!O2:O13");
+    const range = encodeURIComponent("JSON_ANNUALE!O2:O13");
     const r = await fetch(
       'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId +
       '/values/' + range + '?valueRenderOption=FORMATTED_VALUE',
@@ -2640,7 +2640,7 @@ async function segnalaModificaAdAppsScript(sheetId) {
     const sheetEntry = annualSheets.find(e => e.sheetId);
     if (sheetEntry) {
       const mR = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${sheetEntry.sheetId}/values/${encodeURIComponent("'JSON_ANNUALE'!A1:E1")}?valueRenderOption=FORMATTED_VALUE`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetEntry.sheetId}/values/${encodeURIComponent("JSON_ANNUALE!A1:E1")}?valueRenderOption=FORMATTED_VALUE`,
         { headers: { Authorization: 'Bearer ' + accessToken } }
       );
       if (mR.ok) tsPreCall = ((await mR.json()).values?.[0] || []).join(' ');
@@ -2679,7 +2679,7 @@ async function segnalaModificaAdAppsScript(sheetId) {
     try {
       // Prima controlla solo il timestamp (1 cella, veloce)
       const mR2 = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${sheetEntry.sheetId}/values/${encodeURIComponent("'JSON_ANNUALE'!A1:E1")}?valueRenderOption=FORMATTED_VALUE`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetEntry.sheetId}/values/${encodeURIComponent("JSON_ANNUALE!A1:E1")}?valueRenderOption=FORMATTED_VALUE`,
         { headers: { Authorization: 'Bearer ' + accessToken } }
       );
       if (!mR2.ok) { syncLog(`⏳ Web App: poll ${tentativo}/3 — attesa…`, 'syn'); continue; }
