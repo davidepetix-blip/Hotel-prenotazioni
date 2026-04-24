@@ -1372,7 +1372,12 @@ async function readDatabaseAndCestino() {
   return { dbRows, blacklist };
 }
 
-async function syncWithDatabase(sheetBookings, forceFullSync = false) {
+// fromFallback=true quando la fonte è il fallback dei 12 fogli mensili (JSON_ANNUALE non disponibile).
+// In modalità fallback la lettura può essere incompleta (429 su singoli fogli, fogli mancanti,
+// nomi non standard) → non è affidabile come fonte di verità per le CANCELLAZIONI.
+// Con fromFallback=true: la FASE 2 preserva tutti i booking DB non-matchati (nessuna cestinazione),
+// MAX_ARCHIVE_PER_SYNC scende a 0 (sicurezza assoluta).
+async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallback = false) {
   if (!DATABASE_SHEET_ID) return sheetBookings;
 
   // ── 1 sola chiamata batchGet per PRENOTAZIONI + CESTINO blacklist ──
@@ -1386,6 +1391,10 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
     await loadCestinoBlacklist(true);
   }
   // _cestinoBlacklist già aggiornata da readDatabaseAndCestino — nessuna chiamata aggiuntiva
+
+  if (fromFallback) {
+    syncLog('⚠ syncWithDatabase: fonte fallback (12 fogli) — cestinazione disabilitata per sicurezza', 'wrn');
+  }
 
   const dbActive      = allDbRows.filter(b => !b.deleted);
   const result        = [];
@@ -1498,6 +1507,12 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
       result.push(db); continue;
     }
 
+    // GUARD fallback: in modalità fallback (12 fogli mensili) la lettura può essere
+    // incompleta — non cestinare MAI in questo caso. La prenotazione rimane visibile.
+    if (fromFallback) {
+      result.push(db); continue;
+    }
+
     db.deleted      = true;
     db.deleteReason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
     db.deletedAt    = nowISO();
@@ -1506,11 +1521,11 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false) {
 
   // FASE 3: Scrittura DB
   // ── GUARD ASSOLUTO anti-cestinazione massiva ──────────────────────
-  // Indipendentemente da qualsiasi guard precedente, non cestinare mai
-  // più di MAX_ARCHIVE_PER_SYNC prenotazioni in una singola sync.
-  // Se il numero supera la soglia: blocca tutto, mostra avviso, NON scrivere.
-  // L'utente può usare 🔄 Force Sync per forzare se è davvero intenzionale.
-  const MAX_ARCHIVE_PER_SYNC = 20;
+  // In modalità fallback (12 fogli mensili) MAX = 0: nessuna archiviazione
+  // perché la lettura potrebbe essere incompleta (429, fogli mancanti, ecc.).
+  // In modalità JSON_ANNUALE MAX = 20: soglia di sicurezza standard.
+  // Force sync (🔄) bypassa il guard in entrambe le modalità.
+  const MAX_ARCHIVE_PER_SYNC = fromFallback ? 0 : 20;
   if (toArchive.length > MAX_ARCHIVE_PER_SYNC && !forceFullSync) {
     syncLog(`🛑 STOP: ${toArchive.length} prenotazioni da cestinare — limite sicurezza (${MAX_ARCHIVE_PER_SYNC}) superato. Usa 🔄 per forzare.`, 'err');
     showToast(`⚠ ${toArchive.length} prenotazioni da cestinare — operazione bloccata per sicurezza. Usa 🔄 se intenzionale.`, 'error');
@@ -2405,9 +2420,11 @@ async function loadFromSheets() {
             }
           }
 
+          // fromFallback=true se non siamo riusciti a leggere JSON_ANNUALE
+          const _fromFallback = sheetBookings.length > 0 && !sheetBookings.some(b => b.fromJSONAnnuale);
           const _t3 = Date.now();
           syncLog('Sincronizzazione DB…', 'syn');
-          sheetBookings = await syncWithDatabase(sheetBookings, forcing);
+          sheetBookings = await syncWithDatabase(sheetBookings, forcing, _fromFallback);
           syncLog(`⏱ Sync DB: ${Date.now()-_t3}ms`, 'syn');
 
           await loadRoomStates();
