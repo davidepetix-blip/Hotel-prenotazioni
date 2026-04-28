@@ -1382,7 +1382,6 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
 
   // ── 1 sola chiamata batchGet per PRENOTAZIONI + CESTINO blacklist ──
   // (sostituisce readDatabase() + loadCestinoBlacklist() separati = -1 chiamata API)
-  showLoading('Lettura database…');
   const { dbRows: allDbRows } = await readDatabaseAndCestino();
   const cleanedN  = await cleanupDeletedFromDb(allDbRows);
   if (cleanedN > 0) {
@@ -2481,6 +2480,7 @@ async function loadFromSheets() {
         } catch(e2) {
           syncLog('⚠ Aggiornamento foglio: ' + e2.message, 'wrn');
         } finally {
+          hideLoading();
           setSyncPulsing(false);
           _lastFullSyncTs = Date.now();
           startBgSync();
