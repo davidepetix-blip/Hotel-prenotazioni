@@ -2248,34 +2248,53 @@ async function bgSync() {
   try {
     if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
 
-    // ── Controllo fingerprint riga 47 (1 chiamata leggera) ─────────
-    // Se nessun foglio mensile è cambiato, aggiorniamo solo il DB
-    // e saltiamo la rilettura del JSON_ANNUALE (risparmio ~2 chiamate)
+    // ══════════════════════════════════════════════════════════════
+    // bgSync — strategia a 3 livelli per minimizzare le chiamate API
+    //
+    // LIVELLO 1 — fingerprint (1 chiamata leggera, ~100 byte):
+    //   Legge JSON_ANNUALE!O2:O13 (12 valori hash, 1 per mese).
+    //   Se TUTTI invariati → salta la rilettura del foglio grafico.
+    //
+    // LIVELLO 2 — DB check (1 chiamata readDatabase):
+    //   Solo se il DB potrebbe essere cambiato (scritture recenti o
+    //   fingerprint cambiato). Se il DB è identico → nessun render.
+    //
+    // LIVELLO 3 — render:
+    //   Solo se DB effettivamente cambiato.
+    //
+    // Caso ottimale (nessuna modifica): 1 sola chiamata API totale.
+    // ══════════════════════════════════════════════════════════════
+
     const sheetEntry = annualSheets.find(e => e.sheetId);
     const fpResult = sheetEntry
       ? await checkFingerprintsChanged(sheetEntry.sheetId)
-      : { changed: true, changedSheets: [] };
+      : { changed: true, changedMonths: [] };
 
-    if (!fpResult.changed) {
-      syncLog('⟳ bgSync: foglio grafico invariato (fingerprint ok) — solo DB', 'syn');
-    } else if (fpResult.changedMonths?.length > 0) {
-      syncLog('⟳ bgSync: modifiche in ' + fpResult.changedMonths.join(', '), 'syn');
+    // Ci sono scritture dell'app negli ultimi 5 minuti?
+    const RECENTE_APP_MS = 5 * 60 * 1000;
+    const recenteApp = bookings.filter(b =>
+      b.fonte === 'app' && b.ts && (Date.now() - new Date(b.ts).getTime()) < RECENTE_APP_MS
+    );
+    const hasPendingWrites = recenteApp.length > 0;
+
+    if (!fpResult.changed && !hasPendingWrites) {
+      // ── LIVELLO 1: nessuna modifica rilevata, 0 chiamate aggiuntive ──
+      syncLog('⟳ bgSync: invariato (fingerprint ok) — skip', 'syn');
+      await loadRoomStates();
+      return;
     }
 
+    if (fpResult.changedMonths?.length > 0) {
+      syncLog('⟳ bgSync: modifiche in ' + fpResult.changedMonths.join(', '), 'syn');
+    } else if (hasPendingWrites) {
+      syncLog('⟳ bgSync: scritture recenti — verifico DB', 'syn');
+    }
+
+    // ── LIVELLO 2: rileggi DB ──────────────────────────────────────
     const dbFresh = await readDatabase();
     const active  = dbFresh.filter(b => !b.deleted && !isDeletedLocally(b.dbId));
 
     const prevCount = bookings.length;
-    let changed = active.length !== prevCount;
-    if (!changed) {
-      const localMap = new Map(bookings.map(b => [b.dbId, b.ts]).filter(([k]) => k));
-      for (const db of active) {
-        const localTs = localMap.get(db.dbId);
-        if (!localTs || (db.ts && db.ts > localTs)) { changed = true; break; }
-      }
-    }
-    const rimossi = bookings.filter(b => b.dbId && !active.find(d => d.dbId === b.dbId)).length;
-    syncLog(`DB: ${active.length} prenotazioni attive, rimossi ${rimossi}`, 'db');
 
     // GUARD: se il DB ha molto meno prenotazioni di quelle in memoria, salta il render
     if (active.length < prevCount * 0.7 && prevCount > 20) {
@@ -2284,19 +2303,25 @@ async function bgSync() {
       return;
     }
 
-    if (changed || rimossi > 0) {
-      // GUARD post-scrittura: se ci sono prenotazioni scritte dall'app negli ultimi 5 minuti
-      // e il DB non le ha ancora (latenza di scrittura + Apps Script 20-30s),
-      // le preserviamo nel merge per non perdere l'ottimistic UI.
-      const RECENTE_APP_MS = 5 * 60 * 1000;
-      const recenteApp = bookings.filter(b =>
-        b.fonte === 'app' && b.ts && (Date.now() - new Date(b.ts).getTime()) < RECENTE_APP_MS
-      );
+    // Controlla se il DB è effettivamente cambiato rispetto alla memoria
+    const rimossi = bookings.filter(b => b.dbId && !active.find(d => d.dbId === b.dbId)).length;
+    let dbChanged = active.length !== prevCount || rimossi > 0;
+    if (!dbChanged) {
+      const localMap = new Map(bookings.map(b => [b.dbId, b.ts]).filter(([k]) => k));
+      for (const db of active) {
+        const localTs = localMap.get(db.dbId);
+        if (!localTs || (db.ts && db.ts > localTs)) { dbChanged = true; break; }
+      }
+    }
+    syncLog(`DB: ${active.length} prenotazioni attive, rimossi ${rimossi}`, 'db');
+
+    // ── LIVELLO 3: render solo se DB cambiato ─────────────────────
+    if (dbChanged) {
       let merged = mergeMultiMonthBookings(active);
-      if (recenteApp.length > 0) {
+      // Preserva prenotazioni locali recenti non ancora nel DB
+      // (latenza scrittura API + Apps Script 20-30s)
+      if (hasPendingWrites) {
         recenteApp.forEach(localB => {
-          // Se il DB non ha ancora questa prenotazione (o ha una versione più vecchia)
-          // la manteniamo dalla memoria locale
           const inDb = merged.find(db =>
             db.dbId === localB.dbId ||
             (db.n === localB.n && db.r === localB.r && Math.abs(db.s - localB.s) < 86400000)
