@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '26'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '27'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -1231,12 +1231,14 @@ function saveSettings() {
     Array.from(list.children).forEach((row, i) => {
       const year = parseInt(document.getElementById('asr-year-' + i)?.value);
       const sid  = (document.getElementById('asr-id-'   + i)?.value || '').trim();
-      if (year && sid) newEntries.push({ year, sheetId: sid, label: String(year) });
+      // Salva la riga se ha almeno l'anno valido — anche con sheetId vuoto.
+      // Prima il filtro "if (year && sid)" impediva di eliminare anni senza ID
+      // perché le righe rimanenti non venivano mai scritte su localStorage.
+      if (year) newEntries.push({ year, sheetId: sid, label: String(year) });
     });
-    if (newEntries.length) {
-      annualSheets = newEntries;
-      saveAnnualSheetsLS(newEntries);
-    }
+    // Salva sempre, anche se la lista è vuota (l'utente ha rimosso tutte le righe)
+    annualSheets = newEntries;
+    saveAnnualSheetsLS(newEntries);
   }
   // ── Salva ID DATABASE
   const dbId = (document.getElementById('sDbSheetId')?.value || '').trim();
