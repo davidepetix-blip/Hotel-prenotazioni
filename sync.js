@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '48'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '49'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -1526,6 +1526,29 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       result.push(db); continue;
     }
 
+    // GUARD merge-mese: Apps Script unisce prenotazioni multi-mese con nomi leggermente
+    // diversi (es. "Erasmus" + "Erasmus 24s" → un solo booking in JSON_ANNUALE).
+    // Se il DB ha un entry con nome simile sulla stessa camera nello stesso mese,
+    // è quasi certamente un frammento del booking unito — non cestinare.
+    if (db.dbId && db.s && db.cameraName) {
+      const dbNomNorm = _normName(db.n);
+      const dbCam     = (db.cameraName || '').toLowerCase().trim();
+      const dbMese    = new Date(db.s).getMonth();
+      const dbAnno    = new Date(db.s).getFullYear();
+      const hasSimilarInSheet = sheetBookings.some(s => {
+        if (!s.s || !s.cameraName) return false;
+        if ((s.cameraName||'').toLowerCase().trim() !== dbCam) return false;
+        if (new Date(s.s).getFullYear() !== dbAnno) return false;
+        // Stessa camera, stesso anno: se il nome del foglio CONTIENE il nome DB o viceversa
+        const sNom = _normName(s.n);
+        return sNom.includes(dbNomNorm) || dbNomNorm.includes(sNom);
+      });
+      if (hasSimilarInSheet) {
+        syncLog(`🛡 Protetta (merge-mese): ${db.n} (${db.dbId})`, 'wrn');
+        result.push(db); continue;
+      }
+    }
+
     // GUARD fallback: in modalità fallback (12 fogli mensili) la lettura può essere
     // incompleta — non cestinare MAI in questo caso. La prenotazione rimane visibile.
     if (fromFallback) {
@@ -1540,18 +1563,27 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
 
   // FASE 3: Scrittura DB
   // ── GUARD ASSOLUTO anti-cestinazione massiva ──────────────────────
-  // In modalità fallback (12 fogli mensili) MAX = 0: nessuna archiviazione
-  // perché la lettura potrebbe essere incompleta (429, fogli mancanti, ecc.).
-  // In modalità JSON_ANNUALE MAX = 20: soglia di sicurezza standard.
-  // Force sync (🔄) bypassa il guard in entrambe le modalità.
   const MAX_ARCHIVE_PER_SYNC = fromFallback ? 0 : 20;
   if (toArchive.length > MAX_ARCHIVE_PER_SYNC && !forceFullSync) {
     syncLog(`🛑 STOP: ${toArchive.length} prenotazioni da cestinare — limite sicurezza (${MAX_ARCHIVE_PER_SYNC}) superato. Usa 🔄 per forzare.`, 'err');
     showToast(`⚠ ${toArchive.length} prenotazioni da cestinare — operazione bloccata per sicurezza. Usa 🔄 se intenzionale.`, 'error');
-    // Non cestina nulla — aggiunge comunque al result così sono visibili
     toArchive.forEach(b => { b.deleted = false; result.push(b); });
     toArchive.length = 0;
   }
+
+  // ── GUARD anti-import massivo ─────────────────────────────────────
+  // Se ci sono molte prenotazioni nuove da importare, le importiamo a tranche
+  // (MAX_ADD_PER_SYNC per sessione). Le restanti verranno importate al prossimo bgSync.
+  // Questo evita che il sync si blocchi per minuti su mobile o connessioni lente.
+  // forceFullSync bypassa il limite.
+  const MAX_ADD_PER_SYNC = forceFullSync ? Infinity : 50;
+  let addSkipped = 0;
+  if (toAddToDB.length > MAX_ADD_PER_SYNC) {
+    addSkipped = toAddToDB.length - MAX_ADD_PER_SYNC;
+    toAddToDB.splice(MAX_ADD_PER_SYNC); // tronca — le restanti arrivano nel result dal foglio
+    syncLog(`⚠ Import parziale: ${MAX_ADD_PER_SYNC}/${MAX_ADD_PER_SYNC + addSkipped} nuove pren. (le altre al prossimo sync)`, 'wrn');
+  }
+
   if (toAddToDB.length > 0) {
     const total = toAddToDB.length;
     for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -1587,11 +1619,15 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
   syncLog(`DB: ${result.length} prenotazioni attive, rimossi ${toArchive.length}`, 'db');
 
   // Scrivi BLIP_ID nella riga 46 per le prenotazioni nuove (fire & forget)
+  // Skip se l'import era grande: il token bucket è già sotto pressione e
+  // writeBlipIdsToRow46 farebbe scattare 429. Il bridge gestisce riga 46 lato Apps Script.
   const toWriteRow46 = toAddToDB.filter(b => b.dbId && b._sheetCol && b.sheetName && b.sheetId);
-  if (toWriteRow46.length > 0) {
+  if (toWriteRow46.length > 0 && toWriteRow46.length <= 10 && addSkipped === 0) {
     writeBlipIdsToRow46(toWriteRow46).catch(e =>
       syncLog('⚠ Scrittura riga 46: ' + e.message, 'wrn')
     );
+  } else if (toWriteRow46.length > 10) {
+    syncLog(`⏭ Scrittura riga 46 rinviata (${toWriteRow46.length} celle — evita 429)`, 'syn');
   }
 
   return result;
