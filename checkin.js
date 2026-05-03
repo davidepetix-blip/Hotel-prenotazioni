@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '22'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '23'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -100,12 +100,25 @@ async function readCiSheet() {
           ciRow:     i + 2,
         };
         result[key] = rec;
-        // NON indicizziamo per ciId separatamente: causerebbe duplicati in Object.values()
+        // Indice secondario cam:CAMERA:DATA — permette lookup anche senza preId/ciId
+        if (rec.camera && rec.data) {
+          const camKey = 'cam:' + rec.camera + ':' + rec.data;
+          if (!result[camKey]) result[camKey] = rec;
+        }
       } catch(e) {}
     });
     return result;
   } catch(e) { return {}; }
 }
+
+
+// Restituisce i valori di ciData senza duplicati (filtra le chiavi cam:)
+function ciDataValues() {
+  return Object.entries(ciData)
+    .filter(([k]) => !k.startsWith('cam:'))
+    .map(([, v]) => v);
+}
+
 
 async function writeCiRow(preId, data) {
   const id = DATABASE_SHEET_ID;
@@ -338,7 +351,7 @@ function renderCiHistory() {
   // De-duplica per (camera+data) — chiave fisica univoca
   // Preferisce il record con preId associato
   const _ciMap = new Map(); // key=camera|data → record preferito
-  Object.values(ciData).forEach(ci => {
+  ciDataValues().forEach(ci => {
     const k = ci.camera + '|' + ci.data;
     const existing = _ciMap.get(k);
     // Preferisce record con preId (già riconciliato)
@@ -781,13 +794,13 @@ function _esportaAlloggiatiDiretta(items, scope) {
 function exportAlloggiati(scope='72h'){
   const today=new Date().toISOString().slice(0,10);
   let items;
-  if(scope==='today'){items=Object.values(ciData).filter(ci=>ci.data===today);}
+  if(scope==='today'){items=ciDataValues().filter(ci=>ci.data===today);}
   else if(scope==='48h'){
     const cutoff=new Date(); cutoff.setHours(cutoff.getHours()-48);
     const cutoffStr=cutoff.toISOString().slice(0,10);
-    items=Object.values(ciData).filter(ci=>ci.data>=cutoffStr);
+    items=ciDataValues().filter(ci=>ci.data>=cutoffStr);
   }
-  else{items=Object.values(ciData).filter(ci=>{if(!_ciHistSearch)return true;const q=_ciHistSearch.toLowerCase();const cap=ci.guests[0]||{};return ci.camera.toLowerCase().includes(q)||((cap.cognome||'')+' '+(cap.nome||'')).toLowerCase().includes(q)||ci.data.includes(q);});}
+  else{items=ciDataValues().filter(ci=>{if(!_ciHistSearch)return true;const q=_ciHistSearch.toLowerCase();const cap=ci.guests[0]||{};return ci.camera.toLowerCase().includes(q)||((cap.cognome||'')+' '+(cap.nome||'')).toLowerCase().includes(q)||ci.data.includes(q);});}
   // Mostra dialog di selezione/preview prima di generare
   if(items.length>0){ apriDialogExportAlloggiati(items, scope); return; }
   if(items.length===0){showToast('Nessun check-in da esportare','error');return;}
@@ -1159,7 +1172,7 @@ function ciPreviewAlloggiati(bookingIdOrScope) {
   const today=_ld(0), ieri=_ld(1), altroieri=_ld(2);
   let items;
   if (bookingIdOrScope==='72h'||bookingIdOrScope==='48h'||bookingIdOrScope==='filtered') {
-    items = Object.values(ciData).filter(ci => ci.data===today||ci.data===ieri||ci.data===altroieri);
+    items = ciDataValues().filter(ci => ci.data===today||ci.data===ieri||ci.data===altroieri);
   } else {
     const bid = String(bookingIdOrScope);
     const b = typeof bookings!=='undefined' ? bookings.find(x => String(x.id)===bid) : null;
@@ -1170,7 +1183,7 @@ function ciPreviewAlloggiati(bookingIdOrScope) {
       const dd   = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
       items = [ciData[b.dbId]||ciData['cam:'+cam+':'+dd]].filter(Boolean);
     }
-    if (!items||!items.length) items = Object.values(ciData).filter(ci => ci.data===today||ci.data===ieri||ci.data===altroieri);
+    if (!items||!items.length) items = ciDataValues().filter(ci => ci.data===today||ci.data===ieri||ci.data===altroieri);
   }
   if (!items||!items.length) { showToast('Nessun check-in da esportare', 'error'); return; }
 
