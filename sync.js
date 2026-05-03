@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '44'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '45'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -1554,6 +1554,11 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
     }
   }
   if (toArchive.length > 0) {
+    // LOG DIAGNOSTICO: stampa i candidati alla cestinazione prima di procedere
+    toArchive.forEach(b => {
+      const anno = b.s ? new Date(b.s).getFullYear() : '?';
+      syncLog(`🗑 Candidato cestino: ${b.n} (${b.dbId||'no-id'}) anno=${anno} dbRow=${b.dbRow||'?'}`, 'wrn');
+    });
     showLoading(`Cestino: ${toArchive.length} prenotazioni…`);
     try { await archiviaInCestino(toArchive, 'Rimossa dal foglio Gantt · ' + new Date().toLocaleDateString('it-IT')); } catch(e) {}
     const rimossi = toArchive.filter(b=>b.dbRow).length;
