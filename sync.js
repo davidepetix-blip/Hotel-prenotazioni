@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '47'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '48'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -243,7 +243,10 @@ async function rigenera() {
     await new Promise(r => setTimeout(r, 7000));
     // Verifica che il JSON_ANNUALE sia stato effettivamente aggiornato
     try {
-      const sheetEntry = loadAnnualSheets().find(e => e.sheetId);
+      const currentYear = new Date().getFullYear();
+      const allSheets   = loadAnnualSheets();
+      const sheetEntry  = allSheets.find(e => e.sheetId && e.year === currentYear)
+                       || allSheets.find(e => e.sheetId);
       if (sheetEntry) {
         const fresh = await readJSONAnnuale(sheetEntry.sheetId);
         if (fresh && fresh.length > 0) {
@@ -448,8 +451,20 @@ function hideSessionExpiredBanner() {
 // GOOGLE SHEETS API — helpers generici
 // ═══════════════════════════════════════════════════════════════════
 
+// ── Helper: restituisce l'entry annualSheets dell'anno corrente ──
+// annualSheets può contenere più anni (es. 2025 e 2026).
+// JSON_ANNUALE esiste solo sul foglio dell'anno in corso — usare sempre
+// questo helper invece di .find(e => e.sheetId) che restituisce il primo
+// entry disponibile (potrebbe essere un anno passato senza JSON_ANNUALE).
+function _currentYearSheetEntry() {
+  const y = new Date().getFullYear();
+  return annualSheets.find(e => e.sheetId && e.year === y)
+      || annualSheets.find(e => e.sheetId)
+      || null;
+}
+
 function getDefaultSheetId() {
-  return annualSheets.find(e => e.sheetId)?.sheetId || '';
+  return _currentYearSheetEntry()?.sheetId || '';
 }
 
 async function sheetsGet(range, spreadsheetId) {
@@ -2059,6 +2074,7 @@ function esportaLogSessione() {
     typeof BLIP_VER_CHECKIN  !== 'undefined' ? 'BLIP_VER_CHECKIN=' + BLIP_VER_CHECKIN  : '',
     typeof BLIP_VER_BILLING  !== 'undefined' ? 'BLIP_VER_BILLING=' + BLIP_VER_BILLING  : '',
     typeof BLIP_VER_CLIENTI  !== 'undefined' ? 'BLIP_VER_CLIENTI=' + BLIP_VER_CLIENTI  : '',
+    typeof BLIP_VER_BRIDGE   !== 'undefined' ? 'BLIP_VER_BRIDGE='  + BLIP_VER_BRIDGE   : '',
   ].filter(Boolean).join('  ');
 
   // ── Raccoglie stato sistema ────────────────────────────────────
@@ -2094,15 +2110,24 @@ Versioni attuali:
 ${vers}
 
 Architettura file (ordine caricamento):
-core.js → sync.js → gantt.js → clienti.js → alloggiati-data.js → checkin.js → billing.js
+core.js → sync.js → clienti.js → gantt.js → alloggiati-data.js → checkin.js → billing.js → bridge.js
 
-File principali modificati in sessioni recenti:
-- sync.js   : OAuth, Sheets API, DB CRUD, sync engine, token bucket, CESTINO blacklist,
-              _row46BlipIds guard, bgSync cooldown, segnalaModificaAdAppsScript con polling
-- gantt.js  : Render Gantt, drawer, renderCheckinDrawerTab (_reloaded guard anti-loop)
-- billing.js: Conti, pagamenti, PDF — bookingId sempre stringa BLIP_ID,
-              confermaPagamento con push cache pre-render, saveConti strip campi calcolati
-- checkin.js: Check-in, Alloggiati Web export, OCR Gemini
+File principali e responsabilità:
+- core.js    : costanti ROOMS, helpers puri (date, colori, bed parsing)
+- sync.js    : OAuth, apiFetch + token bucket, Sheets API, DB CRUD, bgSync,
+               CESTINO blacklist, _row46BlipIds guard, readJSONAnnuale, loadFromSheets
+- gantt.js   : render Gantt, modal prenotazione, drawer (usa bridgeSalva/bridgeCancella)
+- billing.js : conti, pagamenti, PDF — _ck(bid) normalizza BLIP_ID, calcolo tariffe
+- checkin.js : check-in, Alloggiati Web export, OCR Gemini
+- clienti.js : anagrafica clienti
+- bridge.js  : scrittura/cancellazione sul foglio grafico via GET Apps Script Web App
+               sostituisce writeBookingToSheet, clearBookingFromSheet, segnalaModificaAdAppsScript
+
+Apps Script (blip-appscript.gs):
+- doGet action=scrivi|cancella → scriviPrenotazioneSuFoglio() → colora celle + riga 46 + JSON_ANNUALE
+- doGet default → rigenera JSON_ANNUALE
+- onEdit → processSingleColumnBookings + aggiornaJSONAnnuale
+- rigenera5min → trigger time-based ogni 5 min
 
 Decisioni architetturali chiave:
 - bookingId è sempre stringa BLIP_ID (mai parseInt)
@@ -2111,9 +2136,9 @@ Decisioni architetturali chiave:
 - syncWithDatabase: MAX_ARCHIVE_PER_SYNC=20 guard + _row46BlipIds protezione
 - bgSync cooldown 3min dopo ogni loadFromSheets completo
 - CESTINO blacklist caricata ad ogni sync (TTL 10min)
-
-Allega: billing.js, sync.js, gantt.js, checkin.js, core.js, index.html
-(scaricali da GitHub prima di modificarli)
+- _currentYearSheetEntry() usato ovunque per evitare HTTP 400 su foglio anno passato
+- bridge.js usa GET verso Apps Script (CORS-compatibile, no-cors fallback)
+- JSON_ANNUALE esiste solo sul foglio anno corrente — mai usare .find(e=>e.sheetId) raw
 
 Problema / richiesta attuale:
 [DESCRIVI QUI IL PROBLEMA O LA FUNZIONALITÀ DA IMPLEMENTARE]
@@ -2273,7 +2298,7 @@ async function bgSync() {
     // Caso ottimale (nessuna modifica): 1 sola chiamata API totale.
     // ══════════════════════════════════════════════════════════════
 
-    const sheetEntry = annualSheets.find(e => e.sheetId);
+    const sheetEntry = _currentYearSheetEntry();
     const fpResult = sheetEntry
       ? await checkFingerprintsChanged(sheetEntry.sheetId)
       : { changed: true, changedMonths: [] };
@@ -2435,7 +2460,7 @@ async function loadFromSheets() {
       ;(async () => {
         try {
           const _t2 = Date.now();
-          const sheetEntry = annualSheets.find(e => e.sheetId);
+          const sheetEntry = _currentYearSheetEntry();
           let sheetBookings = [];
 
           if (sheetEntry) {
@@ -2500,7 +2525,7 @@ async function loadFromSheets() {
     }
 
     // ── PATH senza DB: solo JSON_ANNUALE (come prima) ────────────
-    const sheetEntry = annualSheets.find(e => e.sheetId);
+    const sheetEntry = _currentYearSheetEntry();
     let sheetBookings = [];
     if (sheetEntry) {
       syncLog('📖 Lettura JSON_ANNUALE da foglio…', 'syn');

@@ -94,10 +94,18 @@ async function _callBridge(url) {
  *   → poll ogni 8s per max 3 tentativi (24s totali).
  */
 async function _bridgeReload(polling) {
+  // ── Usa il foglio dell'anno corrente — JSON_ANNUALE esiste solo lì ──
+  // annualSheets può contenere più anni (es. 2025, 2026).
+  // find(e => e.sheetId) restituisce il primo, che potrebbe non avere JSON_ANNUALE.
+  const currentYear = new Date().getFullYear();
   const entry = (typeof annualSheets !== 'undefined')
-    ? annualSheets.find(e => e.sheetId)
+    ? (annualSheets.find(e => e.sheetId && e.year === currentYear)
+       || annualSheets.find(e => e.sheetId))
     : null;
-  if (!entry?.sheetId) return;
+  if (!entry?.sheetId) {
+    syncLog('⚠ Bridge reload: nessun foglio annuale disponibile', 'wrn');
+    return;
+  }
 
   const _apply = async (fresh) => {
     if (!fresh?.length) return false;
