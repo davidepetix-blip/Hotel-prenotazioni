@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '12'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '22'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -383,7 +383,7 @@ function renderCiHistory() {
         const cap = ci.guests[0] || {};
         const nomeCapo = cap.cognome ? cap.cognome+' '+cap.nome : '—';
         html += `
-          <div class="ci-history-row" onclick="openCiModalFromCi('${ci.preId}')">
+          <div class="ci-history-row" onclick="openCiModalFromCi('cam:${ci.camera}:${ci.data}')">
             <div>
               <div class="ci-history-name">${nomeCapo}</div>
               <div class="ci-history-sub">Camera ${ci.camera} · ${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · ${ci.preId ? 'Prenotazione: '+ci.preId.slice(-5) : ''}</div>
@@ -454,26 +454,34 @@ function openCiModalWithBooking(b) {
   document.getElementById('ciPanel').scrollTop = 0;
 }
 
-function openCiModalFromCi(preId) {
-  // Cerca prima nel modo standard
-  let b = bookings.find(b => b.dbId === preId);
-  if (!b && preId) {
-    const numId = parseInt(preId);
-    if (!isNaN(numId)) b = bookings.find(x => x.id === numId);
-  }
-  // Fallback: cerca il ci in ciData e prova camera+data
-  if (!b) {
-    const ci = ciData[preId];
-    if (ci) {
-      b = bookings.find(bk => {
-        const camName = bk.cameraName || (typeof roomName==='function'?roomName(bk.r):'') || '';
-        const arrivo  = bk.s instanceof Date ? bk.s.toISOString().slice(0,10) : '';
-        return camName === ci.camera && arrivo === ci.data;
-      });
-    }
-  }
-  if (!b) { showToast('Prenotazione non trovata', 'error'); return; }
-  openCiModalWithBooking(b);
+function openCiModalFromCi(key) {
+  // Cerca il record CI per chiave cam:CAMERA:DATA, ciId o preId
+  let ci = ciData[key]
+        || Object.values(ciData).find(c => c.ciId === key)
+        || (key && Object.values(ciData).find(c => c.preId === key));
+  if (!ci) { showToast('Scheda non trovata', 'error'); return; }
+
+  // Booking opzionale — solo per titolo panel
+  const b = (ci.preId && bookings.find(x => x.dbId === ci.preId))
+          || bookings.find(x => {
+               const room = ROOMS && ROOMS.find(r => r.id === x.r);
+               const cam  = room ? room.name : (x.cameraName || '');
+               const d    = x.s instanceof Date ? x.s : new Date(x.s);
+               const dd   = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+               return String(cam) === String(ci.camera) && dd === ci.data;
+             });
+
+  _ciEditBookingId = ci.preId || key;
+  _ciEditGuests = JSON.parse(JSON.stringify(ci.guests));
+
+  document.getElementById('ciPanelTitle').textContent = 'Check-in · Camera ' + ci.camera;
+  document.getElementById('ciPanelSub').textContent = b
+    ? (b.n + ' · ' + fmtDate(b.s) + ' → ' + fmtDate(b.e))
+    : ('Camera ' + ci.camera + ' · ' + (ci.data||'').split('-').reverse().join('/') + ' · ' + ci.numOspiti + ' ospite' + (ci.numOspiti!==1?'i':''));
+
+  renderCiGuests();
+  document.getElementById('ciOverlay').classList.add('open');
+  document.getElementById('ciPanel').scrollTop = 0;
 }
 
 function closeCiModal() {
@@ -663,12 +671,12 @@ async function saveCiCheckin() {
     hideLoading();
     showToast('✓ Check-in salvato', 'success');
     renderCiTab();
-    // Aggiorna anche il tab CI nel drawer se è aperto
-    const drTabCI = document.getElementById('drTabCI');
-    if (drTabCI && drTabCI.style.display !== 'none') {
-      const bid = drTabCI.dataset.bookingId;
-      if (bid && typeof renderCheckinDrawerTab === 'function') {
-        renderCheckinDrawerTab(parseInt(bid));
+    // Aggiorna il tab CI nel drawer se è aperto
+    const _drCI = document.getElementById('drTabCI');
+    if (_drCI && _drCI.style.display !== 'none') {
+      const _bk = bookings.find(x => x.dbId === b?.dbId) || bookings.find(x => ('LOCAL-'+x.id) === _ciEditBookingId);
+      if (_bk && typeof renderDrawerCheckin === 'function') {
+        try { _drCI.innerHTML = renderDrawerCheckin(_bk); } catch(e) {}
       }
     }
   } catch(e) {
@@ -770,7 +778,7 @@ function _esportaAlloggiatiDiretta(items, scope) {
   _exportAlloggiatiItems(items);
 }
 
-function exportAlloggiati(scope='today'){
+function exportAlloggiati(scope='72h'){
   const today=new Date().toISOString().slice(0,10);
   let items;
   if(scope==='today'){items=Object.values(ciData).filter(ci=>ci.data===today);}
@@ -1021,6 +1029,259 @@ async function ciHandleDocImage(input) {
     if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '\ud83d\udcf7 Scansiona documento d\u2019identit\u00e0'; }
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// DRAWER CHECK-IN — Tab nella scheda prenotazione
+// ═══════════════════════════════════════════════════════════════════
+
+function drTabCheckin(el, bookingId) {
+  const tabsContainer = el.closest('.dr-bill-tabs');
+  if (!tabsContainer) return;
+  tabsContainer.querySelectorAll('.dr-bill-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const parent = tabsContainer.parentElement;
+  if (!parent) return;
+  parent.querySelectorAll('[id^="drTab"]').forEach(p => p.style.display = 'none');
+  let panel = parent.querySelector('#drTabCI');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'drTabCI';
+    parent.appendChild(panel);
+  }
+  panel.style.cssText = 'display:block;padding:0;';
+  const allBooks = typeof bookings !== 'undefined' ? bookings : [];
+  const b = allBooks.find(x => String(x.id) === String(bookingId));
+  if (!b) {
+    panel.innerHTML = '<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Booking non trovato (id=' + bookingId + ')</div>';
+    return;
+  }
+  let html;
+  try { html = renderDrawerCheckin(b); } catch(e) { html = ''; }
+  if (!html || !html.trim()) {
+    html = '<div style="padding:12px;background:#fff7ed;border-radius:8px;font-size:12px;color:#9a3412;">⚠ Nessun contenuto (dbId=' + (b.dbId||'null') + ')</div>';
+  }
+  panel.innerHTML = html;
+  if (typeof loadCiData === 'function') {
+    loadCiData().then(() => {
+      if (!panel.isConnected) return;
+      try { const u = renderDrawerCheckin(b); if (u && u.trim()) panel.innerHTML = u; } catch(e) {}
+    }).catch(() => {});
+  }
+}
+
+function renderDrawerCheckin(b) {
+  if (!b) return '';
+  try {
+    const bid = b.id;
+    const localDate = d => {
+      const dt = d instanceof Date ? d : new Date(d);
+      if (isNaN(dt.getTime())) return '';
+      return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+    };
+    const room    = typeof ROOMS !== 'undefined' ? ROOMS.find(r => r.id === b.r) : null;
+    const camName = room ? room.name : (b.cameraName || '');
+    const dataArr = localDate(b.s);
+    const altKey  = 'cam:' + camName + ':' + dataArr;
+    const ci      = (ciData && b.dbId && ciData[b.dbId])
+                 || (ciData && altKey && ciData[altKey])
+                 || null;
+    const now     = Date.now();
+    const arrDate = b.s instanceof Date ? b.s : new Date(b.s);
+    const arrival = isNaN(arrDate.getTime()) ? now : arrDate.getTime();
+    const hoursToArrival = (arrival - now) / 36e5;
+
+    if (ci && ci.guests && ci.guests.length > 0) {
+      const dataFmt = (ci.ts||'').slice(0,10).split('-').reverse().join('/');
+      const cards = ci.guests.map((g, i) => {
+        const cardId = 'ciDrCard_' + bid + '_' + i;
+        const nome = [g.cognome, g.nome].filter(Boolean).join(' ') || '—';
+        const label = i === 0 ? '👤 Capogruppo' : ('👤 Accompagnatore ' + i);
+        const nascitaLabel = g.luogoNascita
+          ? (g.provNascita ? g.luogoNascita+' ('+g.provNascita+')' : g.luogoNascita)
+          : (g.statoEsteroNascita || '—');
+        const dnFmt = g.dataNascita ? g.dataNascita.split('-').reverse().join('/') : '—';
+        const docSection = i === 0
+          ? `<div class="ci-dr-card-row"><span>Documento</span><span>${g.tipoDoc||'—'} ${g.numDoc||''}</span></div>
+             <div class="ci-dr-card-row"><span>Rilasciato a</span><span>${g.luogoRilascio||'—'}</span></div>` : '';
+        return `<div class="ci-dr-card" data-card="${cardId}" onclick="ciDrToggle(this.dataset.card)">
+          <div class="ci-dr-card-hdr">
+            <div><div class="ci-dr-card-label">${label}</div><div class="ci-dr-card-name">${nome}</div></div>
+            <span class="ci-dr-card-arrow" id="${cardId}_arr">▸</span>
+          </div>
+          <div class="ci-dr-card-body" id="${cardId}" style="display:none;">
+            <div class="ci-dr-card-row"><span>Data nascita</span><span>${dnFmt}</span></div>
+            <div class="ci-dr-card-row"><span>Luogo nascita</span><span>${nascitaLabel}</span></div>
+            <div class="ci-dr-card-row"><span>Cittadinanza</span><span>${g.cittadinanza||'—'}</span></div>
+            ${docSection}
+          </div>
+        </div>`;
+      }).join('');
+      return `<div class="ci-dr-done-badge">✓ Check-in · ${ci.numOspiti} ospite${ci.numOspiti!==1?'i':''} · ${dataFmt}</div>
+        <div class="ci-dr-cards">${cards}</div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="btn" style="flex:1;justify-content:center;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">✎ Modifica</button>
+          <button class="btn primary" style="flex:1;justify-content:center;" data-bid="${bid}" onclick="ciPreviewAlloggiati(this.dataset.bid)">⬇ Alloggiati</button>
+        </div>`;
+    }
+    if (hoursToArrival < 0) {
+      const giorni = Math.abs(Math.floor(hoursToArrival / 24));
+      return `<div class="ci-dr-alert danger">⚠ Check-in in ritardo<br>
+        <span style="font-size:11px;opacity:.85;">Arrivo ${giorni>0?giorni+' giorn'+(giorni===1?'o':'i')+' fa':'oggi'} — non ancora registrato</span></div>
+        <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Registra check-in ora</button>`;
+    }
+    if (hoursToArrival <= 48) {
+      const ore = Math.floor(hoursToArrival);
+      const label = ore < 1 ? 'Meno di 1 ora' : ore < 24 ? ore+' or'+(ore===1?'a':'e') : Math.floor(ore/24)+' giorn'+(Math.floor(ore/24)===1?'o':'i');
+      return `<div class="ci-dr-alert warn">🕐 Arrivo tra ${label}<br>
+        <span style="font-size:11px;opacity:.85;">Prepara il check-in in anticipo</span></div>
+        <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Fai check-in</button>`;
+    }
+    const gg = Math.floor(hoursToArrival / 24);
+    return `<div class="ci-dr-future">Arrivo tra <strong>${gg} giorni</strong><br>
+      <span style="font-size:11px;color:var(--text3);">Il check-in può essere fatto fino a 48h prima o dopo l'arrivo.</span></div>
+      <button class="btn" style="width:100%;justify-content:center;margin-top:12px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Fai check-in in anticipo</button>`;
+  } catch(e) {
+    return `<div style="padding:12px;background:#fef2f2;border-radius:8px;font-size:12px;color:#991b1b;">⚠ Errore: ${e.message}</div>`;
+  }
+}
+
+function ciDrToggle(cardId) {
+  const body = document.getElementById(cardId);
+  const arr  = document.getElementById(cardId + '_arr');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (arr) arr.textContent = open ? '▸' : '▾';
+}
+
+function ciPreviewAlloggiati(bookingIdOrScope) {
+  const _ld = n => { const d=new Date(Date.now()-n*864e5); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+  const today=_ld(0), ieri=_ld(1), altroieri=_ld(2);
+  let items;
+  if (bookingIdOrScope==='72h'||bookingIdOrScope==='48h'||bookingIdOrScope==='filtered') {
+    items = Object.values(ciData).filter(ci => ci.data===today||ci.data===ieri||ci.data===altroieri);
+  } else {
+    const bid = String(bookingIdOrScope);
+    const b = typeof bookings!=='undefined' ? bookings.find(x => String(x.id)===bid) : null;
+    if (b) {
+      const room = typeof ROOMS!=='undefined' ? ROOMS.find(r => r.id===b.r) : null;
+      const cam  = room ? room.name : (b.cameraName||'');
+      const d    = b.s instanceof Date ? b.s : new Date(b.s);
+      const dd   = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      items = [ciData[b.dbId]||ciData['cam:'+cam+':'+dd]].filter(Boolean);
+    }
+    if (!items||!items.length) items = Object.values(ciData).filter(ci => ci.data===today||ci.data===ieri||ci.data===altroieri);
+  }
+  if (!items||!items.length) { showToast('Nessun check-in da esportare', 'error'); return; }
+
+  const rows = [];
+  items.forEach(ci => {
+    const b = typeof bookings!=='undefined' ? bookings.find(bk => bk.dbId===ci.preId) : null;
+    const nG = b ? String(Math.min(Math.max(Math.round((new Date(b.e)-new Date(b.s))/86400000),1),30)).padStart(2,'0') : '01';
+    ci.guests.forEach((g, gIdx) => {
+      rows.push({ ciId:ci.ciId, isCapo:gIdx===0, gIdx,
+        cognome:g.cognome||'', nome:g.nome||'', sesso:g.sesso||'M',
+        dataNascita:g.dataNascita||'', luogoNascita:g.luogoNascita||'',
+        provNascita:g.provNascita||'', statoEsteroNascita:g.statoEsteroNascita||'',
+        cittadinanza:g.cittadinanza||'', tipoDoc:g.tipoDoc||'',
+        numDoc:g.numDoc||'', luogoRilascio:g.luogoRilascio||'',
+        dataArrivo:ci.data||today, nGiorni:nG, camera:ci.camera||'' });
+    });
+  });
+
+  const rowsHtml = rows.map((r, idx) => {
+    const capoTag = r.isCapo
+      ? `<span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px;">CAPO</span>`
+      : `<span style="font-size:9px;color:var(--text3);">fam.</span>`;
+    const docF = r.isCapo
+      ? `<input class="ci-prev-inp" placeholder="Tipo doc" value="${r.tipoDoc}" oninput="_ciPrevRows[${idx}].tipoDoc=this.value" style="width:60px">
+         <input class="ci-prev-inp" placeholder="N° doc" value="${r.numDoc}" oninput="_ciPrevRows[${idx}].numDoc=this.value" style="flex:2">
+         <input class="ci-prev-inp" placeholder="Luogo rilascio" value="${r.luogoRilascio}" oninput="_ciPrevRows[${idx}].luogoRilascio=this.value" style="flex:1.5">`
+      : `<span style="color:var(--text3);font-size:11px;padding:0 4px;">—</span>`;
+    return `<div class="ci-prev-row">
+      <div class="ci-prev-row-hdr">${capoTag}<strong style="font-size:12px;">${r.cognome} ${r.nome}</strong><span style="font-size:11px;color:var(--text3);">Cam. ${r.camera} · ${r.dataArrivo.split('-').reverse().join('/')}</span></div>
+      <div class="ci-prev-fields">
+        <input class="ci-prev-inp" placeholder="Cognome *" value="${r.cognome}" oninput="_ciPrevRows[${idx}].cognome=this.value" style="flex:2">
+        <input class="ci-prev-inp" placeholder="Nome *" value="${r.nome}" oninput="_ciPrevRows[${idx}].nome=this.value" style="flex:2">
+        <select class="ci-prev-inp" onchange="_ciPrevRows[${idx}].sesso=this.value" style="width:70px"><option value="M" ${r.sesso==='M'?'selected':''}>M</option><option value="F" ${r.sesso==='F'?'selected':''}>F</option></select>
+        <input class="ci-prev-inp" type="date" value="${r.dataNascita}" oninput="_ciPrevRows[${idx}].dataNascita=this.value" style="width:130px">
+      </div>
+      <div class="ci-prev-fields">
+        <input class="ci-prev-inp" placeholder="Comune nascita" value="${r.luogoNascita}" oninput="_ciPrevRows[${idx}].luogoNascita=this.value" style="flex:2">
+        <input class="ci-prev-inp" placeholder="Prov." value="${r.provNascita}" oninput="_ciPrevRows[${idx}].provNascita=this.value.toUpperCase();this.value=this.value.toUpperCase()" maxlength="2" style="width:50px">
+        <input class="ci-prev-inp" placeholder="Cittadinanza" value="${r.cittadinanza}" oninput="_ciPrevRows[${idx}].cittadinanza=this.value.toUpperCase();this.value=this.value.toUpperCase()" style="flex:1.5">
+        ${docF}
+      </div>
+    </div>`;
+  }).join('');
+
+  let overlay = document.getElementById('ciPrevOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'ciPrevOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;display:flex;flex-direction:column;';
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);flex:1;overflow-y:auto;padding:16px;max-width:600px;width:100%;margin:0 auto;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <button class="btn btn-icon" onclick="document.getElementById('ciPrevOverlay').style.display='none'">←</button>
+        <div style="flex:1;font-weight:600;font-size:16px;">Anteprima Alloggiati</div>
+        <span style="font-size:11px;color:var(--text3);">${rows.length} ospiti</span>
+      </div>
+      <div id="ciPrevRows">${rowsHtml}</div>
+    </div>
+    <div style="background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;gap:10px;max-width:600px;width:100%;margin:0 auto;">
+      <button class="btn" style="flex:1;justify-content:center;" onclick="document.getElementById('ciPrevOverlay').style.display='none'">Annulla</button>
+      <button class="btn primary" style="flex:2;justify-content:center;" onclick="ciPrevGenerate()">⬇ Genera e scarica TXT</button>
+    </div>`;
+  window._ciPrevRows = rows;
+  overlay.style.display = 'flex';
+}
+
+function ciPrevGenerate() {
+  const rows = window._ciPrevRows;
+  if (!rows || !rows.length) return;
+  const toFmt = s => {
+    if (!s) return '          ';
+    const cc = s.replace(/-/g,'').replace(/\//g,'');
+    if (cc.length!==8) return '          ';
+    if (/^(19|20)\d{6}$/.test(cc)) return cc.slice(6,8)+'/'+cc.slice(4,6)+'/'+cc.slice(0,4);
+    return cc.slice(0,2)+'/'+cc.slice(2,4)+'/'+cc.slice(4,8);
+  };
+  const pR = (s,n) => { s=String(s||'').slice(0,n); return s+' '.repeat(n-s.length); };
+  const lines = [];
+  rows.forEach(r => {
+    const nGruppo = rows.filter(x => x.ciId===r.ciId).length;
+    const tipoAllog = r.isCapo ? (nGruppo>1?'17':'16') : '19';
+    const cognome  = pR(cleanAl(r.cognome),50);
+    const nome     = pR(cleanAl(r.nome),30);
+    const sesso    = (r.sesso||'M').toUpperCase()==='F'?'2':'1';
+    const dataN    = toFmt(r.dataNascita);
+    const isIta    = _alNorm(r.cittadinanza||'ITALIA').includes('ITAL');
+    let comN='000000000', provN='  ';
+    if (isIta&&r.luogoNascita){const f=_alCodiceComune(r.luogoNascita);if(f){comN=f.cod;provN=pR(f.prov,2);}}
+    const statoN = _alCodiceStato(isIta?'ITALIA':(r.statoEsteroNascita||r.cittadinanza||'ITALIA')).padStart(9,'0');
+    const cittad  = _alCodiceStato(r.cittadinanza||'ITALIA').padStart(9,'0');
+    const tipoDoc = r.isCapo ? pR(_alCodiceDoc(r.tipoDoc),5) : '     ';
+    const numDoc  = r.isCapo ? pR(cleanAl(r.numDoc||''),20) : ' '.repeat(20);
+    let luogoRil  = '000000000';
+    if (r.isCapo&&r.luogoRilascio){const rl=_alRisolviLuogo(r.luogoRilascio);if(rl){luogoRil=rl.cod;}else{const sc=_alCodiceStato(r.luogoRilascio);if(sc&&sc!=='000000100')luogoRil=sc.padStart(9,'0');}}
+    const arrFmt  = (r.dataArrivo||'').split('-').reverse().join('/');
+    const record  = tipoAllog+arrFmt+r.nGiorni+cognome+nome+sesso+dataN+comN+provN+statoN+cittad+tipoDoc+numDoc+luogoRil;
+    lines.push(record);
+  });
+  const content = lines.join('\r\n');
+  const d=new Date(); const dd=String(d.getDate()).padStart(2,'0'),mm=String(d.getMonth()+1).padStart(2,'0'),yyyy=d.getFullYear();
+  const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download='alloggiati_'+yyyy+'-'+mm+'-'+dd+'.txt'; a.click();
+  URL.revokeObjectURL(url);
+  document.getElementById('ciPrevOverlay').style.display='none';
+  showToast('✓ File generato · '+lines.length+' record','success');
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // GESTIONE FOGLI ANNUALI NELLE IMPOSTAZIONI
 // ═══════════════════════════════════════════════════════════════════
