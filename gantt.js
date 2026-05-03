@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '27'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '28'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -332,9 +332,7 @@ async function delBook(id){
   closeDrawer();
   showLoading('Rimozione…');
   try {
-    // Rimuovi dal foglio Google sempre (bidirezionale)
-    // clearBookingFromSheet chiama già segnalaModifica → rigenera JSON_ANNUALE
-    await clearBookingFromSheet(b);
+    await bridgeCancella(b);
     if(DATABASE_SHEET_ID && b.dbRow) await dbDelete(b, 'Eliminata dall\'app');
     bookings=bookings.filter(x=>x.id!==id);
     hideLoading(); render();
@@ -604,7 +602,7 @@ async function saveBooking(){
       show(`⛔ Sovrapposizione con "${conf[0].n}" (${fmt(conf[0].s)} → ${fmt(conf[0].e)}). Impossibile salvare.`);
       return;
     }
-    // isSelfOverlap → lascia passare, clearBookingFromSheet pulirà tutto il vecchio
+    // isSelfOverlap → bridgeSalva gestisce il vecchio range automaticamente
   }
 
   // ── MODIFICA PRENOTAZIONE MULTI-MESE — conferma esplicita ──
@@ -689,21 +687,15 @@ async function saveBooking(){
   showLoading('Scrittura sul foglio Google…');
 
   try {
-    // Se è una modifica, cancella sempre il vecchio dal foglio (bidirezionale)
-    // skipSegnala=true: writeBookingToSheet chiamerà segnalaModifica da solo,
-    // evitiamo la doppia chiamata alla Web App
-    const oldB = existingB || bookings.find(b=>b.id===newB.id);
-    if(oldB && oldB.id === newB.id) await clearBookingFromSheet({...oldB, fromSheet:true}, { skipSegnala: true });
-
-    await writeBookingToSheet(newB);
-    // Segna come salvato
+    // bridgeSalva gestisce internamente cancel+write per le modifiche
+    // e aggiorna bookings[] + render() dopo la risposta Apps Script
+    await bridgeSalva(newB, existingB || null);
     const idx=bookings.findIndex(b=>b.id===newB.id);
     if(idx>=0){ bookings[idx].fromSheet=true; bookings[idx].pending=false; }
     hideLoading(); render();
     showToast(`✓ "${name}" salvato sul foglio Google`, 'success');
   } catch(e) {
     hideLoading();
-    // Rollback visivo
     const idx=bookings.findIndex(b=>b.id===newB.id);
     if(idx>=0) bookings[idx].pending=false;
     render();
