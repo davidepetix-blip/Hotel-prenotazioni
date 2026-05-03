@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '33'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '34'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -499,30 +499,49 @@ function _jsonParse(s, fallback) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// API PUBBLICA — sostituisce le vecchie funzioni localStorage
+// _ck(bid) — Normalizza bid → chiave BLIP_ID per _contiDatiCache
+//
+// bid può essere: numeric id locale (es. 20001), BLIP_ID (es. 'PRE-2026-XXXX'),
+// o stringa numerica. La cache _contiDatiCache è sempre indicizzata per BLIP_ID.
+// Senza questa normalizzazione la stessa prenotazione può avere dati sparsi
+// sotto chiavi diverse, causando conti "duplicati" o risultati vuoti.
+// Se bookings non è ancora popolato, ritorna la chiave così com'è (safe fallback).
 // ─────────────────────────────────────────────────────────────────
+function _ck(bid) {
+  const key = String(bid);
+  const b = typeof bookings !== 'undefined'
+    ? bookings.find(x => String(x.id) === key || x.dbId === key)
+    : null;
+  return b?.dbId || key;
+}
 
+// ── API PUBBLICA — sostituisce le vecchie funzioni localStorage
 // SINCRONO (usa cache in-memory, parte da vuoto se non ancora caricato)
 function getExtraForBooking(bid) {
-  return _contiDatiCache[bid]?.extra ?? _jsonParse(localStorage.getItem(`billExtra_${bid}`), []);
+  const key = _ck(bid);
+  return _contiDatiCache[key]?.extra ?? _jsonParse(localStorage.getItem(`billExtra_${key}`), []);
 }
 function setExtraForBooking(bid, extras) {
-  if (_contiDatiCache[bid]) _contiDatiCache[bid].extra = extras;
-  else _contiDatiCache[bid] = { extra:extras, override:null, appartMode:null, contoEmesso:null, dbRow:null };
-  saveContoDati(bid, { extra: extras }); // fire-and-forget
+  const key = _ck(bid);
+  if (_contiDatiCache[key]) _contiDatiCache[key].extra = extras;
+  else _contiDatiCache[key] = { extra:extras, override:null, appartMode:null, contoEmesso:null, dbRow:null };
+  saveContoDati(key, { extra: extras }); // fire-and-forget
 }
 
 function getContoOverrides(bid) {
-  return _contiDatiCache[bid]?.override ?? _jsonParse(localStorage.getItem(`billOv_${bid}`), null);
+  const key = _ck(bid);
+  return _contiDatiCache[key]?.override ?? _jsonParse(localStorage.getItem(`billOv_${key}`), null);
 }
 function setContoOverrides(bid, righe) {
-  if (_contiDatiCache[bid]) _contiDatiCache[bid].override = righe;
-  else _contiDatiCache[bid] = { extra:[], override:righe, appartMode:null, contoEmesso:null, dbRow:null };
-  saveContoDati(bid, { override: righe }); // fire-and-forget
+  const key = _ck(bid);
+  if (_contiDatiCache[key]) _contiDatiCache[key].override = righe;
+  else _contiDatiCache[key] = { extra:[], override:righe, appartMode:null, contoEmesso:null, dbRow:null };
+  saveContoDati(key, { override: righe }); // fire-and-forget
 }
 
 function getAppartMode(bid, notti) {
-  const m = _contiDatiCache[bid]?.appartMode ?? localStorage.getItem(`appartMode_${bid}`);
+  const key = _ck(bid);
+  const m = _contiDatiCache[key]?.appartMode ?? localStorage.getItem(`appartMode_${key}`);
   if (m === 'giornaliera') return 'giornaliera';
   if (m === 'mensile')     return 'mensile';
   if (m === 'standard')    return 'standard';
@@ -1316,15 +1335,6 @@ function refreshBillTab(bid) {
     // Drawer non aperto — ricostruisci normalmente
     if (typeof selBook === 'function') selBook(bid, null);
   }
-}
-
-// ── Helper: risolve la chiave corretta per _contiDatiCache ──────────
-// b.id è numerico (rowNum*10000+1), ma _contiDatiCache è indicizzato
-// per b.dbId (BLIP_ID). Usare il numeric id causa una chiave sbagliata
-// e gli extra sembrano non aggiungersi o sparire tra sessioni.
-function _ck(bid) {
-  const b = bookings.find(x => x.id === bid);
-  return b?.dbId || String(bid);
 }
 
 function addExtraVoce(bid) {

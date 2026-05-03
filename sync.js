@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '45'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '46'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -79,9 +79,8 @@ const _META_CACHE_TTL  = 30 * 60 * 1000; // 30 minuti
 async function _getMonthSheetTitles(spreadsheetId) {
   const cached = _metaCacheTitles[spreadsheetId];
   if (cached && Date.now() - cached.ts < _META_CACHE_TTL) return cached.titles;
-  const r = await fetch(
-    'https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '?fields=sheets.properties.title',
-    { headers: { Authorization: 'Bearer ' + accessToken } }
+  const r = await apiFetch(
+    'https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '?fields=sheets.properties.title'
   );
   if (!r.ok) return [];
   const j = await r.json();
@@ -199,6 +198,8 @@ function handleOAuthRedirect() {
 }
 
 function initGoogleAuth() {
+  // Wrapper mantenuto per compatibilità — handleOAuthRedirect viene chiamata
+  // direttamente dal listener window.load in gantt.js.
   handleOAuthRedirect();
 }
 
@@ -217,9 +218,12 @@ async function onLoginSuccess() {
   } catch(e) {}
   if (DATABASE_SHEET_ID || loadDbSheetId()) {
     DATABASE_SHEET_ID = DATABASE_SHEET_ID || loadDbSheetId();
-    loadBillSettingsDB().then(s => {
+    // FIX: await — le tariffe devono essere disponibili prima del primo render
+    // (fix race condition: prima era fire-and-forget, loadFromSheets partiva con dati stale)
+    try {
+      const s = await loadBillSettingsDB();
       if (s) localStorage.setItem(BILL_SETTINGS_KEY, JSON.stringify(s));
-    }).catch(()=>{});
+    } catch(e) {}
   }
   await loadFromSheets();
 }
@@ -619,9 +623,9 @@ async function ensureRoomsSheet() {
     if (d.values?.[0]?.[0] === 'CAMERA') return;
   } catch(e) {
     try {
-      const addSheet = await fetch(
+      const addSheet = await apiFetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`,
-        { method:'POST', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+        { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ requests:[{ addSheet:{ properties:{ title:ROOMS_SHEET_NAME } } }] }) }
       );
       if (!addSheet.ok) {
@@ -631,8 +635,8 @@ async function ensureRoomsSheet() {
     } catch(e2) { if (!String(e2.message).includes('already')) throw e2; }
   }
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(ROOMS_SHEET_NAME+'!A1:G1')}?valueInputOption=RAW`;
-  await fetch(url, {
-    method:'PUT', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+  await apiFetch(url, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ values:[['CAMERA','MAX_OSPITI','LETTI_AMMESSI','PULIZIA','CONFIGURAZIONE','NOTE_OPS','TS_AGGIORNAMENTO']] })
   });
 }
@@ -676,8 +680,8 @@ async function writeRoomsSheet(statesMap) {
   });
   const range = `${ROOMS_SHEET_NAME}!A2:G${1+rows.length}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
-  await fetch(url, {
-    method:'PUT', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+  await apiFetch(url, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ values: rows })
   });
   try { localStorage.setItem(ROOMS_CACHE_KEY, JSON.stringify({ ts:Date.now(), data:statesMap })); } catch(e){}
@@ -702,10 +706,10 @@ async function updateSingleRoomState(roomId, patch) {
   if (s.dbRow) {
     const range = `${ROOMS_SHEET_NAME}!A${s.dbRow}:G${s.dbRow}`;
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
-    await fetch(url, { method:'PUT', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'}, body:JSON.stringify({values}) });
+    await apiFetch(url, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({values}) });
   } else {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(ROOMS_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-    const resp = await fetch(url, { method:'POST', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'}, body:JSON.stringify({values}) });
+    const resp = await apiFetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({values}) });
     const r2 = await resp.json();
     const m = (r2.updates?.updatedRange||'').match(/(\d+):/);
     if (m) roomStates[roomId].dbRow = parseInt(m[1]);
@@ -790,9 +794,9 @@ async function ensureDbHeaders() {
   } catch(e) {}
   const id = DATABASE_SHEET_ID;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(DB_SHEET_NAME+'!A1:L1')}?valueInputOption=RAW`;
-  await fetch(url, {
+  await apiFetch(url, {
     method: 'PUT',
-    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ values: [['ID','CAMERA','NOME','DAL','AL','DISPOSIZIONE','NOTE','COLORE','ANNO','FONTE','TS_MODIFICA','DELETED']] })
   });
   _dbHeadersChecked = true;
@@ -980,9 +984,9 @@ async function readAnnualSheet(entry) {
       const base = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/`;
       const enc  = s => encodeURIComponent(s);
       const [hR, jR, idR] = await Promise.all([
-        fetch(base+enc(`'${sName}'!B${HEADER_ROW}:AJ${HEADER_ROW}`)+'?valueRenderOption=FORMATTED_VALUE', {headers:{Authorization:'Bearer '+accessToken}}),
-        fetch(base+enc(`'${sName}'!B${OUTPUT_ROW}:AJ${OUTPUT_ROW}`)+'?valueRenderOption=FORMATTED_VALUE', {headers:{Authorization:'Bearer '+accessToken}}),
-        fetch(base+enc(`'${sName}'!B${BLIP_ID_ROW}:AJ${BLIP_ID_ROW}`)+'?valueRenderOption=FORMATTED_VALUE', {headers:{Authorization:'Bearer '+accessToken}}),
+        apiFetch(base+enc(`'${sName}'!B${HEADER_ROW}:AJ${HEADER_ROW}`)+'?valueRenderOption=FORMATTED_VALUE'),
+        apiFetch(base+enc(`'${sName}'!B${OUTPUT_ROW}:AJ${OUTPUT_ROW}`)+'?valueRenderOption=FORMATTED_VALUE'),
+        apiFetch(base+enc(`'${sName}'!B${BLIP_ID_ROW}:AJ${BLIP_ID_ROW}`)+'?valueRenderOption=FORMATTED_VALUE'),
       ]);
       const headers = (await hR.json()).values?.[0] || [];
       const jsonRow = (await jR.json()).values?.[0] || [];
@@ -1075,7 +1079,7 @@ async function readJSONAnnuale(sheetId) {
   const url   = "https://sheets.googleapis.com/v4/spreadsheets/" + sheetId + "/values/" + range + "?valueRenderOption=FORMATTED_VALUE";
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    const r = await apiFetch(url);
     if (r.status === 429) { await new Promise(res => setTimeout(res, (attempt+1)*2000)); continue; }
     if (!r.ok) throw new Error(TAB + ' non disponibile (HTTP ' + r.status + ')');
     const data = await r.json();
@@ -1124,10 +1128,9 @@ async function readJSONAnnuale(sheetId) {
           const blipIdRanges = monthSheets
             .map(sn => encodeURIComponent("'" + sn + "'!B" + BLIP_ID_ROW + ":AJ" + BLIP_ID_ROW));
           const allRanges = [...headerRanges, ...blipIdRanges].join('&ranges=');
-          const bR = await fetch(
+          const bR = await apiFetch(
             'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId +
-            '/values:batchGet?ranges=' + allRanges + '&valueRenderOption=FORMATTED_VALUE',
-            { headers: { Authorization: 'Bearer ' + accessToken } }
+            '/values:batchGet?ranges=' + allRanges + '&valueRenderOption=FORMATTED_VALUE'
           );
           if (bR.ok) {
             const bData = await bR.json();
@@ -2203,10 +2206,9 @@ async function checkFingerprintsChanged(sheetId) {
 
   try {
     const range = "JSON_ANNUALE!O2:O13";
-    const r = await fetch(
+    const r = await apiFetch(
       'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId +
-      '/values/' + range + '?valueRenderOption=FORMATTED_VALUE',
-      { headers: { Authorization: 'Bearer ' + accessToken } }
+      '/values/' + range + '?valueRenderOption=FORMATTED_VALUE'
     );
     if (!r.ok) return { changed: true, changedMonths: [] };
 
@@ -2566,9 +2568,8 @@ async function getSheetIdMap(spreadsheetId) {
   }
   if (!spreadsheetId) throw new Error('Nessun foglio annuale configurato in Impostazioni.');
   if (_sheetIdCaches[spreadsheetId]) return _sheetIdCaches[spreadsheetId];
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(title,sheetId))`,
-    { headers: { Authorization: 'Bearer ' + accessToken } }
+  const r = await apiFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(title,sheetId))`
   );
   const d = await r.json();
   _sheetIdCaches[spreadsheetId] = {};
@@ -2665,23 +2666,21 @@ async function segnalaModificaAdAppsScript(sheetId) {
   const url  = `${webAppUrl}?anno=${anno}&ts=${Date.now()}`;
   syncLog('📡 Chiamata Web App Apps Script…', 'syn');
 
+  // Usa sheetId passato come parametro; fallback al primo foglio annuale disponibile
+  const resolvedSheetId = sheetId || annualSheets.find(e => e.sheetId)?.sheetId || '';
+
   // ── Leggi timestamp JSON_ANNUALE prima della chiamata ─────────────
-  // Serve per verificare se Apps Script ha davvero aggiornato il foglio.
   let tsPreCall = '';
   try {
-    const sheetEntry = annualSheets.find(e => e.sheetId);
-    if (sheetEntry) {
-      const mR = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${sheetEntry.sheetId}/values/${"JSON_ANNUALE!A1:E1"}?valueRenderOption=FORMATTED_VALUE`,
-        { headers: { Authorization: 'Bearer ' + accessToken } }
+    if (resolvedSheetId) {
+      const mR = await apiFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${resolvedSheetId}/values/JSON_ANNUALE%21A1%3AE1?valueRenderOption=FORMATTED_VALUE`
       );
       if (mR.ok) tsPreCall = ((await mR.json()).values?.[0] || []).join(' ');
     }
   } catch(e) {}
 
   // ── Chiama Web App: prima CORS (possiamo leggere risposta), poi no-cors ──
-  // Google Apps Script Web App con deploy "chiunque" risponde con CORS per GET.
-  // Se CORS fallisce (redirect, policy) → no-cors come fire-and-forget.
   let confermaDiretta = false;
   try {
     const r = await fetch(url, { method: 'GET', mode: 'cors' });
@@ -2693,7 +2692,6 @@ async function segnalaModificaAdAppsScript(sheetId) {
       }
     }
   } catch(corsErr) {
-    // CORS non supportato dal deploy corrente → no-cors (richiesta parte comunque)
     syncLog('📡 Web App: fallback no-cors (risposta non leggibile)', 'syn');
     try { await fetch(url, { method: 'GET', mode: 'no-cors' }); } catch(e) {
       syncLog(`❌ Web App irraggiungibile: ${e.message} — premi 🔄 manualmente`, 'err');
@@ -2702,29 +2700,23 @@ async function segnalaModificaAdAppsScript(sheetId) {
   }
 
   // ── Polling: verifica che JSON_ANNUALE sia stato aggiornato ────────
-  // Apps Script impiega 3-20s (dipende dal carico). Poll ogni 8s, max 3 volte (24s).
-  const sheetEntry = annualSheets.find(e => e.sheetId);
-  if (!sheetEntry) return;
+  if (!resolvedSheetId) return;
 
   for (let tentativo = 1; tentativo <= 3; tentativo++) {
     await new Promise(r => setTimeout(r, 8000));
     try {
-      // Prima controlla solo il timestamp (1 cella, veloce)
-      const mR2 = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${sheetEntry.sheetId}/values/${"JSON_ANNUALE!A1:E1"}?valueRenderOption=FORMATTED_VALUE`,
-        { headers: { Authorization: 'Bearer ' + accessToken } }
+      const mR2 = await apiFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${resolvedSheetId}/values/JSON_ANNUALE%21A1%3AE1?valueRenderOption=FORMATTED_VALUE`
       );
       if (!mR2.ok) { syncLog(`⏳ Web App: poll ${tentativo}/3 — attesa…`, 'syn'); continue; }
       const tsNuovo = ((await mR2.json()).values?.[0] || []).join(' ');
 
       if (tsNuovo === tsPreCall && !confermaDiretta) {
-        // JSON_ANNUALE non ancora aggiornato
         syncLog(`⏳ Web App: poll ${tentativo}/3 — Apps Script ancora in elaborazione…`, 'syn');
         continue;
       }
 
-      // Aggiornato — rileggi prenotazioni complete
-      const freshBookings = await readJSONAnnuale(sheetEntry.sheetId);
+      const freshBookings = await readJSONAnnuale(resolvedSheetId);
       if (freshBookings && freshBookings.length > 0) {
         syncLog(`✓ JSON_ANNUALE aggiornato (${freshBookings.length} pren. dopo ${tentativo*8}s)`, 'ok');
         if (!_bgSyncRunning) {
@@ -2732,14 +2724,13 @@ async function segnalaModificaAdAppsScript(sheetId) {
           saveDbCache(bookings);
           render();
         }
-        return; // successo
+        return;
       }
     } catch(e2) {
       syncLog(`⏳ Web App: poll ${tentativo}/3 — ${e2.message}`, 'syn');
     }
   }
 
-  // Dopo 3 tentativi (24s) nessun aggiornamento rilevato
   syncLog('⚠ Apps Script non ha aggiornato JSON_ANNUALE entro 24s — premi 🔄', 'wrn');
   showToast('⚠ Calendario non aggiornato da Apps Script — premi 🔄', 'warning');
 }

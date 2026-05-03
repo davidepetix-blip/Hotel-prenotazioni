@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '23'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '24'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -60,18 +60,18 @@ async function ensureCiSheet() {
   } catch(e) {
     // Crea la scheda
     try {
-      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+      const r = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
         method:'POST',
-        headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+        headers:{'Content-Type':'application/json'},
         body: JSON.stringify({requests:[{addSheet:{properties:{title:CI_SHEET_NAME}}}]})
       });
       if (!r.ok) { const t=await r.text(); if (!t.includes('already')) throw new Error(t); }
     } catch(e2) { if (!String(e2.message).includes('already')) throw e2; }
   }
   // Scrivi intestazioni
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CI_SHEET_NAME+'!A1:H1')}?valueInputOption=RAW`, {
+  await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CI_SHEET_NAME+'!A1:H1')}?valueInputOption=RAW`, {
     method:'PUT',
-    headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+    headers:{'Content-Type':'application/json'},
     body: JSON.stringify({values:[['ID_CHECKIN','ID_PRENOTAZIONE','CAMERA','DATA_CHECKIN','NUM_OSPITI','OSPITI_JSON','TS_INSERIMENTO','UTENTE']]})
   });
 }
@@ -130,14 +130,14 @@ async function writeCiRow(preId, data) {
   ];
   if (data.ciRow) {
     const range = `${CI_SHEET_NAME}!A${data.ciRow}:H${data.ciRow}`;
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
-      method:'PUT', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+    await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({values:[row]})
     });
   } else {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CI_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-    const resp = await fetch(url, {
-      method:'POST', headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+    const resp = await apiFetch(url, {
+      method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({values:[row]})
     });
     const r2 = await resp.json();
