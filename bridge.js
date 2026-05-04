@@ -16,7 +16,7 @@
 //   bridgeCancella(b)          → cancellazione
 // =============================================================
 
-const BLIP_VER_BRIDGE = '1';
+const BLIP_VER_BRIDGE = '2';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS INTERNI
@@ -109,9 +109,37 @@ async function _bridgeReload(polling) {
 
   const _apply = async (fresh) => {
     if (!fresh?.length) return false;
-    bookings = mergeMultiMonthBookings(
+
+    // ── Preserva prenotazioni inserite via app non ancora nel foglio ──
+    // Caso tipico: bridge ha chiamato Apps Script, Apps Script ha risposto OK,
+    // ma JSON_ANNUALE non è ancora stato rigenerato (latenza 2-5s) oppure
+    // la scrittura è avvenuta ma il reload legge una versione cached.
+    // Senza questa guardia, la prenotazione sparisce dal Gantt 5 secondi
+    // dopo il salvataggio, per poi ricomparire al bgSync successivo.
+    const PROTEZIONE_APP_MS = 2 * 60 * 60 * 1000; // 2 ore
+    const appLocali = (typeof bookings !== 'undefined' ? bookings : []).filter(b => {
+      if (b.fonte !== 'app' || !b.ts) return false;
+      return (Date.now() - new Date(b.ts).getTime()) < PROTEZIONE_APP_MS;
+    });
+
+    let freshMerged = mergeMultiMonthBookings(
       fresh.filter(b => !isDeletedLocally(b.dbId))
     );
+
+    // Reinserisce le prenotazioni app recenti assenti dal foglio
+    for (const app of appLocali) {
+      const giaPresente = freshMerged.some(f =>
+        f.dbId === app.dbId ||
+        (f.cameraName === app.cameraName &&
+         Math.abs((f.s?.getTime?.() || 0) - (app.s?.getTime?.() || 0)) < 86400000)
+      );
+      if (!giaPresente) {
+        freshMerged.push({ ...app, pending: true });
+        syncLog(`🛡 Bridge reload: preservata "${app.n}" (app ${Math.round((Date.now()-new Date(app.ts).getTime())/60000)}min fa)`, 'syn');
+      }
+    }
+
+    bookings = freshMerged;
     saveDbCache(bookings);
     render();
     return true;

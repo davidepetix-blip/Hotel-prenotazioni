@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '49'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '50'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -1483,9 +1483,12 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
 
     const tsModifica = db.ts ? new Date(db.ts).getTime() : 0;
     const etaMs      = Date.now() - tsModifica;
-    const isRecenteApp = db.fonte === 'app' && etaMs < 15 * 60 * 1000;
+    // 2 ore: tempo sufficiente perché il bridge scriva sul foglio e il trigger
+    // Apps Script rigeneri JSON_ANNUALE. 15 min era troppo poco — se il bridge
+    // è lento o la prenotazione non è ancora apparsa nel foglio, veniva cestinata.
+    const isRecenteApp = db.fonte === 'app' && etaMs < 2 * 60 * 60 * 1000;
     if (isRecenteApp) {
-      syncLog(`🛡 Protetta ${db.n} cam.${db.cameraName||db.r} (inserita ${Math.round(etaMs/1000)}s fa)`, 'wrn');
+      syncLog(`🛡 Protetta (app ${Math.round(etaMs/60000)}min fa): ${db.n} cam.${db.cameraName||db.r}`, 'wrn');
       result.push(db); continue;
     }
 
