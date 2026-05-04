@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '28'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '29'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -339,6 +339,7 @@ async function delBook(id){
     showToast('Prenotazione eliminata', 'success');
   } catch(e) {
     hideLoading();
+    syncLog('❌ Bridge cancella fallito: ' + e.message, 'err');
     showToast('Errore eliminazione: ' + e.message, 'error');
   }
 }
@@ -699,6 +700,7 @@ async function saveBooking(){
     const idx=bookings.findIndex(b=>b.id===newB.id);
     if(idx>=0) bookings[idx].pending=false;
     render();
+    syncLog('❌ Bridge scrivi fallito: ' + e.message, 'err');
     showToast('Errore scrittura: ' + e.message, 'error');
     console.error(e);
   }
