@@ -16,7 +16,7 @@
 //   bridgeCancella(b)          → cancellazione
 // =============================================================
 
-const BLIP_VER_BRIDGE = '2';
+const BLIP_VER_BRIDGE = '3';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS INTERNI
@@ -243,15 +243,28 @@ async function bridgeSalva(newB, oldB = null) {
   if (resp === null) {
     // no-cors: non sappiamo l'esito → polling
     await _bridgeReload(true);
-  } else if (resp.ok) {
+  } else if (resp.ok && resp.action === 'rigenera') {
+    // Apps Script ha risposto ma ha eseguito _rigenera invece di scriviPrenotazioneSuFoglio.
+    // Questo accade quando i parametri GET si perdono nel redirect OAuth di Google.
+    // La cella NON è stata scritta sul foglio.
+    syncLog('⚠ Bridge: Apps Script non ha ricevuto action=scrivi (redirect OAuth?) — cella NON scritta', 'wrn');
+    showToast('⚠ Prenotazione non scritta sul foglio — riprova o scrivi manualmente', 'warning');
+    // Non ricaricare: il JSON_ANNUALE non ha la nuova prenotazione, non vogliamo sovrascrivere
+  } else if (resp.ok && resp.written > 0) {
     syncLog(
-      `✓ Bridge scrivi OK — ${resp.prenotazioni ?? '?'} pren.` +
+      `✓ Bridge scrivi OK — ${resp.written} celle scritte, ${resp.prenotazioni ?? '?'} pren.` +
       (resp.log?.length ? ' | ' + resp.log[resp.log.length - 1] : ''),
       'ok'
     );
     await _bridgeReload(false);
+  } else if (resp.ok && !resp.written && resp.log) {
+    // scriviPrenotazioneSuFoglio è partita ma non ha scritto celle (ok:false avrebbe lanciato eccezione,
+    // ma gestiamo anche il caso in cui written=0 con ok:true per retrocompatibilità)
+    const detail = (resp.log || []).filter(l => l.includes('⚠')).join('\n');
+    syncLog('⚠ Bridge: nessuna cella scritta — ' + (detail || 'causa sconosciuta'), 'wrn');
+    showToast('⚠ Prenotazione non scritta sul foglio — ' + (detail || 'verifica il nome camera'), 'warning');
   } else {
-    // Apps Script ha risposto con ok:false
+    // Apps Script ha risposto con ok:false → errore esplicito con dettagli
     const detail = (resp.log || []).join('\n');
     throw new Error('Bridge: ' + (resp.error || 'errore sconosciuto') + (detail ? '\n' + detail : ''));
   }
