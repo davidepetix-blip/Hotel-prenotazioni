@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_GANTT = '29'; // ← incrementa ad ogni modifica
+const BLIP_VER_GANTT = '30'; // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
 function render() {
@@ -321,8 +321,11 @@ function editBook(id){
   document.getElementById('fOut').value=b.e.toISOString().slice(0,10);
   document.getElementById('fNotes').value=b.note;
   selColor=b.c;
-  // Parsa la stringa disposizione nei contatori
   bedCounts = parseBedString(b.d);
+  // Imposta il nome camera leggibile (es. "3", non "r3")
+  const _room = ROOMS.find(r => r.id === b.r);
+  window._editCameraName = _room ? _room.name : b.cameraName || b.r;
+  window._editOrigRoom = b.r; // memorizza la camera originale per il bridge
   closeDrawer(); openModal(true);
 }
 
@@ -431,17 +434,11 @@ function openModal(isEdit=false){
   // Rimuovi eventuale div statico da sessione edit precedente
   _cameraFg?.querySelector('.camera-static-display')?.remove();
   if (isEdit) {
-    // In modifica: mostra il nome camera come testo statico
-    const _camName = window._editCameraName || _selRoom?.value || '—';
-    if (_selRoom) _selRoom.style.display = 'none';
-    const _staticDiv = document.createElement('div');
-    _staticDiv.className = 'fi camera-static-display';
-    _staticDiv.style.cssText = 'opacity:0.7;cursor:default;';
-    _staticDiv.textContent = _camName;
-    _selRoom?.after(_staticDiv);
-    if (_cameraLbl) _cameraLbl.textContent = 'Camera';
+    // In modifica: select visibile e abilitato (la camera può essere cambiata)
+    // Il bridge gestisce automaticamente la cancellazione del vecchio range
+    if (_selRoom) { _selRoom.style.display = ''; _selRoom.disabled = false; _selRoom.style.opacity = ''; }
+    if (_cameraLbl) _cameraLbl.textContent = 'Camera (modificabile)';
   } else {
-    // In nuova prenotazione: select visibile e abilitato
     if (_selRoom) { _selRoom.style.display = ''; _selRoom.disabled = false; _selRoom.style.opacity = ''; }
     if (_cameraLbl) _cameraLbl.textContent = 'Camera';
   }
@@ -471,6 +468,7 @@ function closeModal(){
   const _lbl = document.getElementById('fRoom')?.closest('.fg')?.querySelector('label.fl');
   if (_lbl) _lbl.textContent = 'Camera';
   window._editCameraName = null;
+  window._editOrigRoom   = null;
   if (typeof resetAnagraficaModal === 'function') resetAnagraficaModal();
 }
 function movClick(e){ if(e.target===document.getElementById('mov')) closeModal(); }
