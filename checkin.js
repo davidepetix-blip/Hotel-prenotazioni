@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '24'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '25'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -674,11 +674,17 @@ async function saveCiCheckin() {
     ciRow,
   };
 
+  // ── Salva _ciEditBookingId prima di closeCiModal che lo azzera ──
+  // BUG FIX: closeCiModal() imposta _ciEditBookingId = null.
+  // Le righe writeCiRow / ciData[key] usano ancora questa variabile
+  // dopo la chiamata → venivano scritte sotto la chiave 'null'.
+  const savedBid = _ciEditBookingId;
+
   closeCiModal();
   showLoading('Salvataggio check-in…');
   try {
-    await writeCiRow(_ciEditBookingId, record);
-    ciData[_ciEditBookingId] = record;
+    await writeCiRow(savedBid, record);
+    ciData[savedBid] = record;
     invalidateCiCache();
     localStorage.setItem(CI_CACHE_KEY, JSON.stringify({ts:Date.now(), data:ciData}));
     hideLoading();
@@ -687,7 +693,8 @@ async function saveCiCheckin() {
     // Aggiorna il tab CI nel drawer se è aperto
     const _drCI = document.getElementById('drTabCI');
     if (_drCI && _drCI.style.display !== 'none') {
-      const _bk = bookings.find(x => x.dbId === b?.dbId) || bookings.find(x => ('LOCAL-'+x.id) === _ciEditBookingId);
+      const _bk = bookings.find(x => x.dbId === savedBid)
+               || bookings.find(x => ('LOCAL-'+x.id) === savedBid);
       if (_bk && typeof renderDrawerCheckin === 'function') {
         try { _drCI.innerHTML = renderDrawerCheckin(_bk); } catch(e) {}
       }
@@ -1206,13 +1213,18 @@ function ciPreviewAlloggiati(bookingIdOrScope) {
     const capoTag = r.isCapo
       ? `<span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px;">CAPO</span>`
       : `<span style="font-size:9px;color:var(--text3);">fam.</span>`;
+    // Bottone elimina gruppo — visibile solo sul capogruppo per evitare duplicati
+    const deleteBtn = r.isCapo
+      ? `<button onclick="ciPrevRemoveGroup('${r.ciId}')" title="Rimuovi questo check-in dall'esportazione"
+           style="margin-left:auto;background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer;padding:0 4px;line-height:1;" >✕</button>`
+      : '';
     const docF = r.isCapo
       ? `<input class="ci-prev-inp" placeholder="Tipo doc" value="${r.tipoDoc}" oninput="_ciPrevRows[${idx}].tipoDoc=this.value" style="width:60px">
          <input class="ci-prev-inp" placeholder="N° doc" value="${r.numDoc}" oninput="_ciPrevRows[${idx}].numDoc=this.value" style="flex:2">
          <input class="ci-prev-inp" placeholder="Luogo rilascio" value="${r.luogoRilascio}" oninput="_ciPrevRows[${idx}].luogoRilascio=this.value" style="flex:1.5">`
       : `<span style="color:var(--text3);font-size:11px;padding:0 4px;">—</span>`;
-    return `<div class="ci-prev-row">
-      <div class="ci-prev-row-hdr">${capoTag}<strong style="font-size:12px;">${r.cognome} ${r.nome}</strong><span style="font-size:11px;color:var(--text3);">Cam. ${r.camera} · ${r.dataArrivo.split('-').reverse().join('/')}</span></div>
+    return `<div class="ci-prev-row" data-ciid="${r.ciId}">
+      <div class="ci-prev-row-hdr">${capoTag}<strong style="font-size:12px;">${r.cognome} ${r.nome}</strong><span style="font-size:11px;color:var(--text3);">Cam. ${r.camera} · ${r.dataArrivo.split('-').reverse().join('/')}</span>${deleteBtn}</div>
       <div class="ci-prev-fields">
         <input class="ci-prev-inp" placeholder="Cognome *" value="${r.cognome}" oninput="_ciPrevRows[${idx}].cognome=this.value" style="flex:2">
         <input class="ci-prev-inp" placeholder="Nome *" value="${r.nome}" oninput="_ciPrevRows[${idx}].nome=this.value" style="flex:2">
@@ -1293,6 +1305,60 @@ function ciPrevGenerate() {
   URL.revokeObjectURL(url);
   document.getElementById('ciPrevOverlay').style.display='none';
   showToast('✓ File generato · '+lines.length+' record','success');
+}
+
+/**
+ * Rimuove un gruppo (stesso ciId) dall'anteprima Alloggiati.
+ * Non modifica ciData — rimuove solo dalla lista in-memoria per questa esportazione.
+ * Utile per escludere registrazioni di prova o duplicate prima del TXT.
+ */
+function ciPrevRemoveGroup(ciId) {
+  if (!window._ciPrevRows) return;
+  window._ciPrevRows = window._ciPrevRows.filter(r => r.ciId !== ciId);
+  // Ricalcola gli indici oninput dopo la rimozione
+  const container = document.getElementById('ciPrevRows');
+  if (!container) return;
+  const rows = window._ciPrevRows;
+  if (rows.length === 0) {
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);">Nessun check-in da esportare.</div>';
+    // Aggiorna contatore
+    const counter = container.closest('div[style]')?.querySelector('span[style*="text3"]');
+    if (counter) counter.textContent = '0 ospiti';
+    return;
+  }
+  // Ri-renderizza con indici corretti (i oninput usano l'indice nell'array globale)
+  const capoTag = r => r.isCapo
+    ? `<span style="font-size:9px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px;">CAPO</span>`
+    : `<span style="font-size:9px;color:var(--text3);">fam.</span>`;
+  const deleteBtn = r => r.isCapo
+    ? `<button onclick="ciPrevRemoveGroup('${r.ciId}')" title="Rimuovi dall'esportazione"
+         style="margin-left:auto;background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer;padding:0 4px;line-height:1;">✕</button>`
+    : '';
+  container.innerHTML = rows.map((r, idx) => {
+    const docF = r.isCapo
+      ? `<input class="ci-prev-inp" placeholder="Tipo doc" value="${r.tipoDoc}" oninput="_ciPrevRows[${idx}].tipoDoc=this.value" style="width:60px">
+         <input class="ci-prev-inp" placeholder="N° doc" value="${r.numDoc}" oninput="_ciPrevRows[${idx}].numDoc=this.value" style="flex:2">
+         <input class="ci-prev-inp" placeholder="Luogo rilascio" value="${r.luogoRilascio}" oninput="_ciPrevRows[${idx}].luogoRilascio=this.value" style="flex:1.5">`
+      : `<span style="color:var(--text3);font-size:11px;padding:0 4px;">—</span>`;
+    return `<div class="ci-prev-row" data-ciid="${r.ciId}">
+      <div class="ci-prev-row-hdr">${capoTag(r)}<strong style="font-size:12px;">${r.cognome} ${r.nome}</strong><span style="font-size:11px;color:var(--text3);">Cam. ${r.camera} · ${r.dataArrivo.split('-').reverse().join('/')}</span>${deleteBtn(r)}</div>
+      <div class="ci-prev-fields">
+        <input class="ci-prev-inp" placeholder="Cognome *" value="${r.cognome}" oninput="_ciPrevRows[${idx}].cognome=this.value" style="flex:2">
+        <input class="ci-prev-inp" placeholder="Nome *" value="${r.nome}" oninput="_ciPrevRows[${idx}].nome=this.value" style="flex:2">
+        <select class="ci-prev-inp" onchange="_ciPrevRows[${idx}].sesso=this.value" style="width:70px"><option value="M" ${r.sesso==='M'?'selected':''}>M</option><option value="F" ${r.sesso==='F'?'selected':''}>F</option></select>
+        <input class="ci-prev-inp" type="date" value="${r.dataNascita}" oninput="_ciPrevRows[${idx}].dataNascita=this.value" style="width:130px">
+      </div>
+      <div class="ci-prev-fields">
+        <input class="ci-prev-inp" placeholder="Comune nascita" value="${r.luogoNascita}" oninput="_ciPrevRows[${idx}].luogoNascita=this.value" style="flex:2">
+        <input class="ci-prev-inp" placeholder="Prov." value="${r.provNascita}" oninput="_ciPrevRows[${idx}].provNascita=this.value.toUpperCase();this.value=this.value.toUpperCase()" maxlength="2" style="width:50px">
+        <input class="ci-prev-inp" placeholder="Cittadinanza" value="${r.cittadinanza}" oninput="_ciPrevRows[${idx}].cittadinanza=this.value.toUpperCase();this.value=this.value.toUpperCase()" style="flex:1.5">
+        ${docF}
+      </div>
+    </div>`;
+  }).join('');
+  // Aggiorna contatore ospiti nel titolo
+  const hdr = document.querySelector('#ciPrevOverlay span[style*="text3"]');
+  if (hdr) hdr.textContent = rows.length + ' ospiti';
 }
 
 // ═══════════════════════════════════════════════════════════════════
