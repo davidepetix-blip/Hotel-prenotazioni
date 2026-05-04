@@ -204,12 +204,12 @@ function _rigenera(e) {
     const ms = Date.now() - t0;
     Logger.log('[WebApp] Rigenerato ' + merged.length + ' prenotazioni in ' + ms + 'ms');
     return ContentService
-      .createTextOutput(JSON.stringify({ ok:true, prenotazioni:merged.length, ms }))
+      .createTextOutput(JSON.stringify({ ok:true, action:'rigenera', prenotazioni:merged.length, ms }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch(err) {
     Logger.log('[WebApp] Errore: ' + err.message);
     return ContentService
-      .createTextOutput(JSON.stringify({ ok:false, error: err.message }))
+      .createTextOutput(JSON.stringify({ ok:false, action:'rigenera', error: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -275,7 +275,13 @@ function scriviPrenotazioneSuFoglio(payload) {
 
     // ── Scrivi nuovo range ────────────────────────────────────
     log.push('── Scrittura nuovo range (' + payload.camera + ' ' + payload.dal + '→' + payload.al + ')');
-    _scriviRangeFoglio(ss, payload, dalDate, alDate, log);
+    var celleScritteCount = _scriviRangeFoglio(ss, payload, dalDate, alDate, log);
+
+    // ── Verifica che qualcosa sia stato scritto ───────────────
+    if (celleScritteCount === 0) {
+      const warnings = log.filter(function(l) { return l.indexOf('⚠') !== -1; }).join(' | ');
+      throw new Error('Nessuna cella scritta sul foglio. ' + warnings);
+    }
 
     // ── Rigenera JSON_ANNUALE (legge i nuovi colori) ──────────
     SpreadsheetApp.flush(); // forza scrittura prima della lettura
@@ -286,7 +292,7 @@ function scriviPrenotazioneSuFoglio(payload) {
     segnaModifica();
 
     log.push('✓ JSON_ANNUALE aggiornato (' + merged.length + ' prenotazioni)');
-    return { ok: true, log, prenotazioni: merged.length };
+    return { ok: true, action: 'scrivi', written: celleScritteCount, log, prenotazioni: merged.length };
 
   } catch(err) {
     log.push('✗ Errore: ' + err.message);
@@ -342,9 +348,10 @@ function _cancellaRangeFoglio(ss, camera, blipId, dalDate, alDate, log) {
  */
 function _scriviRangeFoglio(ss, payload, dalDate, alDate, log) {
   const mesi = _mesiCoperti(dalDate, alDate);
-  if (mesi.length === 0) { log.push('  ⚠ Nessun mese da colorare'); return; }
+  if (mesi.length === 0) { log.push('  ⚠ Nessun mese da colorare'); return 0; }
 
-  // Testo prima cella: "Mario Rossi 1m"  (o solo nome se manca disposizione)
+  var totaleRigheScritite = 0;
+
   const testoIniziale = [payload.nome, payload.disposizione]
     .map(function(s) { return (s || '').trim(); })
     .filter(Boolean)
@@ -355,25 +362,39 @@ function _scriviRangeFoglio(ss, payload, dalDate, alDate, log) {
     if (!sheet) { log.push('  ⚠ Foglio non trovato: ' + mese.sheetName); return; }
 
     const col = _trovaCameraColonna(sheet, payload.camera);
-    if (!col) { log.push('  ⚠ Camera "' + payload.camera + '" non trovata in ' + mese.sheetName); return; }
+    if (!col) {
+      // Aggiungi diagnostica: mostra le intestazioni trovate per aiutare il debug
+      const maxCol = sheet.getLastColumn();
+      var intestazioni = [];
+      if (maxCol >= FIRST_CAMERA_COLUMN) {
+        var hdr = sheet.getRange(HEADER_ROW_NUMBER, 1, 1, Math.min(maxCol, 40)).getValues()[0];
+        for (var ci = FIRST_CAMERA_COLUMN - 1; ci < hdr.length; ci++) {
+          if (hdr[ci] !== null && hdr[ci] !== '') intestazioni.push(String(hdr[ci]).trim());
+        }
+      }
+      log.push('  ⚠ Camera "' + payload.camera + '" non trovata in ' + mese.sheetName +
+               '. Intestazioni rilevate: [' + intestazioni.slice(0,10).join(', ') + ']');
+      return;
+    }
 
     const rows = _trovaRigheDate(sheet, mese.firstDay, mese.lastDay);
-    if (rows.length === 0) { log.push('  ⚠ Nessuna riga date in ' + mese.sheetName); return; }
+    if (rows.length === 0) {
+      log.push('  ⚠ Nessuna riga date in ' + mese.sheetName +
+               ' per ' + mese.firstDay.toLocaleDateString('it-IT') +
+               '→' + mese.lastDay.toLocaleDateString('it-IT'));
+      return;
+    }
 
-    // ── Verifica sovrapposizione con prenotazioni esistenti ─────
-    // Controlla i colori esistenti: se una cella ha già un colore non neutro
-    // che appartiene a un ALTRO blipId, segnala avviso senza bloccare.
     const idMapEsistente = _leggiBlipIdMap(sheet, col);
     const altriBid = Object.keys(idMapEsistente).filter(function(k) { return k !== payload.blipId; });
     if (altriBid.length > 0) {
-      log.push('  ⚠ ATTENZIONE: colonna ' + payload.camera + ' in ' + mese.sheetName +
-               ' ha già ' + altriBid.length + ' altri booking: ' + altriBid.join(', '));
+      log.push('  ⚠ Sovrapposizione: ' + payload.camera + ' in ' + mese.sheetName +
+               ' ha già: ' + altriBid.join(', '));
     }
 
     const firstRow = rows[0];
     const nRows    = rows[rows.length - 1] - firstRow + 1;
 
-    // ── Prepara valori: testo solo nella prima cella del primo mese ──
     const valori = [];
     for (var i = 0; i < nRows; i++) {
       valori.push([(i === 0 && idx === 0) ? testoIniziale : '']);
@@ -383,23 +404,23 @@ function _scriviRangeFoglio(ss, payload, dalDate, alDate, log) {
     range.setValues(valori);
     range.setBackground(payload.colore || '#ea9999');
 
-    // ── Note (se presenti) → nella prima cella ──
     if (payload.note && idx === 0) {
       sheet.getRange(firstRow, col).setNote(payload.note);
     }
 
-    // ── Aggiorna BLIP_ID in riga BLIP_ID_ROW ────────────────────
     _aggiornaBlipIdRow46(sheet, col, payload.blipId, payload.dal, payload.al, false);
 
-    // ── Riapplica bordi domenica sulla colonna modificata ────────
     const nRighe = Math.min(sheet.getLastRow(), OUTPUT_ROW - 1) - FIRST_DATA_ROW + 1;
     if (nRighe > 0) {
       const dates = sheet.getRange(FIRST_DATA_ROW, DATES_COLUMN, nRighe, 1).getValues();
       reapplySundayBordersToColumn(sheet, col, dates);
     }
 
+    totaleRigheScritite += rows.length;
     log.push('  ✓ ' + mese.sheetName + ': ' + rows.length + ' celle colorate (col ' + col + ')');
   });
+
+  return totaleRigheScritite;
 }
 
 
