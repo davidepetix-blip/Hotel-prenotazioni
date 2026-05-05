@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '50'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '51'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -881,15 +881,20 @@ async function archiviaInCestino(lista, reason) {
     return base;
   });
 
-  // Non scrivere nel foglio CESTINO le cancellazioni automatiche da sync —
-  // mantiene il foglio leggibile e veloce (evita 4000+ righe inutili).
-  if (_isCestinoAutoSync(reason)) {
+  // Auto-sync: non scrive nel CESTINO (evita 4000+ righe inutili)
+  // MA deve comunque eliminare fisicamente le righe dal foglio PRENOTAZIONI,
+  // altrimenti al prossimo fast-read le rilegge e il ciclo è infinito.
+  const isAutoSync = _isCestinoAutoSync(reason);
+  if (isAutoSync) {
     syncLog(`🗑 Auto-sync: ${lista.length} pren. rimossa/e da DB senza scrivere nel CESTINO`, 'syn');
-    return;
+    // FALL-THROUGH: esegue comunque la delete fisica sotto ↓
+  } else {
+    // Scrivi nel CESTINO solo per cancellazioni esplicite utente
+    await apiFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({values:righe}) }
+    );
   }
-
-  const urlAppend = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(CESTINO_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-  await apiFetch(urlAppend, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({values:righe}) });
 
   // Elimina fisicamente le righe dal foglio PRENOTAZIONI
   // (invece di aggiornarle con DELETED=true, che le fa accumulare infinitamente)
@@ -2546,7 +2551,9 @@ async function loadFromSheets() {
             syncLog('✓ Nessuna modifica rilevata dal foglio', 'ok');
           }
 
-          const fromJSON = sheetBookings.some(b => b.fromJSONAnnuale);
+          // Usa il flag calcolato PRIMA del sync — dopo syncWithDatabase
+          // i booking del DB (senza fromJSONAnnuale) diluiscono il check.
+          const fromJSON = !_fromFallback;
           syncLog(fromJSON ? 'Fonte: JSON_ANNUALE' : 'Fonte: 12 fogli mensili (fallback)', 'inf');
           saveDbCache(DATABASE_SHEET_ID ? sheetBookings : bookings);
 
