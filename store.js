@@ -1021,6 +1021,31 @@ function findMatch(target, list) {
     if (dispT && (b.d||'').trim().toLowerCase() !== dispT) return false;
     return Math.abs(Math.round((b.s?.getTime?.() || 0) / DAY_MS) - dayT) <= 1;
   });
+  if (m) return m;
+
+  // PRIORITÀ 4: overlap — frammenti di prenotazioni multi-mese
+  // ─────────────────────────────────────────────────────────────
+  // Caso: il DB conserva la data di inizio reale (es. 15 aprile),
+  // ma JSON_ANNUALE presenta il mese di maggio come frammento con
+  // s = 1 maggio. Le priorità 2 e 3 non trovano il match perché
+  // cercano la data di inizio esatta.
+  // Soluzione: stessa camera + stesso nome normalizzato + date che
+  // si sovrappongono (overlap standard: sDb < eTarget && eDb > sTarget).
+  // Anno uguale come guard extra per non confondere anni diversi.
+  // Questa priorità è più "larga" ma è sicura perché richiede sia
+  // nome che camera identici — l'unico elemento variabile è la data.
+  const sT = target.s?.getTime?.() || 0;
+  const eT = target.e?.getTime?.() || 0;
+  const yT = target.s ? new Date(target.s).getFullYear() : 0;
+  m = list.find(b => {
+    if (_normName(b.n) !== nomT) return false;
+    if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
+    const sDb = b.s?.getTime?.() || 0;
+    const eDb = b.e?.getTime?.() || 0;
+    const yDb = b.s ? new Date(b.s).getFullYear() : 0;
+    if (yDb !== yT) return false;            // anni diversi → no match
+    return sDb < eT && eDb > sT;            // overlap: si sovrappongono
+  });
   return m || null;
 }
 
