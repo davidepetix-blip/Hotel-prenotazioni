@@ -1303,6 +1303,19 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       result.push(db); continue;
     }
 
+    // GUARD recente-DB: non cestinare prenotazioni create/aggiornate negli ultimi 30 giorni
+    // che non appaiono nel foglio. Potrebbe essere latenza bridge (Apps Script non ha
+    // ancora scritto nel foglio) o una prenotazione inserita direttamente nel DB.
+    // Dopo 30 giorni, se ancora non è nel foglio, è sicuramente un residuo.
+    // forceFullSync bypassa anche questo guard (🔄 esplicito dell'utente).
+    if (!forceFullSync && db.ts) {
+      const etaCreazione = Date.now() - new Date(db.ts).getTime();
+      if (etaCreazione < 30 * 24 * 60 * 60 * 1000) {
+        syncLog('🛡 Protetta (recente ' + Math.round(etaCreazione/86400000) + 'gg): ' + db.n + ' (' + (db.dbId||'no-id') + ')', 'wrn');
+        result.push(db); continue;
+      }
+    }
+
     db.deleted      = true;
     db.deleteReason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
     db.deletedAt    = nowISO();
@@ -1396,128 +1409,173 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
 
 // Scrive i BLIP_ID nella riga 46 del foglio visivo
 async function writeBlipIdsToRow46(bookings) {
+  // ═══════════════════════════════════════════════════════════════
+  // REGOLA FONDAMENTALE: non sovrascrivere mai una cella riga 46
+  // che contiene già un BLIP_ID valido (formato {"PRE-...":...}).
+  // In caso di cella già popolata → MERGE: aggiunge solo ID nuovi,
+  // non rimuove quelli esistenti. Garantisce che backfillRow46 e
+  // le scritture automatiche da sync non distruggano le protezioni.
+  // ═══════════════════════════════════════════════════════════════
+
+  const fmtDate = d => {
+    if (!d) return '';
+    const dt = d instanceof Date ? d : new Date(d);
+    return dt.toLocaleDateString('it-IT', {day:'2-digit',month:'2-digit',year:'numeric'});
+  };
+
   // Raggruppa per sheet+colonna: ogni cella contiene un JSON map {dbId:[dal,al],...}
   const byCell = {}; // key = sheetId|sName|col
   for (const b of bookings) {
     if (!b.dbId || !b._sheetCol || !b.sheetName || !b.sheetId) continue;
     const key = b.sheetId + '|' + b.sheetName + '|' + b._sheetCol;
     if (!byCell[key]) byCell[key] = { sheetId:b.sheetId, sName:b.sheetName, col:b._sheetCol, map:{} };
-    // Formatta dal/al come dd/MM/yyyy (formato Apps Script)
-    const fmtDate = d => {
-      if (!d) return '';
-      const dt = d instanceof Date ? d : new Date(d);
-      return dt.toLocaleDateString('it-IT', {day:'2-digit',month:'2-digit',year:'numeric'});
-    };
     byCell[key].map[b.dbId] = [fmtDate(b.s), fmtDate(b.e)];
   }
 
-  // Raggruppa per sheet per fare batchUpdate
-  const bySheet = {};
+  // Raggruppa per foglio
+  const bySheet = {}; // key = sheetId|sName
   for (const { sheetId, sName, col, map } of Object.values(byCell)) {
     const sk = sheetId + '|' + sName;
-    if (!bySheet[sk]) bySheet[sk] = { sheetId, sName, data:[] };
-    bySheet[sk].data.push({
-      range: "'" + sName + "'!" + columnLetter(col) + BLIP_ID_ROW,
-      values: [[JSON.stringify(map)]]
-    });
+    if (!bySheet[sk]) bySheet[sk] = { sheetId, sName, cells:[] };
+    bySheet[sk].cells.push({ col, map });
   }
 
-  for (const { sheetId, sName, data } of Object.values(bySheet)) {
+  for (const { sheetId, sName, cells } of Object.values(bySheet)) {
+    if (!cells.length) continue;
+
+    // ── STEP 1: leggi riga 46 esistente per l'intero range delle colonne ──
+    const cols = cells.map(c => c.col);
+    const minCol = Math.min(...cols);
+    const maxCol = Math.max(...cols);
+    const existingRow46 = {}; // col → stringa JSON attuale
+    try {
+      const range = "'" + sName + "'!" + columnLetter(minCol) + BLIP_ID_ROW + ':' + columnLetter(maxCol) + BLIP_ID_ROW;
+      const r = await apiFetch(
+        'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId +
+        '/values/' + encodeURIComponent(range) + '?valueRenderOption=FORMATTED_VALUE'
+      );
+      if (r.ok) {
+        const j = await r.json();
+        const row = j.values?.[0] || [];
+        row.forEach((val, idx) => { existingRow46[minCol + idx] = val || ''; });
+      }
+    } catch(e) { syncLog('⚠ Lettura pre-write riga 46 (' + sName + '): ' + e.message, 'wrn'); }
+
+    // ── STEP 2: per ogni cella, decide se scrivere e cosa scrivere ──
+    const data = [];
+    let skipped = 0;
+    for (const { col, map } of cells) {
+      const existing = existingRow46[col] || '';
+      if (existing && existing.includes('"PRE-')) {
+        // Cella già popolata — MERGE: aggiunge solo ID nuovi, mai rimuove
+        try {
+          const existingMap = JSON.parse(existing);
+          const mergedMap   = { ...existingMap }; // parte dagli esistenti
+          let added = 0;
+          for (const [id, dates] of Object.entries(map)) {
+            if (!mergedMap[id]) { mergedMap[id] = dates; added++; } // solo ID nuovi
+          }
+          if (added > 0) {
+            data.push({
+              range:  "'" + sName + "'!" + columnLetter(col) + BLIP_ID_ROW,
+              values: [[JSON.stringify(mergedMap)]]
+            });
+          } else {
+            skipped++; // cella già aggiornata — skip
+          }
+        } catch(e) {
+          // JSON corrotto — sovrascrive con i nuovi dati
+          data.push({
+            range:  "'" + sName + "'!" + columnLetter(col) + BLIP_ID_ROW,
+            values: [[JSON.stringify(map)]]
+          });
+        }
+      } else {
+        // Cella vuota o senza PRE- → scrivi normalmente
+        data.push({
+          range:  "'" + sName + "'!" + columnLetter(col) + BLIP_ID_ROW,
+          values: [[JSON.stringify(map)]]
+        });
+      }
+    }
+
+    if (skipped > 0) syncLog('✓ Riga 46 ' + sName + ': ' + skipped + ' celle già aggiornate (skip)', 'ok');
     if (!data.length) continue;
+
+    // ── STEP 3: batchUpdate solo delle celle che richiedono scrittura ──
     try {
       const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId + '/values:batchUpdate';
-      // Usa fetch diretto (non apiFetch) — la scrittura riga 46 è fire-and-forget
-      // e non deve consumare il token bucket già esaurito dopo il caricamento
       const resp = await fetch(url, {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ valueInputOption: 'RAW', data })
       });
       if (resp.ok) syncLog('✓ BLIP_ID scritti riga 46 in ' + sName + ': ' + data.length + ' celle', 'ok');
-      else syncLog('⚠ Errore scrittura riga 46 in ' + sName, 'wrn');
+      else syncLog('⚠ Errore scrittura riga 46 in ' + sName + ' (HTTP ' + resp.status + ')', 'wrn');
     } catch(e) { syncLog('⚠ writeBlipIdsToRow46: ' + e.message, 'wrn'); }
   }
 }
 
-// ── Backfill riga 46: scrive BLIP_ID per tutte le prenotazioni già in memoria ──
-// Da chiamare una volta sola per popolare la riga 46 su tutte le colonne
+// ── Backfill riga 46: usa JSON_ANNUALE come fonte di verità ──────────────────
+//
+// REGOLA: la riga 46 deve rispecchiare esattamente il contenuto del foglio
+// grafico (JSON_ANNUALE). Blip non inventa ID — li ricava dal foglio.
+//
+// Flusso:
+//   1. Rilegge JSON_ANNUALE fresco (non usa bookings in memoria = misto DB+foglio)
+//   2. Per ogni prenotazione senza dbId (riga 46 vuota), cerca il BLIP_ID nel DB
+//   3. Chiama writeBlipIdsToRow46 con guard anti-sovrascrittura (merge)
+//
+// Può essere chiamato dalla console: backfillRow46()
+// ─────────────────────────────────────────────────────────────────────────────
 async function backfillRow46() {
-  if (!DATABASE_SHEET_ID || !bookings.length) {
-    showToast('Carica prima le prenotazioni', 'error'); return;
-  }
-  showLoading('Lettura intestazioni fogli…');
-
-  // Raccogli sheetId univoci per le prenotazioni dal foglio
-  const sheetIds = [...new Set(bookings.filter(b => b.fromSheet && b.sheetId).map(b => b.sheetId))];
-  if (!sheetIds.length) { hideLoading(); showToast('Nessun foglio fonte trovato', 'error'); return; }
-
-  // Per ogni sheetId, leggi i nomi dei fogli mensili e le loro intestazioni
-  for (const sid of sheetIds) {
-    try {
-      const metaR = await apiFetch(
-        'https://sheets.googleapis.com/v4/spreadsheets/' + sid + '?fields=sheets.properties.title'
-      );
-      const meta = await metaR.json();
-      const monthSheets = (meta.sheets || [])
-        .map(s => s.properties.title)
-        .filter(n => !EXCLUDED_SHEETS.includes(n) && /^[A-Za-z\u00C0-\u00FF]+\s+\d{4}$/i.test(n));
-
-      // Leggi tutte le intestazioni in UNA sola chiamata batchGet
-      // Leggi sempre TUTTI i fogli mensili — sheetColumnMap potrebbe essere
-      // inizializzato vuoto da _parseJSONAnnualeBookings e non avere le camere
-      const sheetsToRead = monthSheets; // forza rilettura completa
-      if (sheetsToRead.length > 0) {
-        try {
-          const ranges = sheetsToRead
-            .map(sName => encodeURIComponent("'" + sName + "'!B" + HEADER_ROW + ":AJ" + HEADER_ROW))
-            .join('&ranges=');
-          const batchUrl = 'https://sheets.googleapis.com/v4/spreadsheets/' + sid +
-            '/values:batchGet?ranges=' + ranges + '&valueRenderOption=FORMATTED_VALUE';
-          const bR = await apiFetch(batchUrl);
-          if (bR.ok) {
-            const bData = await bR.json();
-            (bData.valueRanges || []).forEach((vr, idx) => {
-              const sName = sheetsToRead[idx];
-              const headers = vr.values?.[0] || [];
-              if (!sheetColumnMap[sName]) sheetColumnMap[sName] = {};
-              headers.forEach((h, i) => {
-                if (!h) return;
-                const raw = String(h).trim(), norm = raw.replace(/\.0$/, '');
-                sheetColumnMap[sName][raw] = i + 2;
-                if (norm !== raw) sheetColumnMap[sName][norm] = i + 2;
-              });
-            });
-            syncLog('✓ Intestazioni lette: ' + sheetsToRead.length + ' fogli in 1 chiamata', 'ok');
-          } else {
-            syncLog('⚠ batchGet intestazioni: HTTP ' + bR.status, 'wrn');
-          }
-        } catch(e) { syncLog('⚠ batchGet intestazioni: ' + e.message, 'wrn'); }
-      }
-    } catch(e) { syncLog('⚠ Meta foglio: ' + e.message, 'wrn'); }
+  const sheetEntry = _currentYearSheetEntry();
+  if (!sheetEntry) {
+    showToast('Nessun foglio anno corrente configurato', 'error'); return;
   }
 
-  // Ora assegna _sheetCol a ogni prenotazione
-  let rebuilt = 0;
-  for (const b of bookings.filter(b2 => b2.fromSheet && b2.dbId && !b2._sheetCol)) {
-    const sName = b.sheetName;
-    const cam   = b.cameraName || roomName(b.r) || '';
-    const colMap = sheetColumnMap[sName] || {};
-    const col = colMap[cam] || colMap[cam.trim()] || colMap[String(cam).replace(/\.0$/, '')];
-    if (col && b.sheetId) { b._sheetCol = col; rebuilt++; }
-  }
-  syncLog('Colonne ricostruite: ' + rebuilt, 'ok');
+  showLoading('Lettura JSON_ANNUALE per backfill riga 46…');
+  syncLog('📖 Backfill riga 46: rilettura JSON_ANNUALE (fonte di verità)…', 'syn');
 
-  const toWrite = bookings.filter(b => b.fromSheet && b.dbId && b._sheetCol && b.sheetName && b.sheetId);
-  if (toWrite.length === 0) {
+  let sheetBookings = [];
+  try {
+    sheetBookings = await readJSONAnnuale(sheetEntry.sheetId);
+  } catch(e) {
     hideLoading();
-    showToast('Nessuna prenotazione abbinabile alle colonne del foglio', 'error');
+    showToast('Errore lettura JSON_ANNUALE: ' + e.message, 'error');
+    syncLog('❌ Backfill: ' + e.message, 'err');
     return;
   }
-  showLoading('Scrittura riga 46 (' + toWrite.length + ' prenotazioni)…');
+  syncLog('📖 Backfill: ' + sheetBookings.length + ' prenotazioni da JSON_ANNUALE', 'syn');
+
+  // Per le prenotazioni senza dbId (riga 46 vuota), cerca il BLIP_ID nel DB locale.
+  // Usa findMatch contro bookings in memoria (che hanno dbId dal DB).
+  // Questo è il passaggio che "associa" le prenotazioni del foglio ai record DB.
+  const dbWithIds = bookings.filter(b => b.dbId);
+  let assigned = 0, alreadyHad = 0;
+  for (const sb of sheetBookings) {
+    if (sb.dbId) { alreadyHad++; continue; } // già aveva ID da riga 46
+    const match = findMatch(sb, dbWithIds);
+    if (match) { sb.dbId = match.dbId; assigned++; }
+  }
+  syncLog('🔗 Backfill: ' + assigned + ' BLIP_ID assegnati da DB, ' + alreadyHad + ' già presenti', 'syn');
+
+  // Filtra: solo prenotazioni con coordinate foglio complete
+  const toWrite = sheetBookings.filter(b => b.dbId && b._sheetCol && b.sheetName && b.sheetId);
+  const senzaCol = sheetBookings.filter(b => b.dbId && !b._sheetCol).length;
+  if (senzaCol > 0) syncLog('⚠ Backfill: ' + senzaCol + ' pren. con dbId ma senza coordinata colonna (ignorati)', 'wrn');
+
+  if (!toWrite.length) {
+    hideLoading();
+    showToast('Nessuna prenotazione con coordinate foglio trovata', 'warning');
+    return;
+  }
+
+  showLoading('Scrittura riga 46 (' + toWrite.length + ' celle — guard anti-sovrascrittura attiva)…');
   await writeBlipIdsToRow46(toWrite);
   hideLoading();
-  showToast('✓ Riga 46 compilata: ' + toWrite.length + ' celle scritte', 'success');
-  syncLog('✓ Backfill riga 46 completato: ' + toWrite.length, 'ok');
+  showToast('✓ Riga 46 aggiornata: ' + toWrite.length + ' celle (JSON_ANNUALE → fonte)', 'success');
+  syncLog('✓ Backfill riga 46 completato: ' + toWrite.length + ' celle scritte', 'ok');
 }
 
 // Converte numero colonna (1-based) → lettera Excel (A, B, ..., Z, AA, ...)
