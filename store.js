@@ -1029,25 +1029,30 @@ function findMatch(target, list) {
   // ma JSON_ANNUALE presenta il mese di maggio come frammento con
   // s = 1 maggio. Le priorità 2 e 3 non trovano il match perché
   // cercano la data di inizio esatta.
-  // Soluzione: stessa camera + stesso nome normalizzato + date che
-  // si sovrappongono (overlap standard: sDb < eTarget && eDb > sTarget).
-  // Anno uguale come guard extra per non confondere anni diversi.
-  // Questa priorità è più "larga" ma è sicura perché richiede sia
-  // nome che camera identici — l'unico elemento variabile è la data.
-  const sT = target.s?.getTime?.() || 0;
-  const eT = target.e?.getTime?.() || 0;
-  const yT = target.s ? new Date(target.s).getFullYear() : 0;
+  //
+  // GUARD DISPOSIZIONE: se entrambi hanno disposizione esplicita e diversa
+  // NON è un frammento dello stesso booking — è un booking distinto.
+  // Esempio: "Mammana 2s" dal 21apr e "Mammana 4s" dal 24apr nella stessa
+  // camera sono DUE prenotazioni (prima 2 ospiti, poi 4 ospiti), non un
+  // frammento multi-mese. Questo genera un nuovo BLIP_ID per il secondo.
+  const sT  = target.s?.getTime?.() || 0;
+  const eT  = target.e?.getTime?.() || 0;
+  const yT  = target.s ? new Date(target.s).getFullYear() : 0;
+  const dT  = (target.d || '').trim().toLowerCase(); // disposizione target
   m = list.find(b => {
     if (_normName(b.n) !== nomT) return false;
     if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
+    // Guard disposizione: entrambe esplicite e diverse → booking distinti
+    const dDb = (b.d || '').trim().toLowerCase();
+    if (dDb && dT && dDb !== dT) return false;
     const sDb = b.s?.getTime?.() || 0;
     const eDb = b.e?.getTime?.() || 0;
     const yDb = b.s ? new Date(b.s).getFullYear() : 0;
     if (yDb !== yT) return false;
     // ±1 giorno di tolleranza per gestire frammenti adiacenti a cambio mese:
     // es. frammento aprile termina 30/04 12:00, frammento maggio inizia 01/05 12:00
-    // → eDb (30/04) + DAY_MS = 01/05 > sT (01/05): adiacenti = match
-    return sDb < eT + DAY_MS && eDb + DAY_MS >= sT; // >= per gestire mesi adiacenti a mezzogiorno esatto
+    // → eDb (30/04) + DAY_MS >= sT (01/05 12:00): adiacenti = match
+    return sDb < eT + DAY_MS && eDb + DAY_MS >= sT;
   });
   return m || null;
 }
@@ -1234,11 +1239,18 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       if (sheet.cameraName) match.cameraName = sheet.cameraName;
       if (sheet._sheetCol)  match._sheetCol  = sheet._sheetCol;
       match.fromSheet = true;
+      // Rileva aggiornamenti: disposizione, colore, note, date
+      // Nota: la disposizione cambia quando l'operatore modifica le celle del Gantt
+      // (es. "2s" → "4s"). In quel caso Apps Script crea DUE segmenti distinti
+      // (guard in Priority 4), ma se il match è avvenuto per P1/P2/P3 (stessa data
+      // esatta), aggiorniamo la disposizione nel DB record esistente.
       const changed =
         match.d !== sheet.d || match.c !== sheet.c || match.note !== sheet.note ||
         Math.abs(match.e.getTime() - sheet.e.getTime()) > DAY_MS/2 ||
         Math.abs(match.s.getTime() - sheet.s.getTime()) > DAY_MS/2;
       if (changed) {
+        if (match.d !== sheet.d && sheet.d)
+          syncLog(`📝 Disposizione aggiornata: ${match.n} (${match.dbId||'?'}) ${match.d||'?'} → ${sheet.d}`, 'syn');
         match.d = sheet.d; match.c = sheet.c; match.note = sheet.note;
         match.s = sheet.s; match.e = sheet.e; match.ts = nowISO(); match.fonte = 'manuale';
         toUpdateInDB.push(match);
