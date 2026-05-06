@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '52'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '53'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -1459,11 +1459,45 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       result.push(sheet);
     } else {
       seenDbIds.add(match.dbId);
+
+      // ── Deduplicazione frammenti multi-mese ──────────────────────────
+      // Quando findMatch trova il frammento "principale" (di solito il primo
+      // mese), altri frammenti dello stesso booking rimangono nel DB come
+      // fantasmi — stessa camera e nome, date adiacenti/sovrapposte.
+      // Li identifichiamo e li aggiungiamo a toArchive per pulizia automatica.
+      // Condizioni: stesso cameraName, nome normalizzato uguale, date che si
+      // sovrappongono o sono adiacenti (± 2 giorni) al booking del foglio,
+      // BLIP_ID diverso dal match principale.
+      const camMatch  = (match.cameraName || '').toLowerCase().trim();
+      const nomMatch  = _normName(match.n);
+      const sSheet    = sheet.s?.getTime?.() || 0;
+      const eSheet    = sheet.e?.getTime?.() || 0;
+      for (const db of dbActive) {
+        if (db.dbId === match.dbId) continue;           // il match principale
+        if (seenDbIds.has(db.dbId)) continue;           // già processato
+        if (isDeletedLocally(db.dbId)) continue;        // già cancellato
+        if (isInCestinoBlacklist(db.dbId)) continue;   // già nel CESTINO
+        if ((db.cameraName || '').toLowerCase().trim() !== camMatch) continue;
+        if (_normName(db.n) !== nomMatch) continue;
+        const sDb = db.s?.getTime?.() || 0;
+        const eDb = db.e?.getTime?.() || 0;
+        // Sovrapposto o adiacente (entro 2 giorni)
+        const sovrapposto = sDb <= eSheet + 2*DAY_MS && eDb >= sSheet - 2*DAY_MS;
+        if (!sovrapposto) continue;
+        // È un frammento duplicato — marca per rimozione
+        seenDbIds.add(db.dbId); // non finirà nella fase 2
+        db.deleted      = true;
+        db.deleteReason = `Frammento duplicato di ${match.dbId} · dedup del ${new Date().toLocaleDateString('it-IT')}`;
+        db.deletedAt    = nowISO();
+        toArchive.push(db);
+        syncLog(`🧹 Frammento duplicato rimosso: ${db.n} (${db.dbId}) → unificato con ${match.dbId}`, 'syn');
+      }
+
       // Propaga info del foglio all'oggetto DB (necessario per backfill riga 46)
       if (sheet.sheetId)    match.sheetId    = sheet.sheetId;
       if (sheet.sheetName)  match.sheetName  = sheet.sheetName;
       if (sheet.cameraName) match.cameraName = sheet.cameraName;
-      if (sheet._sheetCol)  match._sheetCol  = sheet._sheetCol; // solo se definito
+      if (sheet._sheetCol)  match._sheetCol  = sheet._sheetCol;
       match.fromSheet = true;
       const changed =
         match.d !== sheet.d || match.c !== sheet.c || match.note !== sheet.note ||
@@ -1569,13 +1603,26 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
   }
 
   // FASE 3: Scrittura DB
+  // Separa i frammenti duplicati (certi) dai candidati normali (incerti)
+  // I frammenti hanno deleteReason che inizia con "Frammento duplicato"
+  const toArchiveFragmenti = toArchive.filter(b => b.deleteReason?.startsWith('Frammento duplicato'));
+  const toArchiveNormali   = toArchive.filter(b => !b.deleteReason?.startsWith('Frammento duplicato'));
+
   // ── GUARD ASSOLUTO anti-cestinazione massiva ──────────────────────
+  // Si applica solo ai candidati normali — i frammenti duplicati sono certi e sicuri.
   const MAX_ARCHIVE_PER_SYNC = fromFallback ? 0 : 20;
-  if (toArchive.length > MAX_ARCHIVE_PER_SYNC && !forceFullSync) {
-    syncLog(`🛑 STOP: ${toArchive.length} prenotazioni da cestinare — limite sicurezza (${MAX_ARCHIVE_PER_SYNC}) superato. Usa 🔄 per forzare.`, 'err');
-    showToast(`⚠ ${toArchive.length} prenotazioni da cestinare — operazione bloccata per sicurezza. Usa 🔄 se intenzionale.`, 'error');
-    toArchive.forEach(b => { b.deleted = false; result.push(b); });
+  if (toArchiveNormali.length > MAX_ARCHIVE_PER_SYNC && !forceFullSync) {
+    syncLog(`🛑 STOP: ${toArchiveNormali.length} prenotazioni da cestinare — limite sicurezza (${MAX_ARCHIVE_PER_SYNC}) superato. Usa 🔄 per forzare.`, 'err');
+    showToast(`⚠ ${toArchiveNormali.length} prenotazioni da cestinare — operazione bloccata per sicurezza. Usa 🔄 se intenzionale.`, 'error');
+    toArchiveNormali.forEach(b => { b.deleted = false; result.push(b); });
+    toArchiveNormali.length = 0;
+    // Ricostruisce toArchive con soli i frammenti (questi procedono sempre)
     toArchive.length = 0;
+    toArchiveFragmenti.forEach(b => toArchive.push(b));
+  }
+
+  if (toArchiveFragmenti.length > 0) {
+    syncLog(`🧹 ${toArchiveFragmenti.length} frammenti duplicati da rimuovere`, 'syn');
   }
 
   // ── GUARD anti-import massivo ─────────────────────────────────────
