@@ -113,24 +113,27 @@ function initGoogleAuth() {
 async function onLoginSuccess() {
   document.getElementById('loginScreen').style.display = 'none';
 
-  // Avatar utente
+  // ── Step 1: identità utente ──────────────────────────────────────
+  let userEmail = '';
   try {
     const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
     const u = await r.json();
+    userEmail = (u.email || '').toLowerCase().trim();
+    window.currentUserEmail = userEmail;
     if (u.picture) {
       const av = document.getElementById('userAvatar');
       av.src = u.picture; av.style.display = 'block';
-      av.title = `${u.name} — Clicca per uscire`;
+      av.title = `${u.name} (${userEmail}) — Clicca per uscire`;
     }
   } catch(e) {}
 
-  // Tariffe dal DB (await: devono essere disponibili prima del primo render)
+  // ── Step 2: impostazioni dal DB (include adminEmails/staffEmails/geminiApiKey) ──
+  // loadBillSettingsDB popola window._blipAdminEmails e window._blipStaffEmails
   if (DATABASE_SHEET_ID || loadDbSheetId()) {
     DATABASE_SHEET_ID = DATABASE_SHEET_ID || loadDbSheetId();
     try {
-      // loadBillSettingsDB è in billing.js — chiamata lazy per sicurezza
       if (typeof loadBillSettingsDB === 'function') {
         const s = await loadBillSettingsDB();
         if (s) localStorage.setItem('hotelBillSettings', JSON.stringify(s));
@@ -138,7 +141,35 @@ async function onLoginSuccess() {
     } catch(e) {}
   }
 
-  // Caricamento principale
+  // ── Step 3: calcola ruolo utente ────────────────────────────────
+  // Ordine di priorità:
+  //   1. BOOTSTRAP_ADMINS in core.js (sempre admin, anche se IMPOSTAZIONI è vuoto)
+  //   2. adminEmails dal foglio IMPOSTAZIONI (gestiti dall'admin)
+  //   3. staffEmails dal foglio IMPOSTAZIONI
+  //   4. default: 'staff' (accesso limitato)
+  const bootstrapAdmins = (typeof BOOTSTRAP_ADMINS !== 'undefined' ? BOOTSTRAP_ADMINS : [])
+    .map(e => e.toLowerCase().trim());
+  const sheetAdmins = (window._blipAdminEmails || []).map(e => e.toLowerCase().trim());
+  const sheetStaff  = (window._blipStaffEmails  || []).map(e => e.toLowerCase().trim());
+
+  if (bootstrapAdmins.includes(userEmail) || sheetAdmins.includes(userEmail)) {
+    window.userRole = 'admin';
+  } else if (sheetStaff.includes(userEmail)) {
+    window.userRole = 'staff';
+  } else {
+    // Email non in nessuna lista → default 'staff' (mostra tutto, non modifica impostazioni)
+    window.userRole = 'staff';
+  }
+
+  // Badge ruolo visibile nella UI (opzionale, utile in sviluppo)
+  const badge = document.getElementById('userRoleBadge');
+  if (badge) {
+    badge.textContent = window.userRole === 'admin' ? '👑' : '👤';
+    badge.title = `Ruolo: ${window.userRole} (${userEmail})`;
+    badge.style.display = 'inline';
+  }
+
+  // ── Step 4: caricamento principale ──────────────────────────────
   if (typeof loadFromSheets === 'function') await loadFromSheets();
 }
 

@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '35'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '36'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -69,6 +69,15 @@ function billSettingsDefault() {
       { soglia:30, sconto:20 },
       { soglia:7,  sconto:10 },
     ],
+
+    // ── Ruoli utenti (gestiti dall'admin) ──
+    // CSV di email Google separate da virgola
+    adminEmails: '',   // es. 'mario@gmail.com,lucia@gmail.com'
+    staffEmails: '',   // es. 'receptionist@gmail.com'
+
+    // ── API Keys ──
+    geminiApiKey: '',  // Chiave Gemini per OCR check-in (inizia con AIza)
+    webAppUrl: '',     // URL Web App Apps Script per bridge
 
     // ── Extra: { label, prezzo, unita } ──
     // unita: 'notte' | 'persona' | 'volta' | 'kwh' | 'mc'
@@ -182,10 +191,16 @@ async function loadBillSettingsDB() {
     const map = {};
     rows.forEach(r => { if(r[0]) map[r[0]] = r[1]; });
 
-    // ── Carica webAppUrl dalla riga separata (priorità) ────────
-    // Se presente come riga separata, è il valore più aggiornato.
-    // Fallback al campo dentro billSettings per retrocompatibilità.
-    const webAppUrlDirect = (map['webAppUrl'] || '').trim();
+    // ── Campi diretti (leggibili senza parsare il JSON completo) ──
+    const webAppUrlDirect  = (map['webAppUrl']     || '').trim();
+    const adminEmailsDirect = (map['adminEmails']  || '').trim();
+    const staffEmailsDirect = (map['staffEmails']  || '').trim();
+    const geminiKeyDirect   = (map['geminiApiKey'] || '').trim();
+
+    // Propaga globals immediatamente — accessibili ovunque senza await
+    if (adminEmailsDirect) window._blipAdminEmails = adminEmailsDirect.split(',').map(s=>s.trim()).filter(Boolean);
+    if (staffEmailsDirect) window._blipStaffEmails = staffEmailsDirect.split(',').map(s=>s.trim()).filter(Boolean);
+    if (geminiKeyDirect)   { window._blipGeminiKey = geminiKeyDirect; localStorage.setItem('hotelGeminiApiKey', geminiKeyDirect); }
 
     let merged = null;
     if (map['billSettings']) {
@@ -232,11 +247,31 @@ async function saveBillSettingsDB(s) {
     const rowUrl  = idxUrl  >= 0 ? idxUrl  + 2
                   : (idxFull >= 0 ? rows.length + 2 : rows.length + 3);
 
+    // Leggi posizioni di tutte le chiavi gestite
+    const keyRows = {};
+    ['billSettings','webAppUrl','adminEmails','staffEmails','geminiApiKey'].forEach(k => {
+      const idx = rows.findIndex(r => r[0] === k);
+      keyRows[k] = idx >= 0 ? idx + 2 : null;
+    });
+    // Assegna righe libere ai nuovi campi (in fondo)
+    let nextFree = rows.length + 2;
+    ['billSettings','webAppUrl','adminEmails','staffEmails','geminiApiKey'].forEach(k => {
+      if (keyRows[k] === null) { keyRows[k] = nextFree++; }
+    });
+
     const data = [
-      { range: `${IMPOSTAZIONI_SHEET}!A${rowFull}:B${rowFull}`, values:[['billSettings', JSON.stringify(s)]] },
+      { range: `${IMPOSTAZIONI_SHEET}!A${keyRows['billSettings']}:B${keyRows['billSettings']}`,
+        values:[['billSettings', JSON.stringify(s)]] },
     ];
-    if (s.webAppUrl !== undefined) {
-      data.push({ range: `${IMPOSTAZIONI_SHEET}!A${rowUrl}:B${rowUrl}`, values:[['webAppUrl', s.webAppUrl || '']] });
+    if (s.webAppUrl !== undefined)
+      data.push({ range:`${IMPOSTAZIONI_SHEET}!A${keyRows['webAppUrl']}:B${keyRows['webAppUrl']}`,    values:[['webAppUrl',    s.webAppUrl||'']] });
+    if (s.adminEmails !== undefined)
+      data.push({ range:`${IMPOSTAZIONI_SHEET}!A${keyRows['adminEmails']}:B${keyRows['adminEmails']}`, values:[['adminEmails',  s.adminEmails||'']] });
+    if (s.staffEmails !== undefined)
+      data.push({ range:`${IMPOSTAZIONI_SHEET}!A${keyRows['staffEmails']}:B${keyRows['staffEmails']}`, values:[['staffEmails',  s.staffEmails||'']] });
+    if (s.geminiApiKey !== undefined) {
+      data.push({ range:`${IMPOSTAZIONI_SHEET}!A${keyRows['geminiApiKey']}:B${keyRows['geminiApiKey']}`, values:[['geminiApiKey', s.geminiApiKey||'']] });
+      if (s.geminiApiKey) localStorage.setItem('hotelGeminiApiKey', s.geminiApiKey);
     }
 
     await apiFetch(
@@ -3192,6 +3227,26 @@ function buildContiSettingsForm(cfg) {
           <input id="cfgWebAppUrl" value="${cfg.webAppUrl||''}" placeholder="https://script.google.com/macros/s/xxx/exec" style="font-size:11px">
           <div style="font-size:10px;color:var(--text3);margin-top:3px">Apps Script → Distribuisci → App web → copia URL</div>
         </div>
+        <div class="rate-field" style="grid-column:1/-1">
+          <label>🔑 Chiave API Gemini (OCR check-in)</label>
+          <input id="cfgGeminiKey" value="${cfg.geminiApiKey||localStorage.getItem('hotelGeminiApiKey')||''}" placeholder="AIza..." style="font-size:11px;font-family:monospace">
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">Salvata sul DB — condivisa su tutti i dispositivi</div>
+        </div>
+      </div>
+    </div>
+    <div class="conti-section" ${window.userRole==='admin'?'':'style="display:none"'}>
+      <div class="conti-section-title">👥 Gestione accessi (solo admin)</div>
+      <div class="rate-grid">
+        <div class="rate-field" style="grid-column:1/-1">
+          <label>Email Admin (separare con virgola)</label>
+          <input id="cfgAdminEmails" value="${cfg.adminEmails||''}" placeholder="mario@gmail.com, lucia@gmail.com" style="font-size:11px">
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">Gli admin possono modificare tariffe, ruoli, API keys</div>
+        </div>
+        <div class="rate-field" style="grid-column:1/-1">
+          <label>Email Staff (separare con virgola)</label>
+          <input id="cfgStaffEmails" value="${cfg.staffEmails||''}" placeholder="receptionist@gmail.com" style="font-size:11px">
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">Lo staff vede tutto ma non modifica le impostazioni</div>
+        </div>
       </div>
     </div>
     <div class="conti-section">
@@ -3312,6 +3367,11 @@ function saveContiSettings() {
   cfg.pivaHotel    = document.getElementById('cfgHotelPiva')?.value  || '';
   cfg.hotelTel     = document.getElementById('cfgHotelTel')?.value   || '';
   cfg.webAppUrl    = document.getElementById('cfgWebAppUrl')?.value  || '';
+  cfg.geminiApiKey = document.getElementById('cfgGeminiKey')?.value  || '';
+  if (window.userRole === 'admin') {
+    cfg.adminEmails = document.getElementById('cfgAdminEmails')?.value || '';
+    cfg.staffEmails = document.getElementById('cfgStaffEmails')?.value || '';
+  }
 
   // Tariffe disposizione
   cfg.tariffe = {
