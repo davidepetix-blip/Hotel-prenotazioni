@@ -16,7 +16,7 @@
 //   bridgeCancella(b)          → cancellazione
 // =============================================================
 
-const BLIP_VER_BRIDGE = '3';
+const BLIP_VER_BRIDGE = '4';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS INTERNI
@@ -42,14 +42,18 @@ function _dateToDMY(d) {
  * params: oggetto chiave→valore, vengono omessi i valori vuoti.
  */
 function _bridgeUrl(params) {
-  const cfg    = typeof loadBillSettings === 'function' ? loadBillSettings() : {};
-  const base   = (cfg.webAppUrl || '').trim();
-  if (!base) throw new Error('URL Web App non configurato. Vai in ⚙ Tariffe → campo "Web App URL".');
+  // Priorità: global caricato al login dal DB → localStorage → errore
+  // window._blipWebAppUrl è impostato da loadBillSettingsDB() in onLoginSuccess
+  // ed è condiviso su tutti i dispositivi senza configurazione manuale.
+  const base = (window._blipWebAppUrl || '')
+    || (typeof loadBillSettings === 'function' ? (loadBillSettings().webAppUrl || '') : '');
+  const trimmed = base.trim();
+  if (!trimmed) throw new Error('URL Web App non configurato. Vai in ⚙ Tariffe → "Web App URL" e salva — verrà condiviso automaticamente su tutti i dispositivi.');
   const qs = Object.entries(params)
     .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
-  return `${base}?${qs}&_ts=${Date.now()}`;
+  return `${trimmed}?${qs}&_ts=${Date.now()}`;
 }
 
 /**

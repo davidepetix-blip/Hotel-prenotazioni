@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '34'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '35'; // ← incrementa ad ogni modifica
 
 const BILL_SETTINGS_KEY = 'hotelBillSettings';
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -166,7 +166,11 @@ async function loadBillSettingsDB() {
     const raw = localStorage.getItem(_C_SETTINGS);
     if (raw) {
       const p = JSON.parse(raw);
-      if (Date.now() - p.ts < BILL_DB_TTL) return mergeSettings(p.data);
+      if (Date.now() - p.ts < BILL_DB_TTL) {
+        // Anche dalla cache, aggiorna il global webAppUrl
+        if (p.data?.webAppUrl) window._blipWebAppUrl = p.data.webAppUrl.trim();
+        return mergeSettings(p.data);
+      }
     }
   } catch(e) {}
 
@@ -177,11 +181,27 @@ async function loadBillSettingsDB() {
     const rows = d.values || [];
     const map = {};
     rows.forEach(r => { if(r[0]) map[r[0]] = r[1]; });
+
+    // ── Carica webAppUrl dalla riga separata (priorità) ────────
+    // Se presente come riga separata, è il valore più aggiornato.
+    // Fallback al campo dentro billSettings per retrocompatibilità.
+    const webAppUrlDirect = (map['webAppUrl'] || '').trim();
+
+    let merged = null;
     if (map['billSettings']) {
       const saved = JSON.parse(map['billSettings']);
+      // La riga separata sovrascrive il campo nel JSON (è più affidabile)
+      if (webAppUrlDirect) saved.webAppUrl = webAppUrlDirect;
       localStorage.setItem(_C_SETTINGS, JSON.stringify({ ts:Date.now(), data:saved }));
-      return mergeSettings(saved);
+      merged = mergeSettings(saved);
     }
+
+    // Imposta il global accessibile ovunque senza await
+    window._blipWebAppUrl = webAppUrlDirect
+      || (merged?.webAppUrl || '').trim()
+      || (loadBillSettingsLocal().webAppUrl || '').trim();
+
+    if (merged) return merged;
   } catch(e) { console.warn('[IMPOSTAZIONI] load:', e.message); }
 
   return loadBillSettingsLocal(); // fallback
@@ -196,16 +216,37 @@ async function saveBillSettingsDB(s) {
   if (!DATABASE_SHEET_ID) return;
   try {
     await ensureImpostazioniSheet();
-    // Leggi righe esistenti per trovare/aggiornare la riga billSettings
+    // Leggi righe esistenti per trovare/aggiornare le righe chiave
     const d = await dbGet(`${IMPOSTAZIONI_SHEET}!A2:B99`);
     const rows = d.values || [];
-    const idx  = rows.findIndex(r=>r[0]==='billSettings');
-    const rowNum = idx >= 0 ? idx + 2 : rows.length + 2;
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(`${IMPOSTAZIONI_SHEET}!A${rowNum}:B${rowNum}`)}?valueInputOption=RAW`;
-    await apiFetch(url,{ method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ values:[['billSettings', JSON.stringify(s)]] }) });
-    // Aggiorna cache
+
+    // ── Scrivi billSettings (JSON completo) ────────────────────
+    const idxFull = rows.findIndex(r=>r[0]==='billSettings');
+    const rowFull = idxFull >= 0 ? idxFull + 2 : rows.length + 2;
+
+    // ── Scrivi webAppUrl come riga separata ────────────────────
+    // Questo garantisce che sia leggibile direttamente senza parsare
+    // l'intero JSON billSettings — accessibile su qualsiasi dispositivo
+    // al primo login senza dover aprire la sezione Tariffe.
+    const idxUrl  = rows.findIndex(r=>r[0]==='webAppUrl');
+    const rowUrl  = idxUrl  >= 0 ? idxUrl  + 2
+                  : (idxFull >= 0 ? rows.length + 2 : rows.length + 3);
+
+    const data = [
+      { range: `${IMPOSTAZIONI_SHEET}!A${rowFull}:B${rowFull}`, values:[['billSettings', JSON.stringify(s)]] },
+    ];
+    if (s.webAppUrl !== undefined) {
+      data.push({ range: `${IMPOSTAZIONI_SHEET}!A${rowUrl}:B${rowUrl}`, values:[['webAppUrl', s.webAppUrl || '']] });
+    }
+
+    await apiFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values:batchUpdate`,
+      { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ valueInputOption:'RAW', data }) }
+    );
+    // Aggiorna cache e global
     localStorage.setItem(_C_SETTINGS, JSON.stringify({ ts:Date.now(), data:s }));
+    window._blipWebAppUrl = (s.webAppUrl||'').trim();
   } catch(e) { console.warn('[IMPOSTAZIONI] save:', e.message); }
 }
 

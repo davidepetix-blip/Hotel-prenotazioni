@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_SYNC = '51'; // ← incrementa ad ogni modifica
+const BLIP_VER_SYNC = '52'; // ← incrementa ad ogni modifica
 
 // ─────────────────────────────────────────────────────────────────
 // CESTINO BLACKLIST — set in-memory degli ID cestinati
@@ -230,10 +230,9 @@ async function onLoginSuccess() {
 
 // Rigenerazione manuale JSON_ANNUALE via Web App Apps Script
 async function rigenera() {
-  const cfg = loadBillSettings();
-  const url = (cfg.webAppUrl||'').trim();
+  const url = (window._blipWebAppUrl || loadBillSettings().webAppUrl || '').trim();
   if (!url) {
-    showToast('URL Web App non configurato — vai in ⚙ Tariffe', 'error');
+    showToast('URL Web App non configurato — vai in ⚙ Tariffe e salva', 'error');
     return;
   }
   showToast('📡 Chiamata Web App…', 'info');
