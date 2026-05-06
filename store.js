@@ -1047,7 +1047,7 @@ function findMatch(target, list) {
     // ±1 giorno di tolleranza per gestire frammenti adiacenti a cambio mese:
     // es. frammento aprile termina 30/04 12:00, frammento maggio inizia 01/05 12:00
     // → eDb (30/04) + DAY_MS = 01/05 > sT (01/05): adiacenti = match
-    return sDb < eT + DAY_MS && eDb + DAY_MS > sT;
+    return sDb < eT + DAY_MS && eDb + DAY_MS >= sT; // >= per gestire mesi adiacenti a mezzogiorno esatto
   });
   return m || null;
 }
