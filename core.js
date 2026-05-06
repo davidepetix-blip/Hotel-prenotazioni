@@ -6,7 +6,14 @@
 
 // ── Error handler globale per debug mobile ──
 
-const BLIP_VER_CORE = '8'; // ← incrementa ad ogni modifica
+const BLIP_VER_CORE = '8';
+
+// ── Bootstrap admin — sempre admin anche se IMPOSTAZIONI è vuoto ──
+// Modifica questa lista per aggiungere email di admin permanenti.
+// Gli admin aggiuntivi si gestiscono dal foglio IMPOSTAZIONI (chiave adminEmails).
+const BOOTSTRAP_ADMINS = [
+  // 'tua@email.com',  ← aggiungi la tua email qui
+]; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
   console.log(msg);
