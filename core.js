@@ -12,7 +12,7 @@ const BLIP_VER_CORE = '8';
 // Modifica questa lista per aggiungere email di admin permanenti.
 // Gli admin aggiuntivi si gestiscono dal foglio IMPOSTAZIONI (chiave adminEmails).
 const BOOTSTRAP_ADMINS = [
-  // 'tua@email.com',  ← aggiungi la tua email qui
+  // 'davide.petix@gmail.com',  ← aggiungi la tua email qui
 ]; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
