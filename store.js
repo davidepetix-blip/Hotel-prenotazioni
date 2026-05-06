@@ -1043,8 +1043,11 @@ function findMatch(target, list) {
     const sDb = b.s?.getTime?.() || 0;
     const eDb = b.e?.getTime?.() || 0;
     const yDb = b.s ? new Date(b.s).getFullYear() : 0;
-    if (yDb !== yT) return false;            // anni diversi → no match
-    return sDb < eT && eDb > sT;            // overlap: si sovrappongono
+    if (yDb !== yT) return false;
+    // ±1 giorno di tolleranza per gestire frammenti adiacenti a cambio mese:
+    // es. frammento aprile termina 30/04 12:00, frammento maggio inizia 01/05 12:00
+    // → eDb (30/04) + DAY_MS = 01/05 > sT (01/05): adiacenti = match
+    return sDb < eT + DAY_MS && eDb + DAY_MS > sT;
   });
   return m || null;
 }
