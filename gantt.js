@@ -1201,6 +1201,10 @@ function checkW(){
   const w=window.innerWidth>=640;
   document.getElementById('btnAdd').style.display=w?'inline-flex':'none';
   document.getElementById('fabGroup').style.display=w?'none':'flex';
+  // Su desktop: mostra il pulsante di ricerca in topbar
+  // Su mobile: la ricerca è dentro fabGroup (già visibile)
+  const bs = document.getElementById('btnSearch');
+  if (bs) bs.style.display = w ? 'inline-flex' : 'none';
 }
 window.addEventListener('resize',checkW);
 

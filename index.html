@@ -811,6 +811,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <button class="btn btn-icon" onclick="openConti()" title="Conti e fatturazione">💶</button>
   <button class="btn btn-icon" onclick="openSettings()" title="Impostazioni camere">⚙</button>
   <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
+  <button class="btn" id="btnSearch" style="display:none" onclick="openSearch()" title="Cerca prenotazione">🔍</button>
   <button class="btn primary" id="btnAdd" style="display:none" onclick="openModal()">+ Nuova</button>
   <img id="userAvatar" class="avatar" style="display:none" title="Logout" onclick="logout()">
 </div>
@@ -1075,7 +1076,8 @@ const BLIP_BUILD = '18.10.4'; // ← build complessiva (major.minor.patch)
 function blipFullVersion() {
   const mods = [
     typeof BLIP_VER_CORE    !== 'undefined' ? BLIP_VER_CORE    : '?',
-    typeof BLIP_VER_SYNC    !== 'undefined' ? BLIP_VER_SYNC    : '?',
+    typeof BLIP_VER_STORE   !== 'undefined' ? BLIP_VER_STORE   : '?',
+    typeof BLIP_VER_ROOMS   !== 'undefined' ? BLIP_VER_ROOMS   : '?',
     typeof BLIP_VER_GANTT   !== 'undefined' ? BLIP_VER_GANTT   : '?',
     typeof BLIP_VER_CHECKIN !== 'undefined' ? BLIP_VER_CHECKIN : '?',
     typeof BLIP_VER_BILLING !== 'undefined' ? BLIP_VER_BILLING : '?',
