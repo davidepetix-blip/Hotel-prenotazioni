@@ -813,7 +813,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
   <button class="btn" id="btnSearch" style="display:none" onclick="openSearch()" title="Cerca prenotazione">🔍</button>
   <button class="btn primary" id="btnAdd" style="display:none" onclick="openModal()">+ Nuova</button>
-  <img id="userAvatar" class="avatar" style="display:none" title="Logout" onclick="logout()">
+  <img id="userAvatar" class="avatar" style="display:none" title="Logout" onclick="logout()"><span id="userRoleBadge" style="display:none;font-size:14px;cursor:default;margin-left:2px;line-height:1" title="Ruolo utente"></span>
 </div>
 
 <!-- ══ TOOLTIP ══ -->
@@ -1070,7 +1070,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 
 <script>
 // ── Versione build ──
-const BLIP_BUILD = '18.10.4'; // ← build complessiva (major.minor.patch)
+const BLIP_BUILD = '18.10.5'; // ← build complessiva (major.minor.patch)
 
 // Assembla la versione completa dai moduli appena caricati
 function blipFullVersion() {

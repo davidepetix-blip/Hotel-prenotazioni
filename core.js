@@ -11,8 +11,14 @@ const BLIP_VER_CORE = '8';
 // ── Bootstrap admin — sempre admin anche se IMPOSTAZIONI è vuoto ──
 // Modifica questa lista per aggiungere email di admin permanenti.
 // Gli admin aggiuntivi si gestiscono dal foglio IMPOSTAZIONI (chiave adminEmails).
+// Cache key localStorage impostazioni tariffe (usato da billing.js e auth.js)
+const BILL_SETTINGS_KEY = 'hotelBillSettings';
+
+// ── Bootstrap admin — sempre admin anche se IMPOSTAZIONI è vuoto ──
+// Modifica questa lista per aggiungere email di admin permanenti.
+// Gli admin aggiuntivi si gestiscono dal foglio IMPOSTAZIONI (chiave adminEmails).
 const BOOTSTRAP_ADMINS = [
-  // 'davide.petix@gmail.com',  ← aggiungi la tua email qui
+  // 'tua@email.com',  ← aggiungi la tua email qui
 ]; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
