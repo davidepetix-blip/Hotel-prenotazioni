@@ -440,6 +440,9 @@ function openModal(isEdit=false){
   rebuildBeds(isEdit ? bedCounts : null); rebuildColors();
   document.getElementById('errmsg').classList.remove('show');
   document.getElementById('mov').classList.add('open');
+  // Aggiorna disponibilità al primo render del modal
+  _availUpdateRoomSelect();
+  _availUpdateDateHints();
 }
 function closeModal(){
   document.getElementById('mov').classList.remove('open');
@@ -1185,6 +1188,151 @@ document.addEventListener('keydown', e => {
 // closeRstateModal, rstateOverlayClick, saveRoomState,
 // renderAnnualSheetRow, addAnnualSheetRow, removeAnnualSheetRow, testDbConnection
 // → rooms.js
+
+// ═══════════════════════════════════════════════════════════════════
+// DISPONIBILITÀ NEL MODAL — UI helpers
+// ═══════════════════════════════════════════════════════════════════
+// Logica: due direzioni sincronizzate
+//   A) Camera selezionata → evidenzia date occupate nel datepicker
+//   B) Date selezionate → filtra il select camera mostrando solo disponibili
+// Le funzioni di calcolo vivono in rooms.js (getAvailableRooms, ecc.)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Quando l'utente seleziona/cambia la CAMERA:
+ * → Imposta min/max e disabilita le date occupate nei campi data
+ * → Mostra un hint testuale con le prossime date libere
+ */
+function _availUpdateDateHints() {
+  const rid  = document.getElementById('fRoom')?.value;
+  const fIn  = document.getElementById('fIn');
+  const fOut = document.getElementById('fOut');
+  if (!fIn || !fOut) return;
+
+  // Rimuovi hint precedente
+  document.getElementById('_availDateHint')?.remove();
+
+  if (!rid || typeof getAvailableDatesForRoom !== 'function') return;
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const year  = today.getFullYear();
+  const month = today.getMonth();
+
+  // Calcola range occupati per i prossimi 3 mesi
+  const occupied = []; // array di { s: Date, e: Date, n: string }
+  for (let m = 0; m < 3; m++) {
+    const r = getAvailableDatesForRoom(rid, year, month + m, editId ? String(editId) : null);
+    r.occupiedRanges.forEach(or => occupied.push(or));
+  }
+
+  // Imposta min date = oggi
+  fIn.min  = today.toISOString().slice(0,10);
+  fOut.min = today.toISOString().slice(0,10);
+
+  // Costruisci hint HTML con i periodi occupati futuri
+  const futureOcc = occupied
+    .filter(or => or.e > today)
+    .sort((a,b) => a.s - b.s)
+    .slice(0, 4); // max 4 periodi
+
+  if (futureOcc.length === 0) {
+    _showAvailHint('fOut', '✅ Nessuna prenotazione futura — camera libera', 'ok');
+    return;
+  }
+
+  const lines = futureOcc.map(or => {
+    const sf = fmt(or.s), ef = fmt(or.e);
+    return `<span style="color:var(--danger)">⛔ ${or.n} · ${sf}→${ef}</span>`;
+  });
+  _showAvailHint('fOut',
+    `<span style="font-size:10px;color:var(--text3)">Periodi occupati:</span><br>${lines.join('<br>')}`,
+    'warn'
+  );
+}
+
+/**
+ * Quando l'utente cambia le DATE:
+ * → Aggiorna il select camera colorando le opzioni non disponibili
+ * → Mostra quante camere sono disponibili
+ */
+function _availUpdateRoomSelect() {
+  const fIn  = document.getElementById('fIn');
+  const fOut = document.getElementById('fOut');
+  const sel  = document.getElementById('fRoom');
+  if (!fIn || !fOut || !sel) return;
+
+  // Rimuovi badge precedente
+  document.getElementById('_availRoomBadge')?.remove();
+
+  const iv = fIn.value, ov = fOut.value;
+  if (!iv || !ov || iv >= ov || typeof getRoomsAvailability !== 'function') {
+    // Riabilita tutte le opzioni
+    Array.from(sel.options).forEach(o => {
+      o.disabled = false;
+      o.style.color = '';
+      o.textContent = o.textContent.replace(/\s*[⛔✅].*$/, '');
+    });
+    return;
+  }
+
+  const dal = new Date(iv); dal.setHours(12,0,0,0);
+  const al  = new Date(ov); al.setHours(12,0,0,0);
+  const avail = getRoomsAvailability(dal, al, editId ? String(editId) : null);
+
+  let nDisp = 0, nOcc = 0;
+  Array.from(sel.options).forEach(opt => {
+    const rid = opt.value;
+    if (!rid || !avail[rid]) return; // optgroup o opzione vuota
+    const a = avail[rid];
+    // Rimuovi marker precedente
+    opt.textContent = opt.textContent.replace(/\s*[⛔✅].*$/, '');
+    if (a.available) {
+      nDisp++;
+      opt.disabled = false;
+      opt.style.color = 'var(--success, #2d6a4f)';
+      opt.textContent += ' ✅';
+    } else {
+      nOcc++;
+      opt.disabled = true;
+      opt.style.color = 'var(--text3)';
+      const nomi = a.conflitti.map(b => b.n).join(', ');
+      opt.textContent += ` ⛔ ${nomi}`;
+    }
+  });
+
+  // Se la camera attualmente selezionata non è disponibile → deseleziona
+  const curOpt = sel.options[sel.selectedIndex];
+  if (curOpt && avail[curOpt.value] && !avail[curOpt.value].available) {
+    // Cerca prima disponibile
+    const firstAvail = Array.from(sel.options).find(o => o.value && avail[o.value]?.available);
+    if (firstAvail) { sel.value = firstAvail.value; rebuildColors(); rebuildBeds(); }
+  }
+
+  // Badge riepilogativo sotto il select
+  const notti = Math.round((al - dal) / 86400000);
+  const badge = document.createElement('div');
+  badge.id = '_availRoomBadge';
+  badge.style.cssText = 'font-size:10px;margin-top:3px;color:var(--text3)';
+  badge.innerHTML = nDisp > 0
+    ? `<span style="color:var(--success,#2d6a4f)">✅ ${nDisp} camere libere</span>`
+    + (nOcc > 0 ? ` · <span style="color:var(--danger)">${nOcc} occupate</span>` : '')
+    + ` per ${notti} notte${notti!==1?'i':''}`
+    : `<span style="color:var(--danger)">⛔ Nessuna camera disponibile per questo periodo</span>`;
+
+  sel.closest('.fg')?.appendChild(badge);
+}
+
+function _showAvailHint(afterElId, html, type) {
+  document.getElementById('_availDateHint')?.remove();
+  const ref = document.getElementById(afterElId)?.closest('.fg');
+  if (!ref) return;
+  const d = document.createElement('div');
+  d.id = '_availDateHint';
+  d.style.cssText = `font-size:10px;margin-top:3px;line-height:1.5;padding:4px 6px;border-radius:4px;background:${type==='ok'?'rgba(45,106,79,.08)':'rgba(220,38,38,.06)'}`;
+  d.innerHTML = html;
+  ref.parentNode.insertBefore(d, ref.nextSibling);
+}
+
 function buildRoomSelect(){
   const sel=document.getElementById('fRoom');
   if (!sel) return;

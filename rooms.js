@@ -746,3 +746,148 @@ async function testDbConnection() {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+// MOTORE DISPONIBILITÀ CAMERE
+// ═══════════════════════════════════════════════════════════════════
+// Usato dal modal prenotazione (gantt.js) e dall'API pubblica
+// (futuro: risposta automatica email/form).
+//
+// Funzioni esposte:
+//   getBookingsInRange(dal, al, excludeId)
+//     → array di bookings che occupano il range (overlap)
+//   getRoomsAvailability(dal, al, excludeId)
+//     → { [roomId]: { available, conflitti: [] } }
+//   getAvailableRooms(dal, al, excludeId)
+//     → array di roomId disponibili
+//   getAvailableDatesForRoom(roomId, year, month, excludeId)
+//     → { available: Set<'YYYY-MM-DD'>, occupiedRanges: [{s,e,n}] }
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Restituisce tutte le prenotazioni che si sovrappongono al range [dal, al].
+ * Overlap: b.s < al && b.e > dal  (checkout = primo giorno libero)
+ * @param {Date} dal  - data inizio (check-in)
+ * @param {Date} al   - data fine   (check-out)
+ * @param {string} [excludeId] - BLIP_ID da escludere (utile in modifica)
+ */
+function getBookingsInRange(dal, al, excludeId = null) {
+  return bookings.filter(b => {
+    if (b.deleted) return false;
+    if (excludeId && (b.dbId === excludeId || String(b.id) === String(excludeId))) return false;
+    const bs = b.s instanceof Date ? b.s : new Date(b.s);
+    const be = b.e instanceof Date ? b.e : new Date(b.e);
+    // Overlap: inizio prenotazione < al E fine prenotazione > dal
+    return bs < al && be > dal;
+  });
+}
+
+/**
+ * Disponibilità di tutte le camere per il range [dal, al].
+ * @returns {Object} map roomId → { available: bool, conflitti: booking[] }
+ */
+function getRoomsAvailability(dal, al, excludeId = null) {
+  const overlap = getBookingsInRange(dal, al, excludeId);
+  const result  = {};
+  for (const room of ROOMS) {
+    const conflitti = overlap.filter(b => b.r === room.id);
+    result[room.id] = { available: conflitti.length === 0, conflitti };
+  }
+  return result;
+}
+
+/**
+ * Restituisce solo i roomId disponibili per il range.
+ */
+function getAvailableRooms(dal, al, excludeId = null) {
+  const avail = getRoomsAvailability(dal, al, excludeId);
+  return ROOMS.filter(r => avail[r.id].available).map(r => r.id);
+}
+
+/**
+ * Per una camera specifica, calcola quali date sono occupate nel mese.
+ * Ritorna l'insieme delle date LIBERE e i range occupati (per il datepicker).
+ *
+ * @param {string} roomId
+ * @param {number} year
+ * @param {number} month   (0-based, come Date)
+ * @param {string} [excludeId]
+ * @returns {{ freeDates: Set<string>, occupiedRanges: Array<{s:Date,e:Date,n:string}> }}
+ */
+function getAvailableDatesForRoom(roomId, year, month, excludeId = null) {
+  const firstDay = new Date(year, month, 1);
+  const lastDay  = new Date(year, month + 1, 0); // ultimo giorno del mese
+  lastDay.setHours(23, 59, 59);
+
+  // Tutte le prenotazioni della camera che toccano il mese
+  const camBookings = bookings.filter(b => {
+    if (b.deleted) return false;
+    if (b.r !== roomId) return false;
+    if (excludeId && (b.dbId === excludeId || String(b.id) === String(excludeId))) return false;
+    const bs = b.s instanceof Date ? b.s : new Date(b.s);
+    const be = b.e instanceof Date ? b.e : new Date(b.e);
+    return bs <= lastDay && be > firstDay;
+  });
+
+  // Costruisci set di date occupate (dal check-in al giorno prima del check-out)
+  const occupiedDates = new Set();
+  for (const b of camBookings) {
+    const bs = new Date(b.s); bs.setHours(0,0,0,0);
+    const be = new Date(b.e); be.setHours(0,0,0,0); // check-out = libero
+    const cur = new Date(bs);
+    while (cur < be) {
+      const key = cur.toISOString().slice(0,10);
+      occupiedDates.add(key);
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+
+  // Date libere del mese
+  const freeDates = new Set();
+  const cur = new Date(year, month, 1);
+  while (cur.getMonth() === month) {
+    const key = cur.toISOString().slice(0,10);
+    if (!occupiedDates.has(key)) freeDates.add(key);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const occupiedRanges = camBookings.map(b => ({
+    s: b.s instanceof Date ? b.s : new Date(b.s),
+    e: b.e instanceof Date ? b.e : new Date(b.e),
+    n: b.n
+  }));
+
+  return { freeDates, occupiedRanges };
+}
+
+/**
+ * Funzione di summary per il futuro sistema email/form:
+ * dato un range di date, ritorna un oggetto strutturato con
+ * le camere disponibili e i dettagli (gruppo, maxGuests, tariffe).
+ *
+ * @param {string} dalStr  - 'YYYY-MM-DD'
+ * @param {string} alStr   - 'YYYY-MM-DD'
+ * @returns {Object} { dal, al, notti, camereDisponibili: [{id,name,gruppo,maxGuests,tariffaBase}] }
+ */
+function getAvailabilitySummary(dalStr, alStr) {
+  const dal   = new Date(dalStr); dal.setHours(12,0,0,0);
+  const al    = new Date(alStr);  al.setHours(12,0,0,0);
+  const notti = Math.round((al - dal) / 86400000);
+  const avail = getRoomsAvailability(dal, al);
+  const cfg   = typeof loadBillSettings === 'function' ? loadBillSettings() : {};
+
+  const camereDisponibili = ROOMS
+    .filter(r => avail[r.id].available)
+    .map(r => {
+      const ov = cfg.tariffeCamere?.[r.id];
+      return {
+        id:          r.id,
+        name:        r.name,
+        gruppo:      r.g,
+        maxGuests:   roomSettings?.[r.id]?.maxGuests ?? 2,
+        tariffaBase: ov?.giornaliera > 0 ? ov.giornaliera : (cfg.tariffe?.m ?? 0),
+      };
+    });
+
+  return { dal: dalStr, al: alStr, notti, camereDisponibili };
+}
