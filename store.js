@@ -2209,6 +2209,8 @@ async function bgSync() {
       // ── LIVELLO 1: nessuna modifica rilevata, 0 chiamate aggiuntive ──
       syncLog('⟳ bgSync: invariato (fingerprint ok) — skip', 'syn');
       await loadRoomStates();
+      // Controlla nuove email dal form anche quando il foglio è invariato
+      if (typeof processNewFormEmails === 'function') processNewFormEmails().catch(() => {});
       return;
     }
 
