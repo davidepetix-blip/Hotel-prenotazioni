@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '1'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '2'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -1039,9 +1039,16 @@ function findMatch(target, list) {
   const eT  = target.e?.getTime?.() || 0;
   const yT  = target.s ? new Date(target.s).getFullYear() : 0;
   const dT  = (target.d || '').trim().toLowerCase(); // disposizione target
+  // Normalizza nome camera: "Camera 1" → "1", "cam 01" → "1", "1" → "1"
+  // Necessario perché DB vecchi e JSON_ANNUALE possono usare formati diversi
+  const _nc = c => String(c||'').toLowerCase().trim()
+    .replace(/^camera\s+/,'').replace(/^cam\.\s*/,'').replace(/^0+(?=\d)/,'').trim();
+  const camTN = _nc(camT);
+
   m = list.find(b => {
     if (_normName(b.n) !== nomT) return false;
-    if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
+    // Confronto camera con normalizzazione robusta su entrambi i lati
+    if (_nc(b.cameraName || roomName(b.r) || '') !== camTN) return false;
     // Guard disposizione: entrambe esplicite e diverse → booking distinti
     const dDb = (b.d || '').trim().toLowerCase();
     if (dDb && dT && dDb !== dT) return false;
@@ -1049,9 +1056,7 @@ function findMatch(target, list) {
     const eDb = b.e?.getTime?.() || 0;
     const yDb = b.s ? new Date(b.s).getFullYear() : 0;
     if (yDb !== yT) return false;
-    // ±1 giorno di tolleranza per gestire frammenti adiacenti a cambio mese:
-    // es. frammento aprile termina 30/04 12:00, frammento maggio inizia 01/05 12:00
-    // → eDb (30/04) + DAY_MS >= sT (01/05 12:00): adiacenti = match
+    // ±1 giorno di tolleranza per gestire frammenti adiacenti a cambio mese
     return sDb < eT + DAY_MS && eDb + DAY_MS >= sT;
   });
   return m || null;
@@ -1964,7 +1969,10 @@ function esportaLogSessione() {
   const vers = [
     typeof BLIP_BUILD        !== 'undefined' ? 'BLIP_BUILD='       + BLIP_BUILD        : '',
     typeof BLIP_VER_CORE     !== 'undefined' ? 'BLIP_VER_CORE='    + BLIP_VER_CORE     : '',
-    typeof BLIP_VER_SYNC     !== 'undefined' ? 'BLIP_VER_SYNC='    + BLIP_VER_SYNC     : '',
+    typeof BLIP_VER_API      !== 'undefined' ? 'BLIP_VER_API='     + BLIP_VER_API      : '',
+    typeof BLIP_VER_AUTH     !== 'undefined' ? 'BLIP_VER_AUTH='    + BLIP_VER_AUTH     : '',
+    typeof BLIP_VER_STORE    !== 'undefined' ? 'BLIP_VER_STORE='   + BLIP_VER_STORE    : '',
+    typeof BLIP_VER_ROOMS    !== 'undefined' ? 'BLIP_VER_ROOMS='   + BLIP_VER_ROOMS    : '',
     typeof BLIP_VER_GANTT    !== 'undefined' ? 'BLIP_VER_GANTT='   + BLIP_VER_GANTT    : '',
     typeof BLIP_VER_CHECKIN  !== 'undefined' ? 'BLIP_VER_CHECKIN=' + BLIP_VER_CHECKIN  : '',
     typeof BLIP_VER_BILLING  !== 'undefined' ? 'BLIP_VER_BILLING=' + BLIP_VER_BILLING  : '',
@@ -2191,331 +2199,4 @@ async function bgSync() {
     //   Solo se DB effettivamente cambiato.
     //
     // Caso ottimale (nessuna modifica): 1 sola chiamata API totale.
-    // ══════════════════════════════════════════════════════════════
-
-    const sheetEntry = _currentYearSheetEntry();
-    const fpResult = sheetEntry
-      ? await checkFingerprintsChanged(sheetEntry.sheetId)
-      : { changed: true, changedMonths: [] };
-
-    // Ci sono scritture dell'app negli ultimi 5 minuti?
-    const RECENTE_APP_MS = 5 * 60 * 1000;
-    const recenteApp = bookings.filter(b =>
-      b.fonte === 'app' && b.ts && (Date.now() - new Date(b.ts).getTime()) < RECENTE_APP_MS
-    );
-    const hasPendingWrites = recenteApp.length > 0;
-
-    if (!fpResult.changed && !hasPendingWrites) {
-      // ── LIVELLO 1: nessuna modifica rilevata, 0 chiamate aggiuntive ──
-      syncLog('⟳ bgSync: invariato (fingerprint ok) — skip', 'syn');
-      await loadRoomStates();
-      // Controlla nuove email dal form anche quando il foglio è invariato
-      if (typeof processNewFormEmails === 'function') processNewFormEmails().catch(() => {});
-      return;
-    }
-
-    if (fpResult.changedMonths?.length > 0) {
-      syncLog('⟳ bgSync: modifiche in ' + fpResult.changedMonths.join(', '), 'syn');
-    } else if (hasPendingWrites) {
-      syncLog('⟳ bgSync: scritture recenti — verifico DB', 'syn');
-    }
-
-    // ── LIVELLO 2: rileggi DB ──────────────────────────────────────
-    const dbFresh = await readDatabase();
-    const active  = dbFresh.filter(b => !b.deleted && !isDeletedLocally(b.dbId));
-
-    const prevCount = bookings.length;
-
-    // GUARD: se il DB ha molto meno prenotazioni di quelle in memoria, salta il render
-    if (active.length < prevCount * 0.7 && prevCount > 20) {
-      syncLog(`⚠ bgSync: DB ha ${active.length} vs ${prevCount} in memoria — skip render`, 'wrn');
-      await loadRoomStates();
-      return;
-    }
-
-    // Controlla se il DB è effettivamente cambiato rispetto alla memoria
-    const rimossi = bookings.filter(b => b.dbId && !active.find(d => d.dbId === b.dbId)).length;
-    let dbChanged = active.length !== prevCount || rimossi > 0;
-    if (!dbChanged) {
-      const localMap = new Map(bookings.map(b => [b.dbId, b.ts]).filter(([k]) => k));
-      for (const db of active) {
-        const localTs = localMap.get(db.dbId);
-        if (!localTs || (db.ts && db.ts > localTs)) { dbChanged = true; break; }
-      }
-    }
-    syncLog(`DB: ${active.length} prenotazioni attive, rimossi ${rimossi}`, 'db');
-
-    // ── LIVELLO 3: render solo se DB cambiato ─────────────────────
-    if (dbChanged) {
-      let merged = mergeMultiMonthBookings(active);
-      // Preserva prenotazioni locali recenti non ancora nel DB
-      // (latenza scrittura API + Apps Script 20-30s)
-      if (hasPendingWrites) {
-        recenteApp.forEach(localB => {
-          const inDb = merged.find(db =>
-            db.dbId === localB.dbId ||
-            (db.n === localB.n && db.r === localB.r && Math.abs(db.s - localB.s) < 86400000)
-          );
-          if (!inDb) {
-            syncLog(`🛡 bgSync: preservata prenotazione locale recente: ${localB.n} (${localB.dbId||'no dbId'})`, 'wrn');
-            merged.push(localB);
-          }
-        });
-      }
-      bookings = merged;
-      saveDbCache(active);
-      render();
-      const diff = active.length - prevCount;
-      showBgToast(
-        rimossi > 0 ? `↻ ${rimossi} rimoss${rimossi===1?'a':'e'}` :
-        diff    > 0 ? `↻ +${diff} nuove` : '↻ Aggiornato'
-      );
-    }
-    await loadRoomStates();
-    if (document.getElementById('roomDashPage')?.classList.contains('open')) renderRoomDash();
-  } catch(e) {
-    console.warn('[bgSync] Errore:', e.message);
-  } finally {
-    setSyncPulsing(false);
-    _bgSyncRunning = false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// CARICAMENTO INIZIALE
-// ═══════════════════════════════════════════════════════════════════
-
-async function loadFromSheets() {
-  if (!accessToken) return;
-  document.getElementById('syncDot')?.classList.remove('show', 'pulsing');
-
-  if (!DATABASE_SHEET_ID) DATABASE_SHEET_ID = loadDbSheetId();
-  annualSheets = loadAnnualSheets();
-  const forcing = loadFromSheets._forceNext === true;
-  loadFromSheets._forceNext = false;
-  stopBgSync();
-
-  try {
-    bookings = [];
-    sheetColumnMap = {};
-
-    // FAST PATH: cache locale valida
-    if (DATABASE_SHEET_ID && !forcing) {
-      const cached = loadDbCache();
-      if (cached && cached.length > 0) {
-        bookings = mergeMultiMonthBookings(cached);
-        await loadRoomStates();
-        hideLoading();
-        render();
-        showToast(`✓ ${bookings.length} prenotazioni (cache)`, 'success');
-        // Carica la blacklist CESTINO in background — senza await per non ritardare il render.
-        // In fast path syncWithDatabase non viene chiamata, quindi senza questo
-        // _cestinoBlacklist resterebbe null per tutta la sessione.
-        loadCestinoBlacklist().catch(() => {});
-        // Aspetta 90s prima del primo bgSync: preloadContoDati e CI data
-        // caricano in questo intervallo — partire prima causa burst 429
-        _lastFullSyncTs = Date.now() - BGSYNC_COOLDOWN_MS + 90 * 1000;
-        setTimeout(bgSync, 90 * 1000);
-        startBgSync();
-        return;
-      }
-    }
-
-    // ── DB-FIRST FULL PATH ──────────────────────────────────────────
-    // STEP 1: legge il DB locale → render immediato (~1s)
-    // STEP 2: in background legge JSON_ANNUALE + sincronizza → re-render silenzioso
-    // Se non c'è DATABASE_SHEET_ID, cade direttamente al path JSON_ANNUALE.
-    const _t0 = Date.now();
-    _row46BlipIds    = new Set();
-    _row46BookingMap = {};
-
-    if (DATABASE_SHEET_ID) {
-      // ── STEP 1: DB → render veloce ──────────────────────────────
-      showLoading('Lettura database…');
-      await ensureDbHeaders();
-      const _t1db = Date.now();
-      const dbRowsFast = await readDatabase();
-      const dbActiveFast = dbRowsFast.filter(b => !b.deleted);
-      syncLog(`⏱ DB fast-read: ${dbActiveFast.length} pren. in ${Date.now()-_t1db}ms`, 'syn');
-
-      bookings = mergeMultiMonthBookings(dbActiveFast);
-      await loadRoomStates();
-      hideLoading();
-      render();
-      showToast(`✓ ${bookings.length} prenotazioni (DB)`, 'success');
-      syncLog(`✓ ${bookings.length} prenotazioni caricate dal DB`, 'ok');
-
-      // Imposta una cache veloce con i dati DB per il fast-path al prossimo avvio
-      saveDbCache(dbActiveFast);
-
-      // Mostra indicatore sync in corso sul syncDot
-      setSyncPulsing(true);
-      syncLog('📖 Aggiornamento da JSON_ANNUALE in background…', 'syn');
-
-      // ── STEP 2: JSON_ANNUALE + sync in background ───────────────
-      // Non blocca l'UI — eseguito dopo che l'utente vede già il calendario
-      ;(async () => {
-        try {
-          const _t2 = Date.now();
-          const sheetEntry = _currentYearSheetEntry();
-          let sheetBookings = [];
-
-          if (sheetEntry) {
-            try {
-              sheetBookings = await readJSONAnnuale(sheetEntry.sheetId);
-              syncLog(`⏱ JSON_ANNUALE: ${sheetBookings.length} pren. in ${Date.now()-_t2}ms`, 'syn');
-            } catch(err) {
-              syncLog('⚠ JSON_ANNUALE fallback fogli mensili: ' + err.message, 'wrn');
-              for (let i = 0; i < annualSheets.length; i++) {
-                const entry = annualSheets[i];
-                if (!entry.sheetId) continue;
-                try { sheetBookings.push(...(await readAnnualSheet(entry))); } catch(e2) {}
-                if (i < annualSheets.length-1) await new Promise(r => setTimeout(r, 300));
-              }
-            }
-          }
-
-          // fromFallback=true se non siamo riusciti a leggere JSON_ANNUALE
-          const _fromFallback = sheetBookings.length > 0 && !sheetBookings.some(b => b.fromJSONAnnuale);
-          const _t3 = Date.now();
-          syncLog('Sincronizzazione DB…', 'syn');
-          sheetBookings = await syncWithDatabase(sheetBookings, forcing, _fromFallback);
-          syncLog(`⏱ Sync DB: ${Date.now()-_t3}ms`, 'syn');
-
-          await loadRoomStates();
-          const updated = mergeMultiMonthBookings(sheetBookings);
-
-          // Re-render solo se i dati sono cambiati rispetto a quelli già mostrati
-          const prevIds = new Set(bookings.map(b => b.dbId).filter(Boolean));
-          const newIds  = new Set(updated.map(b => b.dbId).filter(Boolean));
-          const hasChanges = updated.length !== bookings.length
-            || updated.some(b => b.dbId && !prevIds.has(b.dbId))
-            || bookings.some(b => b.dbId && !newIds.has(b.dbId));
-
-          if (hasChanges) {
-            bookings = updated;
-            render();
-            const diff = updated.length - dbActiveFast.length;
-            if (diff !== 0) {
-              showBgToast(diff > 0 ? `↻ +${diff} nuove da foglio` : `↻ ${Math.abs(diff)} rimosse da foglio`);
-            }
-            syncLog(`✓ ${bookings.length} prenotazioni dopo sync foglio`, 'ok');
-          } else {
-            syncLog('✓ Nessuna modifica rilevata dal foglio', 'ok');
-          }
-
-          // Usa il flag calcolato PRIMA del sync — dopo syncWithDatabase
-          // i booking del DB (senza fromJSONAnnuale) diluiscono il check.
-          const fromJSON = !_fromFallback;
-          syncLog(fromJSON ? 'Fonte: JSON_ANNUALE' : 'Fonte: 12 fogli mensili (fallback)', 'inf');
-          saveDbCache(DATABASE_SHEET_ID ? sheetBookings : bookings);
-
-        } catch(e2) {
-          syncLog('⚠ Aggiornamento foglio: ' + e2.message, 'wrn');
-        } finally {
-          hideLoading();
-          setSyncPulsing(false);
-          _lastFullSyncTs = Date.now();
-          startBgSync();
-        }
-      })();
-
-      return; // STEP 1 completato — STEP 2 gira in background
-    }
-
-    // ── PATH senza DB: solo JSON_ANNUALE (come prima) ────────────
-    const sheetEntry = _currentYearSheetEntry();
-    let sheetBookings = [];
-    if (sheetEntry) {
-      syncLog('📖 Lettura JSON_ANNUALE da foglio…', 'syn');
-      showLoading('Lettura JSON_ANNUALE…');
-      try {
-        sheetBookings = await readJSONAnnuale(sheetEntry.sheetId);
-        syncLog(`⏱ JSON_ANNUALE: ${sheetBookings.length} pren. in ${Date.now()-_t0}ms`, 'syn');
-      } catch(err) {
-        for (let i = 0; i < annualSheets.length; i++) {
-          const entry = annualSheets[i];
-          if (!entry.sheetId) continue;
-          showLoading(`Lettura ${entry.label} (${i+1}/${annualSheets.length})…`);
-          try { sheetBookings.push(...(await readAnnualSheet(entry))); } catch(e2) {}
-          if (i < annualSheets.length-1) await new Promise(r => setTimeout(r, 300));
-        }
-      }
-    }
-    await loadRoomStates();
-    bookings = mergeMultiMonthBookings(sheetBookings);
-    hideLoading();
-    render();
-    showToast(`✓ ${bookings.length} prenotazioni`, 'success');
-    syncLog(`✓ ${bookings.length} prenotazioni caricate`, 'ok');
-    saveDbCache(bookings);
-    _lastFullSyncTs = Date.now();
-    startBgSync();
-  } catch(e) {
-    hideLoading();
-    showToast('Errore caricamento: ' + e.message, 'error');
-    syncLog('❌ ' + e.message, 'err');
-    dbg('Errore loadFromSheets: ' + e.message, true);
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// SCRITTURA / CANCELLAZIONE SUL FOGLIO GOOGLE
-// ═══════════════════════════════════════════════════════════════════
-
-function splitBookingByMonth(b) {
-  const fragments = [];
-  let cur = new Date(b.s);
-  const end = new Date(b.e);
-  while (cur < end) {
-    const y = cur.getFullYear(), m = cur.getMonth();
-    const actualEnd = end <= new Date(y, m+1, 0, 12) ? end : new Date(y, m+1, 0, 12);
-    fragments.push({
-      sName:      sheetName(y, m),
-      startDay:   cur.getDate(),
-      endDay:     actualEnd.getDate(),
-      isLastFrag: actualEnd >= end,
-      y, m,
-    });
-    cur = new Date(y, m+1, 1, 12);
-  }
-  return fragments;
-}
-
-// getSheetIdMap, writeFragment, writeBookingToSheet, clearFragment,
-// clearBookingFromSheet, segnalaModificaAdAppsScript rimossi in build .4.3
-// → sostituiti da bridge.js (chiamata GET all'Apps Script Web App)
-
-// ═══════════════════════════════════════════════════════════════════
-// MERGE MULTI-MESE
-// ═══════════════════════════════════════════════════════════════════
-
-function mergeMultiMonthBookings(list) {
-  const sorted = [...list].sort((a,b) => {
-    if (a.r !== b.r) return a.r.localeCompare(b.r);
-    return a.s - b.s;
-  });
-  const merged = [], used = new Set();
-  for (let i = 0; i < sorted.length; i++) {
-    if (used.has(i)) continue;
-    let base = sorted[i];
-    for (let j = i+1; j < sorted.length; j++) {
-      if (used.has(j)) continue;
-      const next = sorted[j];
-      if (base.r !== next.r) break;
-      if (base.n !== next.n || base.c !== next.c || base.d !== next.d) continue;
-      const baseLastDay = new Date(base.e.getFullYear(), base.e.getMonth()+1, 0).getDate();
-      const baseEndsOnLast = base.e.getDate() === baseLastDay;
-      const nextStartsOnFirst = next.s.getDate() === 1;
-      const nextIsFollowing =
-        (next.s.getFullYear()===base.e.getFullYear() && next.s.getMonth()===base.e.getMonth()+1) ||
-        (base.e.getMonth()===11 && next.s.getMonth()===0 && next.s.getFullYear()===base.e.getFullYear()+1);
-      if (baseEndsOnLast && nextStartsOnFirst && nextIsFollowing) {
-        base = { ...base, e: next.e };
-        used.add(j);
-      }
-    }
-    merged.push(base);
-  }
-  return merged;
-}
+    // ═══════════════════════════════════════════════════════════
