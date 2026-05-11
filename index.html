@@ -12,12 +12,14 @@
 <script src="api.js?v=18.10.5"></script>
 <script src="auth.js?v=18.10.5"></script>
 <script src="store.js?v=18.10.5"></script>
+<script src="store-patch.js?v=18.10.5"></script>
 <script src="clienti.js?v=18.10.5"></script>
 <script src="rooms.js?v=18.10.5"></script>
 <script src="gantt.js?v=18.10.5"></script>
 <script src="alloggiati-data.js?v=18.10.5"></script>
 <script src="checkin.js?v=18.10.5"></script>
 <script src="billing.js?v=18.10.5"></script>
+<script src="email.js?v=18.10.5"></script>
 <script src="bridge.js?v=18.10.5"></script>
 <style>
 :root {
@@ -812,6 +814,7 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <button class="btn btn-icon" onclick="openSettings()" title="Impostazioni camere">⚙</button>
   <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
   <button class="btn" id="btnSearch" style="display:none" onclick="openSearch()" title="Cerca prenotazione">🔍</button>
+  <button class="btn" id="btnEmail" onclick="openEmailPanel()" title="Richieste dal sito" style="display:none">📧</button>
   <button class="btn primary" id="btnAdd" style="display:none" onclick="openModal()">+ Nuova</button>
   <img id="userAvatar" class="avatar" style="display:none" title="Logout" onclick="logout()"><span id="userRoleBadge" style="display:none;font-size:14px;cursor:default;margin-left:2px;line-height:1" title="Ruolo utente"></span>
 </div>
