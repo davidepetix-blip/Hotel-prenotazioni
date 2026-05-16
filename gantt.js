@@ -85,8 +85,12 @@ function render() {
         const adj=adjConflict(b).length>0;
         const _billBorder = (typeof billingBorderColor === 'function') ? billingBorderColor(b.dbId || b.id) : null;
         const _borderStyle = _billBorder ? `border-left:3px solid ${_billBorder};` : '';
+        // Pre-prenotazioni da form web: bordo tratteggiato grigio
+        const _isPre = b.fonte === 'form-web' && b.statoPrenotazione === 'pre';
+        const _preBg = _isPre ? '#e5e7eb' : b.c;
+        const _preStyle = _isPre ? 'border:2px dashed #9ca3af;opacity:.9;' : '';
         bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
-          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};${_borderStyle}"
+          style="left:${lx}px;width:${w}px;background:${_preBg};color:${tc};${_borderStyle}${_preStyle}"
           onclick="selBook(${b.id},event)"
           data-bid="${b.id}"
           onmouseenter="if(!('ontouchstart' in window))showTT(event,${b.id})"
@@ -207,12 +211,19 @@ function selBook(id,e){
   </div>`;
   document.getElementById('drtitle').textContent=b.n;
   document.getElementById('drsub').textContent=`CAMERA ${roomName(b.r)} · ${roomGroup(b.r)}`;
+  const isPreBook = b.fonte === 'form-web' && b.statoPrenotazione === 'pre';
   document.getElementById('drbody').innerHTML=`
     ${adjHtml}
+    ${isPreBook ? `
+    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px">
+      <div style="font-weight:700;font-size:13px;color:#92400e;margin-bottom:4px">⏳ PRE-PRENOTAZIONE da form web</div>
+      <div style="color:#92400e">Richiesta non ancora confermata — il cliente aspetta risposta.<br>
+      <b>Email:</b> ${b.note?.match(/[\w.+\-]+@[\w.\-]+\.\w+/)?.[0] || '—'}</div>
+    </div>` : ''}
     <div class="dr-bill-tabs">
       <div class="dr-bill-tab active" onclick="drTab(this,'drTabInfo')">📋 Dettagli</div>
-      <div class="dr-bill-tab" onclick="drTab(this,'drTabBill')">💶 Conto</div>
-      <div class="dr-bill-tab" onclick="drTabCheckin(this,${b.id})">🛎 Check-in</div>
+      ${!isPreBook ? `<div class="dr-bill-tab" onclick="drTab(this,'drTabBill')">💶 Conto</div>` : ''}
+      ${!isPreBook ? `<div class="dr-bill-tab" onclick="drTabCheckin(this,${b.id})">🛎 Check-in</div>` : ''}
     </div>
     <div id="drTabInfo">
     <div class="dcard">
@@ -226,10 +237,20 @@ function selBook(id,e){
       ${b.note?`<div class="drow"><span class="dkey">Note</span><span class="dval">${b.note}</span></div>`:''}
       ${b.fromSheet?`<div class="drow"><span class="dkey">Fonte</span><span class="dval" style="color:var(--success)">📋 Google Sheets</span></div>`:''}
     </div>
+    ${isPreBook ? `
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px">
+      <button class="btn" style="background:#2d6a4f;color:#fff;justify-content:center;font-weight:700;font-size:13px"
+        onclick="confermaPrenotazione(${b.id})">
+        ✅ Conferma prenotazione → scrivi su Gantt
+      </button>
+      <button class="btn danger" onclick="rifiutaPrenotazione(${b.id})" style="justify-content:center">
+        ✕ Rifiuta e cancella
+      </button>
+    </div>` : `
     <div style="display:flex;gap:8px;">
       <button class="btn" onclick="editBook(${b.id})" style="flex:1;justify-content:center;">✎ Modifica</button>
       <button class="btn danger" onclick="delBook(${b.id})" style="flex:1;justify-content:center;">✕ Elimina</button>
-    </div>
+    </div>`}
     <div class="synchint">
       ${(()=>{
         const frags = splitBookingByMonth(b);
@@ -378,6 +399,88 @@ function openDrawer(){
   document.body.style.overflow = 'hidden';
   // Su mobile: dopo 100ms nascondi ancora il tooltip (race condition Android)
   if ('ontouchstart' in window) setTimeout(() => { if(tt) tt.style.display='none'; }, 100);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PRE-PRENOTAZIONI — Conferma / Rifiuta
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Conferma una pre-prenotazione:
+ *   1. Scrive la prenotazione sul foglio grafico via bridgeSalva()
+ *   2. Aggiorna lo statoPrenotazione nel DB → 'confermata'
+ *   3. Cambia il colore da grigio a verde default
+ *   4. Chiude il drawer e ricarica
+ */
+async function confermaPrenotazione(bookingId) {
+  const b = bookings.find(x => x.id === bookingId);
+  if (!b) return;
+  if (!confirm(`Confermare la prenotazione di ${b.n}?
+
+Verrà scritta sul foglio grafico con colore verde e rimossa dallo stato "pre-prenotazione".`)) return;
+
+  showLoading('Conferma in corso…');
+  try {
+    // Scegli colore: se è rimasto grigio (#D9D9D9) usa verde default
+    const colore = (b.c === '#D9D9D9' || b.c === '#d9d9d9') ? '#52B788' : b.c;
+
+    // Costruisci booking da passare al bridge
+    const bConf = {
+      ...b,
+      c: colore,
+      statoPrenotazione: 'confermata',
+      fonte: 'app',
+      note: (b.note || '').replace('⏳ PRE-PREN. da form web — ', '').replace('⏳ PRE-PRENOTAZIONE da form web — ', '').trim(),
+    };
+
+    // Scrivi sul foglio grafico
+    await bridgeSalva(bConf, null);
+
+    // Aggiorna lo stato nel DB
+    if (b.dbRow) {
+      await dbUpdateRow(b.dbRow, bookingToDbRow({
+        ...bConf,
+        dbId: b.dbId,
+        id:   b.id,
+      }, 'app'));
+    }
+
+    hideLoading();
+    showToast(`✅ ${b.n} confermata sul Gantt`, 'success');
+    syncLog(`✅ Pre-prenotazione confermata: ${b.n} (${b.dbId})`, 'ok');
+
+    // Ricarica
+    closeDrawer();
+    setTimeout(() => { loadFromSheets._forceNext = true; loadFromSheets(); }, 1500);
+  } catch(e) {
+    hideLoading();
+    showToast('❌ Errore conferma: ' + e.message, 'error');
+    syncLog('❌ confermaPrenotazione: ' + e.message, 'err');
+  }
+}
+
+/**
+ * Rifiuta una pre-prenotazione:
+ *   1. La cancella dal DB (CESTINO con reason 'Rifiutata')
+ *   2. Chiude il drawer
+ */
+async function rifiutaPrenotazione(bookingId) {
+  const b = bookings.find(x => x.id === bookingId);
+  if (!b) return;
+  if (!confirm(`Rifiutare e cancellare la pre-prenotazione di ${b.n}?
+
+Verrà eliminata. Ricordati di rispondere al cliente.`)) return;
+
+  showLoading('Cancellazione…');
+  try {
+    await delBook(bookingId, true); // true = skip confirm (già confermato sopra)
+    hideLoading();
+    showToast(`Pre-prenotazione di ${b.n} eliminata`, 'info');
+    closeDrawer();
+  } catch(e) {
+    hideLoading();
+    showToast('❌ Errore: ' + e.message, 'error');
+  }
 }
 
 // openRoomDrawer() → rooms.js
@@ -1353,6 +1456,8 @@ function checkW(){
   // Su mobile: la ricerca è dentro fabGroup (già visibile)
   const bs = document.getElementById('btnSearch');
   if (bs) bs.style.display = w ? 'inline-flex' : 'none';
+  const be = document.getElementById('btnEmail');
+  if (be) be.style.display = (w && window.userRole === 'admin') ? 'inline-flex' : 'none';
 }
 window.addEventListener('resize',checkW);
 

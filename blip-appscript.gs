@@ -77,6 +77,11 @@ function onOpen() {
     .addItem('⏹ Rimuovi aggiornamento automatico', 'rimuoviTriggerAutomatico')
     .addSeparator()
     .addItem('🔗 Test Bridge: leggi ultimo log', 'testBridgeLog')
+    .addSeparator()
+    .addItem('📧 Installa trigger email Sicily Divide (ogni 10 min)', 'installaSicilyDivideTrigger')
+    .addItem('📧 Rimuovi trigger email Sicily Divide', 'rimuoviSicilyDivideTrigger')
+    .addItem('📧 Test elaborazione email (manuale)', 'testSicilyDivideEmail')
+    .addItem('📧 Salva DATABASE_SHEET_ID', 'salvaDbSheetIdEmail')
     .addToUi();
 }
 
@@ -264,10 +269,12 @@ function scriviPrenotazioneSuFoglio(payload) {
       }
     }
 
-    // ── Solo cancellazione: rigenera e termina ─────────────────
+    // ── Solo cancellazione: aggiornamento chirurgico e termina ──
     if (payload.action === 'cancella') {
       SpreadsheetApp.flush();
-      aggiornaJSONAnnuale();
+      const annoCancella = dalDate.getFullYear();
+      const aggiornato = _rimuoviDaJSON(ss, payload, annoCancella, log);
+      if (!aggiornato) { aggiornaJSONAnnuale(); } // fallback
       segnaModifica();
       log.push('✓ Cancellazione completata');
       return { ok: true, log };
@@ -283,16 +290,28 @@ function scriviPrenotazioneSuFoglio(payload) {
       throw new Error('Nessuna cella scritta sul foglio. ' + warnings);
     }
 
-    // ── Rigenera JSON_ANNUALE (legge i nuovi colori) ──────────
-    SpreadsheetApp.flush(); // forza scrittura prima della lettura
-    const anno     = dalDate.getFullYear();
-    const segmenti = estraiSegmenti(ss, anno);
-    const merged   = unisciMultiMese(segmenti);
-    salvaJsonAnnuale(ss, merged, anno);
+    // ── Aggiornamento chirurgico JSON_ANNUALE ─────────────────
+    // OTTIMIZZAZIONE PERFORMANCE:
+    // Invece di rileggere tutti i 12 fogli mensili (lento: 15-40s),
+    // modifichiamo solo il/i record interessato/i nel JSON già esistente.
+    // Il trigger rigenera5min rimane come safety net per aggiornamenti completi.
+    SpreadsheetApp.flush();
+    const anno = dalDate.getFullYear();
+    const aggiornato = _aggiornamentoChirurgicoJSON(ss, payload, dalDate, alDate, anno, log);
     segnaModifica();
 
-    log.push('✓ JSON_ANNUALE aggiornato (' + merged.length + ' prenotazioni)');
-    return { ok: true, action: 'scrivi', written: celleScritteCount, log, prenotazioni: merged.length };
+    if (!aggiornato) {
+      // Fallback: rigenerazione completa (solo se l'aggiornamento chirurgico non riesce)
+      log.push('⟳ Fallback: rigenerazione completa JSON_ANNUALE');
+      const segmenti = estraiSegmenti(ss, anno);
+      const merged   = unisciMultiMese(segmenti);
+      salvaJsonAnnuale(ss, merged, anno);
+      log.push('✓ JSON_ANNUALE rigenerato (' + merged.length + ' prenotazioni)');
+      return { ok: true, action: 'scrivi', written: celleScritteCount, log, prenotazioni: merged.length };
+    }
+
+    log.push('✓ JSON_ANNUALE aggiornato (' + aggiornato.totale + ' prenotazioni)');
+    return { ok: true, action: 'scrivi', written: celleScritteCount, log, prenotazioni: aggiornato.totale };
 
   } catch(err) {
     log.push('✗ Errore: ' + err.message);
@@ -1172,4 +1191,679 @@ function isFoglioMensile(nome) {
   if (EXCLUDED_SHEETS.includes(nome)) return false;
   const m=nome.match(/^([A-Za-zÀ-ÖØ-öø-ÿ]+)\s+(\d{4})$/i);
   return m ? (m[1].toLowerCase() in JS_MESI) : false;
+}
+
+
+// =============================================================
+// AGGIORNAMENTO CHIRURGICO JSON_ANNUALE
+// =============================================================
+// Invece di rileggere tutti i 12 fogli mensili (15-40s per foglio
+// con molte prenotazioni), legge il JSON esistente da B2:B13,
+// rimuove i record della camera/periodo modificato, estrae solo
+// il mese interessato dal foglio, e riscrive il JSON aggiornato.
+//
+// Tempo: ~1-3s invece di 15-40s.
+// Safety net: trigger rigenera5min fa la rigenerazione completa.
+// =============================================================
+
+/**
+ * Aggiorna chirurgicamente JSON_ANNUALE dopo una scrittura.
+ * Legge il JSON corrente, sostituisce i record della prenotazione
+ * modificata con i dati freschi letti dal solo foglio mensile.
+ *
+ * @returns {{ totale: number }} oppure null se fallisce
+ */
+function _aggiornamentoChirurgicoJSON(ss, payload, dalDate, alDate, anno, log) {
+  try {
+    var t0 = Date.now();
+    var js = ss.getSheetByName(JS_SHEET_NAME);
+    if (!js) return null;
+
+    // ── 1. Leggi JSON corrente da B2:B13 (12 mesi) ──────────
+    var jsonValues = js.getRange(2, 1, 12, 1).getValues(); // colonna A riga 2-13
+    var perMese = {};
+    var totaleOrig = 0;
+    MESI_NOMI_ARR.forEach(function(m, i) {
+      try {
+        perMese[m] = JSON.parse(jsonValues[i][0] || '[]');
+        totaleOrig += perMese[m].length;
+      } catch(e) { perMese[m] = []; }
+    });
+
+    // ── 2. Determina i mesi interessati dalla prenotazione ───
+    var mesiDaAggiornare = _getMesiRange(dalDate, alDate);
+
+    // ── 3. Per ogni mese interessato: rileggi dal foglio ─────
+    // Rimuovi i record con la stessa camera e blipId dal JSON corrente,
+    // poi aggiungi i record freschi letti dal foglio mensile.
+    var camera = payload.camera;
+    var blipId = payload.blipId;
+
+    for (var mi = 0; mi < mesiDaAggiornare.length; mi++) {
+      var meseNome = mesiDaAggiornare[mi];
+      // Rimuovi record esistenti per questa camera+blipId nel mese
+      perMese[meseNome] = (perMese[meseNome] || []).filter(function(p) {
+        return !(p.camera === camera ||
+                 (p.blipId && p.blipId === blipId));
+      });
+      // Leggi segmenti freschi dal foglio mensile per questa camera
+      var nuoviRecord = _estraiSegmentiCamera(ss, meseNome + ' ' + anno, camera, blipId);
+      perMese[meseNome] = perMese[meseNome].concat(nuoviRecord);
+      // Ordina per data
+      perMese[meseNome].sort(function(a,b) {
+        return parseDataStr(a.dal) - parseDataStr(b.dal);
+      });
+    }
+
+    // ── 4. Riscrivi solo le righe dei mesi modificati ────────
+    var aggiornamenti = [];
+    var totaleFin = 0;
+    var fpValsNew = js.getRange(2, 15, 12, 1).getValues(); // leggi fingerprint esistenti
+
+    MESI_NOMI_ARR.forEach(function(m, i) {
+      totaleFin += perMese[m].length;
+      var isMeseModificato = mesiDaAggiornare.indexOf(m) !== -1;
+      if (isMeseModificato) {
+        var chunk = JSON.stringify(perMese[m]);
+        aggiornamenti.push({ row: 2 + i, json: chunk, mese: m, n: perMese[m].length });
+        // Ricalcola fingerprint per questo mese
+        var hash = 0;
+        for (var k = 0; k < chunk.length; k++) {
+          hash = (hash * 31 + chunk.charCodeAt(k)) & 0xFFFFFF;
+        }
+        fpValsNew[i][0] = perMese[m].length + ':' + hash.toString(16);
+      }
+    });
+
+    // Scrivi JSON aggiornato (solo i mesi modificati)
+    for (var ai = 0; ai < aggiornamenti.length; ai++) {
+      var agg = aggiornamenti[ai];
+      js.getRange(agg.row, 1).setValue(agg.json);
+      js.getRange(agg.row, 2).setValue(agg.mese + ' (' + agg.n + ' pren.)');
+    }
+    // Aggiorna fingerprint
+    js.getRange(2, 15, 12, 1).setValues(fpValsNew);
+    // Aggiorna intestazione con timestamp
+    js.getRange(1, 4).setValue(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm:ss'));
+    js.getRange(1, 5).setValue('Prenotazioni: ' + totaleFin);
+
+    SpreadsheetApp.flush();
+    var ms = Date.now() - t0;
+    log.push('⚡ Aggiornamento chirurgico: ' + aggiornamenti.length + ' mes' + (aggiornamenti.length===1?'e':'i') + ' aggiornati in ' + ms + 'ms');
+    return { totale: totaleFin };
+
+  } catch(e) {
+    log.push('⚠ Aggiornamento chirurgico fallito (' + e.message + ') — fallback a rigenerazione completa');
+    Logger.log('[Chirurgico] ' + e.message + '\n' + (e.stack || ''));
+    return null;
+  }
+}
+
+/**
+ * Rimuove una prenotazione dal JSON_ANNUALE senza rileggere i fogli.
+ */
+function _rimuoviDaJSON(ss, payload, anno, log) {
+  try {
+    var js = ss.getSheetByName(JS_SHEET_NAME);
+    if (!js) return false;
+    var jsonValues = js.getRange(2, 1, 12, 1).getValues();
+    var camera = payload.camera;
+    var blipId = payload.blipId;
+    var dalDate = _parseDataGS(payload.vecchioDal || payload.dal);
+    var alDate  = _parseDataGS(payload.vecchioAl  || payload.al);
+    if (!dalDate) return false;
+    var mesiDaAggiornare = _getMesiRange(dalDate, alDate || dalDate);
+    var fpVals = js.getRange(2, 15, 12, 1).getValues();
+    var totale = 0;
+
+    MESI_NOMI_ARR.forEach(function(m, i) {
+      var arr;
+      try { arr = JSON.parse(jsonValues[i][0] || '[]'); } catch(e) { arr = []; }
+      totale += arr.length;
+      if (mesiDaAggiornare.indexOf(m) === -1) return;
+      var before = arr.length;
+      arr = arr.filter(function(p) {
+        return !(p.camera === camera || (p.blipId && p.blipId === blipId));
+      });
+      if (arr.length === before) return; // nessuna modifica
+      totale -= (before - arr.length);
+      var chunk = JSON.stringify(arr);
+      js.getRange(2 + i, 1).setValue(chunk);
+      js.getRange(2 + i, 2).setValue(m + ' (' + arr.length + ' pren.)');
+      var hash = 0;
+      for (var k = 0; k < chunk.length; k++) hash = (hash * 31 + chunk.charCodeAt(k)) & 0xFFFFFF;
+      fpVals[i][0] = arr.length + ':' + hash.toString(16);
+    });
+
+    js.getRange(2, 15, 12, 1).setValues(fpVals);
+    js.getRange(1, 4).setValue(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm:ss'));
+    SpreadsheetApp.flush();
+    log.push('⚡ Rimozione chirurgica da JSON_ANNUALE');
+    return true;
+  } catch(e) {
+    log.push('⚠ Rimozione chirurgica fallita: ' + e.message);
+    return false;
+  }
+}
+
+/**
+ * Estrae i record di una singola camera dal foglio mensile.
+ * Molto più veloce di estraiSegmenti() che legge tutte le camere.
+ */
+function _estraiSegmentiCamera(ss, sheetName, cameraNome, blipId) {
+  try {
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return [];
+    var maxCol = sheet.getLastColumn();
+    var maxRow = sheet.getLastRow();
+    if (maxCol < JS_FIRST_CAM_COL || maxRow < JS_FIRST_DATA_ROW) return [];
+
+    // Trova la colonna della camera
+    var camRow = sheet.getRange(JS_HEADER_ROW, 1, 1, maxCol).getValues()[0];
+    var colIdx = -1;
+    for (var c = JS_FIRST_CAM_COL - 1; c < camRow.length; c++) {
+      var v = camRow[c];
+      var nome = typeof v === 'number' ? String(Math.round(v)) : String(v).trim();
+      if (nome === cameraNome) { colIdx = c + 1; break; }
+    }
+    if (colIdx === -1) return [];
+
+    // Leggi BLIP_ID dalla riga 46 per questa colonna
+    var blipIdInCell = '';
+    try {
+      blipIdInCell = sheet.getRange(BLIP_ID_ROW, colIdx).getValue() || '';
+      if (blipIdInCell) {
+        try {
+          var map = JSON.parse(blipIdInCell);
+          var keys = Object.keys(map);
+          if (keys.length > 0) blipIdInCell = keys[0]; // prendi il primo BLIP_ID
+        } catch(e) {}
+      }
+    } catch(e) {}
+
+    // Leggi solo la colonna della camera
+    var dataFine = Math.min(maxRow, OUTPUT_ROW - 1);
+    var nRighe = dataFine - JS_FIRST_DATA_ROW + 1;
+    if (nRighe <= 0) return [];
+
+    var dateVals = sheet.getRange(JS_FIRST_DATA_ROW, 1, nRighe, 1).getValues();
+    var colVals  = sheet.getRange(JS_FIRST_DATA_ROW, colIdx, nRighe, 1).getValues();
+    var bgVals   = sheet.getRange(JS_FIRST_DATA_ROW, colIdx, nRighe, 1).getBackgrounds();
+
+    // Ricostruisci segmenti per questa camera
+    var segmenti = [];
+    var cur = null;
+    for (var i = 0; i < nRighe; i++) {
+      var bg = (bgVals[i][0] || '').trim().toLowerCase();
+      var txt = String(colVals[i][0] || '').trim();
+      var dataCell = dateVals[i][0];
+      if (!dataCell) continue;
+      var dataRow = new Date(dataCell); dataRow.setHours(12, 0, 0, 0);
+      var neutro = !bg || bg === '#ffffff' || bg === '#fffffe' || bg === 'white';
+      if (neutro || !txt) {
+        if (cur) { segmenti.push(cur); cur = null; }
+        continue;
+      }
+      if (!cur || cur.colore !== bg) {
+        if (cur) segmenti.push(cur);
+        cur = { camera: cameraNome, colore: bg, start: dataRow, end: dataRow, testi: [txt] };
+      } else {
+        cur.end = dataRow;
+        if (txt && cur.testi.indexOf(txt) === -1) cur.testi.push(txt);
+      }
+    }
+    if (cur) segmenti.push(cur);
+
+    // Converti in formato JSON_ANNUALE
+    return segmenti.map(function(s) {
+      var checkout = new Date(s.end); checkout.setDate(checkout.getDate() + 1);
+      var parsed = parsaTesti(s.testi);
+      var letti = calcolaLetti(parsed.disposizione);
+      return {
+        camera: s.camera, nome: parsed.nome,
+        dal: formatData(s.start), al: formatData(checkout),
+        s: s.start.toISOString(), e: checkout.toISOString(), // per Blip
+        disposizione: parsed.disposizione, note: parsed.note,
+        backgroundColor: s.colore,
+        matrimoniali: letti.m, singoli: letti.s, culle: letti.c, matrimonialiUS: letti.ms,
+        blipId: blipId || blipIdInCell || ''
+      };
+    });
+  } catch(e) {
+    Logger.log('[_estraiSegmentiCamera] ' + e.message);
+    return [];
+  }
+}
+
+/**
+ * Restituisce i nomi dei mesi coperti da un range di date.
+ * Ex: 28/04 → 03/05 → ['Aprile', 'Maggio']
+ */
+function _getMesiRange(dalDate, alDate) {
+  var mesi = [];
+  var cur = new Date(dalDate.getFullYear(), dalDate.getMonth(), 1);
+  var fine = new Date(alDate.getFullYear(), alDate.getMonth(), 1);
+  while (cur <= fine) {
+    var nome = MESI_NOMI_ARR[cur.getMonth()];
+    if (mesi.indexOf(nome) === -1) mesi.push(nome);
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  return mesi;
+}
+
+
+// =============================================================
+// EMAIL RICHIESTE — Sicily Divide + form sito web
+// =============================================================
+// Flusso per ogni email non letta che corrisponde alla query:
+//
+//   Se DISPONIBILE:
+//     → Crea pre-prenotazione grigia sul Gantt
+//     → Invia email di notifica a Davide (stesso account)
+//     → NON risponde al cliente (lo fa Davide personalmente)
+//     → Aggiunge label "Blip-DaRispondere"
+//
+//   Se NON DISPONIBILE:
+//     → Invia risposta automatica al cliente
+//     → Aggiunge label "Blip-NonDisponibile"
+//
+//   In entrambi i casi:
+//     → Marca come letta
+//     → Logga su foglio EMAIL_LOG
+//
+// Account: davide.petix@gmail.com (stesso del login Blip)
+// Trigger: ogni 10 minuti via ScriptApp
+// =============================================================
+
+const SD_SEARCH_QUERY   = 'is:unread from:info@sicilydevide.com OR from:booking@sicilydevide.com OR (is:unread subject:"Richiesta di preventivo soggiorno")';
+const SD_LABEL_RISPONDERE  = 'Blip-DaRispondere';
+const SD_LABEL_NON_DISP    = 'Blip-NonDisponibile';
+const SD_LABEL_ELABORATA   = 'Blip-Elaborata';
+const SD_LOG_SHEET         = 'EMAIL_LOG';
+const SD_MAX_PER_RUN       = 10;
+const SD_PRE_COLOR         = '#D9D9D9'; // grigio
+
+// ── Entry point del trigger ───────────────────────────────────
+function processEmailRequestsTrigger() {
+  try { _processSicilyDivideEmails(); }
+  catch(e) { Logger.log('❌ processEmailRequestsTrigger: ' + e.message); }
+}
+
+function _processSicilyDivideEmails() {
+  var cfg     = _sdLoadConfig();
+  var query   = cfg.emailSearchQuery || SD_SEARCH_QUERY;
+  Logger.log('📧 Email: ricerca — ' + query);
+
+  var threads = GmailApp.search(query, 0, SD_MAX_PER_RUN);
+  if (!threads.length) { Logger.log('📧 Email: nessuna nuova richiesta'); return; }
+  Logger.log('📧 Email: ' + threads.length + ' da elaborare');
+
+  var labelRisp  = _sdEnsureLabel(SD_LABEL_RISPONDERE);
+  var labelNonD  = _sdEnsureLabel(SD_LABEL_NON_DISP);
+  var labelElab  = _sdEnsureLabel(SD_LABEL_ELABORATA);
+
+  for (var i = 0; i < threads.length; i++) {
+    try {
+      _sdProcessThread(threads[i], labelRisp, labelNonD, labelElab, cfg);
+      Utilities.sleep(600);
+    } catch(e) {
+      Logger.log('⚠ Thread ' + threads[i].getId() + ': ' + e.message);
+    }
+  }
+}
+
+function _sdProcessThread(thread, labelRisp, labelNonD, labelElab, cfg) {
+  var msg     = thread.getMessages()[0];
+  var body    = msg.getPlainBody() || msg.getBody().replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ');
+  var from    = msg.getFrom();
+  var subject = msg.getSubject();
+  var toEmail = (from.match(/[\w.+\-]+@[\w.\-]+\.\w+/) || [from])[0];
+
+  Logger.log('📧 Elaboro: "' + subject + '" da ' + toEmail);
+
+  // Parsa il formato Sicily Divide (e fallback formato Aruba)
+  var parsed = _sdParseEmail(body);
+  if (!parsed.valida) {
+    Logger.log('⚠ Campi mancanti — marca letta e skip');
+    thread.markRead();
+    if (labelElab) labelElab.addToThread(thread);
+    return;
+  }
+
+  var fmtD = function(d) { return d ? Utilities.formatDate(d, 'Europe/Rome', 'dd/MM/yyyy') : '?'; };
+  Logger.log('📧 ' + parsed.nome + ' ' + fmtD(parsed.checkin) + '→' + fmtD(parsed.checkout) + ' ' + parsed.persone + ' ospiti');
+
+  // Verifica disponibilità
+  var avail = _checkAvailability(parsed.checkin, parsed.checkout);
+  Logger.log('📧 Disponibilità: ' + avail.camereDisponibili.length + ' camere libere');
+
+  var preBlipId = null;
+  var roomSuggerita = _matchBestRoom(parsed, avail.camereDisponibili);
+
+  if (avail.camereDisponibili.length > 0) {
+    // ── DISPONIBILE: pre-prenotazione + notifica a Davide ────
+    preBlipId = _createPreBookingOnSheet(parsed, roomSuggerita, cfg);
+    _sdNotificaDavide(parsed, avail, roomSuggerita, preBlipId, subject, toEmail, from, cfg);
+    if (labelRisp)  labelRisp.addToThread(thread);
+    Logger.log('✅ Pre-prenotazione creata, notifica inviata a Davide');
+  } else {
+    // ── NON DISPONIBILE: risposta automatica al cliente ──────
+    var risposta = _sdRispostaNoDisponibilita(parsed, cfg);
+    GmailApp.sendEmail(toEmail, 'Re: ' + subject, '', {
+      htmlBody: risposta,
+      name:     cfg.hotelName || 'Il Borgo Montedoro',
+      replyTo:  Session.getActiveUser().getEmail()
+    });
+    if (labelNonD)  labelNonD.addToThread(thread);
+    Logger.log('✅ Risposta "non disponibile" inviata a ' + toEmail);
+  }
+
+  // Marca elaborata in entrambi i casi
+  thread.markRead();
+  if (labelElab) labelElab.addToThread(thread);
+
+  // Log su foglio
+  _sdLogEmail({
+    data:        new Date(),
+    mittente:    toEmail,
+    nome:        parsed.nome,
+    checkin:     fmtD(parsed.checkin),
+    checkout:    fmtD(parsed.checkout),
+    persone:     parsed.persone,
+    disponibile: avail.camereDisponibili.length > 0,
+    camera:      roomSuggerita ? roomSuggerita.nome : '',
+    preBlipId:   preBlipId || '',
+    stato:       avail.camereDisponibili.length > 0 ? 'notifica-davide' : 'risposta-no-disp'
+  });
+}
+
+// ── Parser email Sicily Divide ────────────────────────────────
+// Supporta anche il formato Aruba come fallback
+function _sdParseEmail(body) {
+  var lines  = body.replace(/\r\n/g,'\n').split('\n');
+  var fields = {};
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    // Formato Sicily Divide: "Key: Value" (separatore ": ")
+    var sepSD = line.indexOf(': ');
+    // Formato Aruba: "Key : Value" (separatore " : ")
+    var sepAR = line.indexOf(' : ');
+
+    var sep = -1, offset = 2;
+    if (sepSD >= 0 && (sepAR < 0 || sepSD <= sepAR)) { sep = sepSD; offset = 2; }
+    else if (sepAR >= 0) { sep = sepAR; offset = 3; }
+    if (sep < 0) continue;
+
+    var key = line.slice(0, sep).trim().toLowerCase()
+      .replace(/[àá]/g,'a').replace(/[èé]/g,'e').replace(/[ìí]/g,'i')
+      .replace(/[òó]/g,'o').replace(/[ùú]/g,'u');
+    fields[key] = line.slice(sep + offset).trim();
+  }
+
+  var get = function() {
+    for (var k = 0; k < arguments.length; k++) {
+      if (fields[arguments[k]]) return fields[arguments[k]];
+    }
+    return '';
+  };
+
+  // Date: supporta YYYY-MM-DD (Sicily Divide) e DD/MM/YYYY (Aruba)
+  var parseDate = function(str) {
+    if (!str) return null;
+    // YYYY-MM-DD
+    var m1 = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m1) return new Date(+m1[1], +m1[2]-1, +m1[3], 12, 0, 0);
+    // DD/MM/YYYY
+    var m2 = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m2) return new Date(+m2[3], +m2[2]-1, +m2[1], 12, 0, 0);
+    return null;
+  };
+
+  var nome = get('name','nome e cognome','nome','nominativo');
+  var cognome = get('surname','cognome');
+  if (cognome && nome && !nome.includes(cognome)) nome = nome + ' ' + cognome;
+
+  var checkin  = parseDate(get('check-in date','check-in','data check-in','arrivo','data di check-in'));
+  var checkout = parseDate(get('check-out date','check-out','data check-out','partenza','data di check-out'));
+
+  return {
+    nome:     nome,
+    email:    get('e-mail address','e-mail','email','indirizzo email'),
+    telefono: get('phone','telefono','tel','cellulare'),
+    persone:  parseInt(get('number of guests','numero di persone','persone','ospiti') || '0') || 1,
+    rooms:    parseInt(get('number of rooms','numero camere','camere') || '1') || 1,
+    messaggio: get('message','messaggio','richieste','note'),
+    checkin, checkout,
+    valida:   !!(checkin && checkout && nome),
+  };
+}
+
+// ── Notifica interna a Davide (quando c'è disponibilità) ─────
+function _sdNotificaDavide(parsed, avail, room, preBlipId, oggOriginal, emailCliente, fromOrig, cfg) {
+  var fmtD = function(d) { return d ? Utilities.formatDate(d, 'Europe/Rome', 'dd/MM/yyyy') : '?'; };
+  var notti = avail.notti || Math.round((parsed.checkout - parsed.checkin) / 86400000);
+  var hn    = cfg.hotelName || 'Il Borgo Montedoro';
+  var me    = Session.getActiveUser().getEmail();
+
+  var htmlBody =
+    '<div style="font-family:sans-serif;max-width:600px;border:2px solid #2d6a4f;border-radius:8px;overflow:hidden">' +
+    '<div style="background:#2d6a4f;color:#fff;padding:14px 18px">' +
+    '<b style="font-size:16px">📋 Nuova richiesta — DA RISPONDERE</b>' +
+    '</div>' +
+    '<div style="padding:16px 18px">' +
+    '<table style="width:100%;border-collapse:collapse;font-size:14px">' +
+    '<tr><td style="padding:4px 0;color:#666;width:140px">Cliente</td><td><b>' + parsed.nome + '</b></td></tr>' +
+    '<tr><td style="padding:4px 0;color:#666">Email</td><td><a href="mailto:' + parsed.email + '">' + parsed.email + '</a></td></tr>' +
+    '<tr><td style="padding:4px 0;color:#666">Telefono</td><td>' + (parsed.telefono || '—') + '</td></tr>' +
+    '<tr><td style="padding:4px 0;color:#666">Check-in</td><td><b>' + fmtD(parsed.checkin) + '</b></td></tr>' +
+    '<tr><td style="padding:4px 0;color:#666">Check-out</td><td><b>' + fmtD(parsed.checkout) + '</b> (' + notti + ' notti)</td></tr>' +
+    '<tr><td style="padding:4px 0;color:#666">Ospiti</td><td>' + parsed.persone + (parsed.rooms > 1 ? ' · ' + parsed.rooms + ' camere' : '') + '</td></tr>' +
+    (parsed.messaggio ? '<tr><td style="padding:4px 0;color:#666;vertical-align:top">Messaggio</td><td style="font-style:italic">"' + parsed.messaggio + '"</td></tr>' : '') +
+    '</table>' +
+    (room ? '<div style="margin-top:12px;padding:10px;background:#f0fdf4;border-radius:6px;font-size:13px">' +
+    '✅ <b>Pre-prenotazione creata:</b> Camera ' + room.nome +
+    (preBlipId ? ' · ID: <code>' + preBlipId + '</code>' : '') + '</div>' : '') +
+    '<div style="margin-top:16px;padding:10px;background:#fef9c3;border-radius:6px;font-size:13px">' +
+    '⚠ <b>Ricorda di rispondere al cliente</b> — la pre-prenotazione è in grigio sul Gantt.' +
+    '</div>' +
+    '<div style="margin-top:12px">' +
+    '<a href="mailto:' + parsed.email + '?subject=Re: ' + oggOriginal + '" ' +
+    'style="background:#2d6a4f;color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold">' +
+    '✉ Rispondi al cliente</a>' +
+    '</div>' +
+    '</div>' +
+    '</div>';
+
+  GmailApp.sendEmail(me,
+    '📋 [Blip] Da rispondere: ' + parsed.nome + ' ' + fmtD(parsed.checkin) + '→' + fmtD(parsed.checkout),
+    'Nuova richiesta da rispondere. Vedi email HTML.',
+    { htmlBody: htmlBody, name: 'Blip — ' + hn }
+  );
+}
+
+// ── Risposta automatica al cliente (non disponibile) ─────────
+function _sdRispostaNoDisponibilita(parsed, cfg) {
+  var fmtD = function(d) { return d ? Utilities.formatDate(d, 'Europe/Rome', 'dd/MM/yyyy') : '?'; };
+  var nome = (parsed.nome || '').split(' ')[0];
+  var hn   = cfg.hotelName || 'Il Borgo Montedoro';
+  var tel  = cfg.hotelTel  || '';
+
+  return (
+    'Gentile ' + nome + ',<br><br>' +
+    'la ringraziamo per la sua richiesta di soggiorno presso <b>' + hn + '</b>.<br><br>' +
+    'Purtroppo per il periodo richiesto ' +
+    '(<b>' + fmtD(parsed.checkin) + ' – ' + fmtD(parsed.checkout) + '</b>) ' +
+    'non abbiamo disponibilità.<br><br>' +
+    'La invitiamo a contattarci per verificare date alternative:<br>' +
+    (tel ? '📞 ' + tel + '<br>' : '') +
+    '📧 ' + Session.getActiveUser().getEmail() + '<br><br>' +
+    'Saremo lieti di accoglierla in un altro periodo.<br><br>' +
+    'Cordiali saluti,<br>' +
+    '<b>' + hn + '</b>'
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function _sdEnsureLabel(name) {
+  try {
+    var labels = GmailApp.getUserLabels();
+    for (var i = 0; i < labels.length; i++) {
+      if (labels[i].getName() === name) return labels[i];
+    }
+    return GmailApp.createLabel(name);
+  } catch(e) { return null; }
+}
+
+function _sdLoadConfig() {
+  try {
+    var props  = PropertiesService.getScriptProperties();
+    var dbId   = props.getProperty('DATABASE_SHEET_ID');
+    if (!dbId) return {};
+    var dbSS   = SpreadsheetApp.openById(dbId);
+    var imp    = dbSS.getSheetByName('IMPOSTAZIONI');
+    if (!imp) return {};
+    var rows   = imp.getDataRange().getValues();
+    var map    = {};
+    rows.forEach(function(r) { if (r[0]) map[r[0]] = r[1]; });
+    var bs = {};
+    try { bs = JSON.parse(map['billSettings'] || '{}'); } catch(e) {}
+    return {
+      hotelName:        bs.hotelName    || map['hotelName']    || 'Il Borgo Montedoro',
+      hotelTel:         bs.hotelTel     || map['hotelTel']     || '',
+      emailSearchQuery: bs.emailSearchQuery || map['emailSearchQuery'] || '',
+      geminiApiKey:     bs.geminiApiKey || map['geminiApiKey'] || '',
+    };
+  } catch(e) { return {}; }
+}
+
+function _sdLogEmail(entry) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var log = ss.getSheetByName(SD_LOG_SHEET);
+  if (!log) {
+    log = ss.insertSheet(SD_LOG_SHEET);
+    log.appendRow(['Data','Mittente','Nome','Check-in','Check-out','Ospiti','Disponibile','Camera','BLIP_ID','Stato']);
+    log.getRange(1,1,1,10).setFontWeight('bold').setBackground('#f3f4f6');
+    log.setFrozenRows(1);
+  }
+  log.appendRow([
+    entry.data, entry.mittente, entry.nome,
+    entry.checkin, entry.checkout, entry.persone,
+    entry.disponibile ? '✅' : '❌',
+    entry.camera, entry.preBlipId, entry.stato
+  ]);
+}
+
+// ── Setup trigger ─────────────────────────────────────────────
+function installaSicilyDivideTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'processEmailRequestsTrigger') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('processEmailRequestsTrigger').timeBased().everyMinutes(10).create();
+  SpreadsheetApp.getUi().alert(
+    '✅ Trigger installato!\n\n' +
+    'Le richieste da Sicily Divide saranno elaborate ogni 10 minuti.\n\n' +
+    'Cosa succede:\n' +
+    '• Se disponibile → pre-prenotazione grigia sul Gantt + email di notifica a te\n' +
+    '• Se non disponibile → risposta automatica al cliente\n\n' +
+    'Controlla il foglio EMAIL_LOG per lo storico.'
+  );
+}
+
+function rimuoviSicilyDivideTrigger() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'processEmailRequestsTrigger') { ScriptApp.deleteTrigger(t); n++; }
+  });
+  SpreadsheetApp.getUi().alert(n > 0 ? '✅ Trigger rimosso.' : 'Nessun trigger da rimuovere.');
+}
+
+function testSicilyDivideEmail() {
+  _processSicilyDivideEmails();
+  SpreadsheetApp.getUi().alert('✅ Elaborazione completata. Controlla:\n• Foglio EMAIL_LOG\n• La tua casella (label Blip-DaRispondere)\n• Il Gantt per le pre-prenotazioni');
+}
+
+function salvaDbSheetIdEmail() {
+  var ui   = SpreadsheetApp.getUi();
+  var resp = ui.prompt('Inserisci il DATABASE_SHEET_ID di Blip\n(in Blip → DevTools console → digita: DATABASE_SHEET_ID)');
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  PropertiesService.getScriptProperties().setProperty('DATABASE_SHEET_ID', resp.getResponseText().trim());
+  ui.alert('✅ DATABASE_SHEET_ID salvato.');
+}
+
+
+// ── Pre-prenotazione nel DB (NON sul foglio grafico) ────────────
+// Le pre-prenotazioni vivono solo nel foglio PRENOTAZIONI del DB.
+// Non toccano il foglio grafico → non influenzano JSON_ANNUALE.
+// Il motore di disponibilità le legge dal DB → camera risulta occupata.
+// Quando Davide conferma dal drawer Blip, il bridge scrive sul foglio grafico.
+function _createPreBookingOnSheet(parsed, room, cfg) {
+  if (!room) return null;
+
+  var props = PropertiesService.getScriptProperties();
+  var dbId  = props.getProperty('DATABASE_SHEET_ID');
+  if (!dbId) {
+    Logger.log('⚠ Pre-prenotazione: DATABASE_SHEET_ID non configurato — usa menu "Salva DATABASE_SHEET_ID"');
+    return null;
+  }
+
+  var blipId = 'PRE-' + new Date().getFullYear() + '-' + _randomHash();
+  var fmtD   = function(d) { return Utilities.formatDate(d, 'Europe/Rome', 'dd/MM/yyyy'); };
+  var anno   = parsed.checkin.getFullYear();
+  var disp   = parsed.persone + 's';
+
+  // Schema colonne PRENOTAZIONI (A:O = 15 colonne)
+  // A:ID  B:CAMERA  C:NOME  D:DAL  E:AL  F:DISP  G:NOTE  H:COLORE
+  // I:ANNO  J:FONTE  K:TS  L:DELETED  M:CLIENTE_ID  N:STATO_PREN  O:FONTE2
+  var row = [
+    blipId,
+    room.nome,
+    parsed.nome,
+    fmtD(parsed.checkin),
+    fmtD(parsed.checkout),
+    disp,
+    '⏳ PRE-PREN. form web — ' + (parsed.email || ''),
+    '#D9D9D9',           // grigio — cambierà a verde quando Davide conferma
+    String(anno),
+    'form-web',
+    new Date().toISOString(),
+    '',                  // DELETED
+    '',                  // CLIENTE_ID
+    'pre',               // STATO_PRENOTAZIONE → Blip lo mostra tratteggiato
+    'form-web',          // FONTE extra
+  ];
+
+  try {
+    var dbSS   = SpreadsheetApp.openById(dbId);
+    var prenSh = dbSS.getSheetByName('PRENOTAZIONI');
+    if (!prenSh) {
+      Logger.log('⚠ Foglio PRENOTAZIONI non trovato nel DB');
+      return null;
+    }
+    prenSh.appendRow(row);
+    Logger.log('✅ Pre-prenotazione nel DB: ' + blipId + ' cam.' + room.nome);
+    return blipId;
+  } catch(e) {
+    Logger.log('⚠ _createPreBookingOnSheet: ' + e.message);
+    return null;
+  }
+}
+
+function _randomHash() {
+  return Math.random().toString(36).slice(2, 6).toUpperCase() + '-' +
+         Math.random().toString(36).slice(2, 6).toUpperCase();
+}
+
+function _matchBestRoom(parsed, camereDisponibili) {
+  if (!camereDisponibili || !camereDisponibili.length) return null;
+  // Filtra per numero ospiti
+  var fits = camereDisponibili.filter(function(c) {
+    return !c.maxGuests || c.maxGuests >= (parsed.persone || 1);
+  });
+  var pool = fits.length ? fits : camereDisponibili;
+  // Preferisci camere numeriche (Scuola) per soggiorni brevi
+  var scuola = pool.filter(function(c) { return /^\d+$/.test(c.nome) && parseInt(c.nome) <= 104; });
+  pool = scuola.length ? scuola : pool;
+  pool.sort(function(a, b) { return (a.maxGuests || 99) - (b.maxGuests || 99); });
+  return pool[0] || null;
 }

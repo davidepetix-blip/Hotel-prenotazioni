@@ -10,7 +10,8 @@
 // ═══════════════════════════════════════════════════════════════════
 
 // Aggiorna versione
-if (typeof window !== 'undefined') window._STORE_PATCH = '2';
+if (typeof window !== 'undefined') window._STORE_PATCH = '3';
+const BLIP_VER_STORE = '3'; // patch override
 
 // Override findMatch con Priority 4 corretta
 function findMatch(target, list) {

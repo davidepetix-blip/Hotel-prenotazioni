@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '2'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '3'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -291,6 +291,10 @@ function bookingToDbRow(b, fonte = 'app') {
   arr[DB_COLS.TS-1]         = b.ts || nowISO();
   arr[DB_COLS.DELETED-1]    = b.deleted ? 'true' : '';
   arr[DB_COLS.CLIENTE_ID-1] = b.clienteId || '';
+  // Campo extra (colonna N): statoPrenotazione — 'pre' | 'confermata' | ''
+  arr[13] = b.statoPrenotazione || '';
+  // Campo extra (colonna O): fonte — 'form-web' | 'app' | 'manuale'
+  arr[14] = b.fonte || '';
   return arr;
 }
 
@@ -310,6 +314,7 @@ function dbRowToBooking(row, rowNum) {
   return {
     id:         rowNum * 10000 + 1,
     dbId:       get(DB_COLS.ID),
+    statoPrenotazione: row[13] || '',  // col N
     dbRow:      rowNum,
     r:          room.id,
     cameraName: camName,
@@ -1346,6 +1351,21 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
     // incompleta — non cestinare MAI in questo caso. La prenotazione rimane visibile.
     if (fromFallback) {
       result.push(db); continue;
+    }
+
+    // GUARD pre-prenotazione: mai cestinare — vivono SOLO nel DB,
+    // non appaiono mai nel JSON_ANNUALE (foglio grafico) per design.
+    if (db.fonte === 'form-web' && db.statoPrenotazione === 'pre') {
+      result.push(db); continue;
+    }
+    // GUARD pre-prenotazione confermata: ha appena scritto sul foglio grafico,
+    // il JSON_ANNUALE potrebbe non essere ancora aggiornato → proteggi 24h
+    if (db.fonte === 'form-web' && db.statoPrenotazione === 'confermata' && db.ts) {
+      const eta = Date.now() - new Date(db.ts).getTime();
+      if (eta < 24 * 60 * 60 * 1000) {
+        syncLog(`🛡 Protetta (confermata <24h): ${db.n} (${db.dbId||'?'})`, 'wrn');
+        result.push(db); continue;
+      }
     }
 
     // GUARD recente-DB: non cestinare prenotazioni create/aggiornate negli ultimi 30 giorni

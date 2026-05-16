@@ -34,7 +34,7 @@ window.addEventListener('unhandledrejection', function(e) { dbg('❌ Promise: '+
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════
 const CLIENT_ID = '13060466249-bk4s31a1vanhnd6j0qhequ3d3ptd2b2g.apps.googleusercontent.com';
-const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets';
+const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets'; // Gmail token gestito separatamente in email.js
 
 const DEFAULT_ANNUAL_SHEETS = [
   { year: 2025, sheetId: '', label: '2025' },

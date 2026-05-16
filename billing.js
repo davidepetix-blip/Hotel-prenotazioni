@@ -71,6 +71,13 @@ function billSettingsDefault() {
       { soglia:7,  sconto:10 },
     ],
 
+    // ── Email automatiche ──
+    emailAccount:     'ilborgosrl.montedoro@gmail.com', // account Gmail hotel (diverso dal login)
+    emailSearchQuery: '',  // Query Gmail per cercare richieste (default in email.js)
+    emailIBAN:        '',  // IBAN per bonifico acconto
+    emailAcconto:     '',  // es. "30% del totale" o "100€"
+    emailLabelElaborata: 'Blip-Elaborata', // label Gmail da applicare dopo elaborazione
+
     // ── Ruoli utenti (gestiti dall'admin) ──
     // CSV di email Google separate da virgola
     adminEmails: '',   // es. 'mario@gmail.com,lucia@gmail.com'
@@ -3286,6 +3293,19 @@ function buildContiSettingsForm(cfg) {
           <div style="font-size:10px;color:var(--text3);margin-top:3px">Apps Script → Distribuisci → App web → copia URL</div>
         </div>
         <div class="rate-field" style="grid-column:1/-1">
+          <label>📧 Account email hotel (per richieste automatiche)</label>
+          <input id="cfgEmailAccount" value="${cfg.emailAccount||'ilborgosrl.montedoro@gmail.com'}" placeholder="ilborgosrl.montedoro@gmail.com" style="font-size:11px">
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">Account Gmail dove arrivano le richieste dal sito — diverso dall'account di login</div>
+        </div>
+        <div class="rate-field" style="grid-column:1/-1">
+          <label>💳 IBAN per acconto prenotazioni</label>
+          <input id="cfgEmailIBAN" value="${cfg.emailIBAN||''}" placeholder="IT00X0000000000000000000000" style="font-size:11px;font-family:monospace">
+        </div>
+        <div class="rate-field">
+          <label>Acconto richiesto</label>
+          <input id="cfgEmailAcconto" value="${cfg.emailAcconto||''}" placeholder="es. 100€ o 30% del totale" style="font-size:11px">
+        </div>
+        <div class="rate-field" style="grid-column:1/-1">
           <label>🔑 Chiave API Gemini (OCR check-in)</label>
           <input id="cfgGeminiKey" value="${cfg.geminiApiKey||localStorage.getItem('hotelGeminiApiKey')||''}" placeholder="AIza..." style="font-size:11px;font-family:monospace">
           <div style="font-size:10px;color:var(--text3);margin-top:3px">Salvata sul DB — condivisa su tutti i dispositivi</div>
@@ -3432,7 +3452,10 @@ function saveContiSettings() {
   cfg.pivaHotel    = document.getElementById('cfgHotelPiva')?.value  || '';
   cfg.hotelTel     = document.getElementById('cfgHotelTel')?.value   || '';
   cfg.webAppUrl    = document.getElementById('cfgWebAppUrl')?.value  || '';
-  cfg.geminiApiKey = document.getElementById('cfgGeminiKey')?.value  || '';
+  cfg.geminiApiKey    = document.getElementById('cfgGeminiKey')?.value     || '';
+  cfg.emailAccount    = document.getElementById('cfgEmailAccount')?.value  || '';
+  cfg.emailIBAN       = document.getElementById('cfgEmailIBAN')?.value     || '';
+  cfg.emailAcconto    = document.getElementById('cfgEmailAcconto')?.value  || '';
   if (window.userRole === 'admin') {
     cfg.adminEmails = document.getElementById('cfgAdminEmails')?.value || '';
     cfg.staffEmails = document.getElementById('cfgStaffEmails')?.value || '';
