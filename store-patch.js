@@ -15,8 +15,14 @@ const BLIP_VER_STORE = '3'; // patch override
 
 // Override findMatch con Priority 4 corretta
 function findMatch(target, list) {
-  // PRIORITÀ 1: BLIP_ID dalla riga 46
+  // PRIORITÀ 1: BLIP_ID + camera (gruppi multi-camera: stesso ID su più stanze)
   if (target.dbId) {
+    const camT1 = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
+    const byIdCam = list.find(b =>
+      b.dbId === target.dbId &&
+      (b.cameraName||roomName(b.r)||'').toLowerCase().trim() === camT1
+    );
+    if (byIdCam) return byIdCam;
     const byId = list.find(b => b.dbId === target.dbId);
     if (byId) return byId;
   }

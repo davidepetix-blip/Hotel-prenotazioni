@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '3'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '4'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -1001,7 +1001,16 @@ function _normName(s) {
 
 function findMatch(target, list) {
   // PRIORITÀ 1: match per BLIP_ID dalla riga 46 — match perfetto, immune a spostamenti
+  // Caso gruppo: stesso BLIP_ID su più camere → abbina anche per camera
   if (target.dbId) {
+    const camT1 = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
+    // Prima prova: BLIP_ID + camera (caso gruppo multi-camera)
+    const byIdCam = list.find(b =>
+      b.dbId === target.dbId &&
+      (b.cameraName||roomName(b.r)||'').toLowerCase().trim() === camT1
+    );
+    if (byIdCam) return byIdCam;
+    // Fallback: solo BLIP_ID (prenotazione camera singola, retrocompatibilità)
     const byId = list.find(b => b.dbId === target.dbId);
     if (byId) return byId;
   }
