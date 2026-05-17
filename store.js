@@ -891,8 +891,26 @@ async function readJSONAnnuale(sheetId) {
               idRow.forEach((cell, colI) => {
                 if (!cell || !cell.trim()) return;
                 try {
-                  const idMap = JSON.parse(String(cell).trim());
-                  if (typeof idMap === 'object' && !Array.isArray(idMap)) {
+                  const raw46 = String(cell).trim();
+                  const idMap = JSON.parse(raw46);
+                  if (Array.isArray(idMap)) {
+                    // Cella riga 46 corrotta: contiene un array di booking (formato JSON_ANNUALE)
+                    // invece del formato mappa BLIP_ID {"PRE-xxx":[dal,al]}.
+                    // Causa probabile: processJsonBatchProcessing o startBatchProcessing
+                    // ha scritto dati nella riga sbagliata.
+                    // La cella va ripulita: se ha un nome camera noto, logghiamo per debug.
+                    const camName = colToCamera[colI] || ('col' + (colI+2));
+                    syncLog('⚠ Riga 46 corrotta in ' + sn + ' cam.' + camName + ' — contiene array JSON_ANNUALE invece di BLIP_ID map. Esegui backfillRow46() per riparare.', 'wrn');
+                    // Prova a recuperare BLIP_ID dal contenuto dell'array
+                    idMap.forEach(function(booking) {
+                      if (booking && booking.blipId && String(booking.blipId).startsWith('PRE-')) {
+                        _row46BlipIds.add(booking.blipId);
+                        const camN = colToCamera[colI] || '';
+                        const dal  = booking.dal || '';
+                        if (camN && dal) _row46BookingMap[sn + '|' + camN + '|' + dal] = booking.blipId;
+                      }
+                    });
+                  } else if (typeof idMap === 'object' && idMap !== null) {
                     const camName = colToCamera[colI] || '';
                     Object.entries(idMap).forEach(([k, v]) => {
                       if (!k.startsWith('PRE-')) return;

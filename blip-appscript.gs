@@ -79,6 +79,8 @@ function onOpen() {
     .addItem('🔗 Test Bridge: leggi ultimo log', 'testBridgeLog')
     .addSeparator()
     .addItem('📧 Installa trigger email Sicily Divide (ogni 10 min)', 'installaSicilyDivideTrigger')
+    .addItem('📧 Mostra trigger esistenti', 'mostraTriggerEsistenti')
+    .addItem('📧 Elimina TUTTI i trigger', 'eliminaTuttiITrigger')
     .addItem('📧 Rimuovi trigger email Sicily Divide', 'rimuoviSicilyDivideTrigger')
     .addItem('📧 Test elaborazione email (manuale)', 'testSicilyDivideEmail')
     .addItem('📧 Salva DATABASE_SHEET_ID', 'salvaDbSheetIdEmail')
@@ -743,7 +745,10 @@ function processSingleColumnBookings(sheet, column) {
     if (lastD) { lastD.setDate(lastD.getDate()+1); currentRes.al = Utilities.formatDate(lastD,Session.getScriptTimeZone(),"dd/MM/yyyy"); }
     validateAndPush(bookings, currentRes, sheet, startRow, column);
   }
-  sheet.getRange(OUTPUT_ROW, column).setValue(JSON.stringify(bookings));
+  // Scrivi JSON del booking in riga OUTPUT_ROW (45)
+  // GUARDIA: non scrivere mai nella riga BLIP_ID_ROW (46) — contiene i BLIP_IDs
+  const outputRow = Math.min(OUTPUT_ROW, BLIP_ID_ROW - 1); // mai superare riga 45
+  sheet.getRange(outputRow, column).setValue(JSON.stringify(bookings));
   reapplySundayBordersToColumn(sheet, column, dates);
 }
 
@@ -1219,8 +1224,9 @@ function _aggiornamentoChirurgicoJSON(ss, payload, dalDate, alDate, anno, log) {
     var js = ss.getSheetByName(JS_SHEET_NAME);
     if (!js) return null;
 
-    // ── 1. Leggi JSON corrente da B2:B13 (12 mesi) ──────────
-    var jsonValues = js.getRange(2, 1, 12, 1).getValues(); // colonna A riga 2-13
+    // ── 1. Leggi JSON corrente da colonna B, righe 2-13 ─────
+    // IMPORTANTE: la colonna A contiene i label (nomi mesi), il JSON è in colonna B
+    var jsonValues = js.getRange(2, 1, 12, 1).getValues(); // colonna A riga 2-13 (JSON)
     var perMese = {};
     var totaleOrig = 0;
     MESI_NOMI_ARR.forEach(function(m, i) {
@@ -1275,13 +1281,12 @@ function _aggiornamentoChirurgicoJSON(ss, payload, dalDate, alDate, anno, log) {
       }
     });
 
-    // Scrivi JSON aggiornato (solo i mesi modificati)
+    // Scrivi JSON aggiornato (solo i mesi modificati) — colonna A
     for (var ai = 0; ai < aggiornamenti.length; ai++) {
       var agg = aggiornamenti[ai];
       js.getRange(agg.row, 1).setValue(agg.json);
       js.getRange(agg.row, 2).setValue(agg.mese + ' (' + agg.n + ' pren.)');
     }
-    // Aggiorna fingerprint
     js.getRange(2, 15, 12, 1).setValues(fpValsNew);
     // Aggiorna intestazione con timestamp
     js.getRange(1, 4).setValue(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm:ss'));
@@ -1306,7 +1311,7 @@ function _rimuoviDaJSON(ss, payload, anno, log) {
   try {
     var js = ss.getSheetByName(JS_SHEET_NAME);
     if (!js) return false;
-    var jsonValues = js.getRange(2, 1, 12, 1).getValues();
+    var jsonValues = js.getRange(2, 1, 12, 1).getValues(); // colonna A (JSON)
     var camera = payload.camera;
     var blipId = payload.blipId;
     var dalDate = _parseDataGS(payload.vecchioDal || payload.dal);
@@ -1756,18 +1761,52 @@ function _sdLogEmail(entry) {
 
 // ── Setup trigger ─────────────────────────────────────────────
 function installaSicilyDivideTrigger() {
+  var ui = SpreadsheetApp.getUi();
+
+  // Rimuovi solo eventuali duplicati del trigger email (non toccare gli altri)
+  var duplicati = 0;
   ScriptApp.getProjectTriggers().forEach(function(t) {
-    if (t.getHandlerFunction() === 'processEmailRequestsTrigger') ScriptApp.deleteTrigger(t);
+    if (t.getHandlerFunction() === 'processEmailRequestsTrigger') {
+      ScriptApp.deleteTrigger(t);
+      duplicati++;
+    }
   });
-  ScriptApp.newTrigger('processEmailRequestsTrigger').timeBased().everyMinutes(10).create();
-  SpreadsheetApp.getUi().alert(
-    '✅ Trigger installato!\n\n' +
+
+  // Installa il trigger email
+  ScriptApp.newTrigger('processEmailRequestsTrigger')
+    .timeBased().everyMinutes(10).create();
+
+  var totale = ScriptApp.getProjectTriggers().length;
+  ui.alert(
+    '✅ Trigger email installato!\n\n' +
+    'Trigger attivi ora: ' + totale + '/20\n' +
+    (duplicati > 0 ? '(' + duplicati + ' duplicati rimossi)\n\n' : '\n') +
     'Le richieste da Sicily Divide saranno elaborate ogni 10 minuti.\n\n' +
     'Cosa succede:\n' +
-    '• Se disponibile → pre-prenotazione grigia sul Gantt + email di notifica a te\n' +
-    '• Se non disponibile → risposta automatica al cliente\n\n' +
+    '• Disponibile → pre-prenotazione grigia sul Gantt + email di notifica a te\n' +
+    '• Non disponibile → risposta automatica al cliente\n\n' +
     'Controlla il foglio EMAIL_LOG per lo storico.'
   );
+}
+
+function mostraTriggerEsistenti() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var elenco = triggers.length === 0
+    ? 'Nessun trigger installato.'
+    : triggers.map(function(t, i) {
+        return (i+1) + '. ' + t.getHandlerFunction() +
+               ' — ogni ' + (t.getTriggerSource() === ScriptApp.TriggerSource.CLOCK ? 'X min' : 'evento');
+      }).join('\n');
+  SpreadsheetApp.getUi().alert('Trigger esistenti (' + triggers.length + '/20):\n\n' + elenco);
+}
+
+function eliminaTuttiITrigger() {
+  var ui = SpreadsheetApp.getUi();
+  var ok = ui.alert('⚠ Eliminare TUTTI i trigger?\nDovrai reinstallarli manualmente.', ui.ButtonSet.YES_NO);
+  if (ok !== ui.Button.YES) return;
+  var n = ScriptApp.getProjectTriggers().length;
+  ScriptApp.getProjectTriggers().forEach(function(t) { ScriptApp.deleteTrigger(t); });
+  ui.alert('✅ Eliminati ' + n + ' trigger.');
 }
 
 function rimuoviSicilyDivideTrigger() {
