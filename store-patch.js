@@ -1,30 +1,35 @@
 // ═══════════════════════════════════════════════════════════════════
-// store-patch.js — Patch per store.js
-// Caricato DOPO store.js — sovrascrive solo le funzioni corrette.
-// Dimensione minima per deploy mobile.
+// store-patch.js — Patch per store.js v4
+// Caricato DOPO store.js — sovrascrive findMatch.
 //
-// Fix inclusi:
-//   1. findMatch Priority 4 — overlap multi-mese + camera normalizzata
-//   2. esportaLogSessione — mostra BLIP_VER_STORE/ROOMS/API/AUTH
-//   3. BLIP_VER_STORE aggiornato a '2'
+// IMPORTANTE: NON usa `const` per variabili già dichiarate in store.js.
+// `const` non può essere ridichiarata nello stesso scope — causerebbe
+// SyntaxError e il file non verrebbe eseguito affatto.
 // ═══════════════════════════════════════════════════════════════════
 
-// Aggiorna versione
-if (typeof window !== 'undefined') window._STORE_PATCH = '4';
-const BLIP_VER_STORE = '4'; // fix: findMatch P1 BLIP_ID+camera per gruppi multi-stanza
+// Traccia versione patch senza ridichiarare const
+window._blipStorePatch = '4';
 
-// Override findMatch con Priority 4 corretta
+// Prova a sovrascrivere BLIP_VER_STORE (funziona solo se dichiarato var/let)
+try { BLIP_VER_STORE = '4-patch'; } catch(e) {}
+
+// ═══════════════════════════════════════════════════════════════════
+// Override findMatch
+// In vanilla JS (script non-module), le function declaration vengono
+// ridichiarate senza errori — l'ultima definizione vince.
+// ═══════════════════════════════════════════════════════════════════
+
 function findMatch(target, list) {
-  // PRIORITÀ 1: BLIP_ID + camera (gruppi multi-camera: stesso ID su più stanze)
+  // PRIORITÀ 1: BLIP_ID + camera
   if (target.dbId) {
-    const camT1 = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
-    const byIdCam = list.find(b =>
+    const c1 = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
+    const m1 = list.find(b =>
       b.dbId === target.dbId &&
-      (b.cameraName||roomName(b.r)||'').toLowerCase().trim() === camT1
+      (b.cameraName || roomName(b.r) || '').toLowerCase().trim() === c1
     );
-    if (byIdCam) return byIdCam;
-    const byId = list.find(b => b.dbId === target.dbId);
-    if (byId) return byId;
+    if (m1) return m1;
+    const m1b = list.find(b => b.dbId === target.dbId);
+    if (m1b) return m1b;
   }
 
   const camT  = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
@@ -35,7 +40,7 @@ function findMatch(target, list) {
   // PRIORITÀ 2: nome + camera + data esatta
   let m = list.find(b => {
     if (_normName(b.n) !== nomT) return false;
-    if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
+    if ((b.cameraName || roomName(b.r) || '').toLowerCase().trim() !== camT) return false;
     return Math.round((b.s?.getTime?.() || 0) / DAY_MS) === dayT;
   });
   if (m) return m;
@@ -43,24 +48,35 @@ function findMatch(target, list) {
   // PRIORITÀ 3: fuzzy ±1 giorno
   m = list.find(b => {
     if (_normName(b.n) !== nomT) return false;
-    if ((b.cameraName||roomName(b.r)||'').toLowerCase().trim() !== camT) return false;
-    if (dispT && (b.d||'').trim().toLowerCase() !== dispT) return false;
+    if ((b.cameraName || roomName(b.r) || '').toLowerCase().trim() !== camT) return false;
+    if (dispT && (b.d || '').trim().toLowerCase() !== dispT) return false;
     return Math.abs(Math.round((b.s?.getTime?.() || 0) / DAY_MS) - dayT) <= 1;
   });
   if (m) return m;
 
-  // PRIORITÀ 4: overlap multi-mese — il frammento ha data inizio = 1° del mese
-  // ma il record DB ha la data di inizio reale (es. 15 aprile).
-  // Guard disposizione: se entrambi hanno disp. esplicita diversa → booking distinti.
+  // PRIORITÀ 4: overlap multi-mese ±1 giorno + normalizzazione camera
   const sT = target.s?.getTime?.() || 0;
   const eT = target.e?.getTime?.() || 0;
   const yT = target.s ? new Date(target.s).getFullYear() : 0;
   const dT = (target.d || '').trim().toLowerCase();
-
-  // Normalizza camera: "Camera 1"→"1", "cam.1"→"1", "01"→"1"
-  const _nc = c => String(c||'').toLowerCase().trim()
+  const nc = c => String(c || '').toLowerCase().trim()
     .replace(/^camera\s+/, '').replace(/^cam\.\s*/, '').replace(/^0+(?=\d)/, '').trim();
-  const camTN = _nc(camT);
+  const camTN = nc(camT);
+
+  m = list.find(b => {
+    if (_normName(b.n) !== nomT) return false;
+    if (nc(b.cameraName || roomName(b.r) || '') !== camTN) return false;
+    const dDb = (b.d || '').trim().toLowerCase();
+    if (dDb && dT && dDb !== dT) return false;
+    const sDb = b.s?.getTime?.() || 0;
+    const eDb = b.e?.getTime?.() || 0;
+    if (b.s && new Date(b.s).getFullYear() !== yT) return false;
+    return sDb < eT + DAY_MS && eDb + DAY_MS >= sT;
+  });
+  return m || null;
+}
+
+console.log('[Blip] store-patch v4 attiva — findMatch P1+P4 corretti');  const camTN = _nc(camT);
 
   m = list.find(b => {
     if (_normName(b.n) !== nomT) return false;
