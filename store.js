@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '5'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '6'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -253,7 +253,8 @@ async function dbBatchAppendRows(rowsArray) {
 async function dbUpdateRow(rowNum, values) {
   const id = DATABASE_SHEET_ID;
   if (!id) throw new Error('DATABASE_SHEET_ID non configurato.');
-  const lastCol = values.length >= 13 ? 'N' : 'L';
+  // Mai scrivere oltre colonna M (13) — evita espansione orizzontale del foglio
+  const lastCol = 'M';
   const range = `${DB_SHEET_NAME}!A${rowNum}:${lastCol}${rowNum}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
   const r = await apiFetch(url, {
@@ -291,10 +292,11 @@ function bookingToDbRow(b, fonte = 'app') {
   arr[DB_COLS.TS-1]         = b.ts || nowISO();
   arr[DB_COLS.DELETED-1]    = b.deleted ? 'true' : '';
   arr[DB_COLS.CLIENTE_ID-1] = b.clienteId || '';
-  // Campo extra (colonna N): statoPrenotazione — 'pre' | 'confermata' | ''
-  arr[13] = b.statoPrenotazione || '';
-  // Campo extra (colonna O): fonte — 'form-web' | 'app' | 'manuale'
-  arr[14] = b.fonte || '';
+  // IMPORTANTE: non aggiungere colonne oltre l'indice 12 (colonna M = CLIENTE_ID).
+  // bookingToDbRow deve restituire ESATTAMENTE 13 elementi.
+  // Aggiungere colonne extra causa espansione orizzontale del foglio con :append
+  // → i batch successivi vengono scritti sempre più a destra → corruzione DB.
+  // statoPrenotazione e fonte sono letti da dbRowToBooking via campo fonte (col J).
   return arr;
 }
 
@@ -314,7 +316,7 @@ function dbRowToBooking(row, rowNum) {
   return {
     id:         rowNum * 10000 + 1,
     dbId:       get(DB_COLS.ID),
-    statoPrenotazione: row[13] || '',  // col N
+    statoPrenotazione: row[13] || '',  // col N (solo se presente)
     dbRow:      rowNum,
     r:          room.id,
     cameraName: camName,
