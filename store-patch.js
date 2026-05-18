@@ -1,26 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════
-// store-patch.js — Patch per store.js v4
+// store-patch.js — Patch per store.js v5
 // Caricato DOPO store.js — sovrascrive findMatch.
 //
-// IMPORTANTE: NON usa `const` per variabili già dichiarate in store.js.
-// `const` non può essere ridichiarata nello stesso scope — causerebbe
-// SyntaxError e il file non verrebbe eseguito affatto.
+// NON usa `const` per variabili già dichiarate in store.js.
+// `const` ridichiarata → SyntaxError → file ignorato silenziosamente.
 // ═══════════════════════════════════════════════════════════════════
 
-// Traccia versione patch senza ridichiarare const
-window._blipStorePatch = '4';
-
-// Prova a sovrascrivere BLIP_VER_STORE (funziona solo se dichiarato var/let)
-try { BLIP_VER_STORE = '4-patch'; } catch(e) {}
-
-// ═══════════════════════════════════════════════════════════════════
-// Override findMatch
-// In vanilla JS (script non-module), le function declaration vengono
-// ridichiarate senza errori — l'ultima definizione vince.
-// ═══════════════════════════════════════════════════════════════════
+window._blipStorePatch = '5';
+try { BLIP_VER_STORE = '5-patch'; } catch(e) {}
 
 function findMatch(target, list) {
-  // PRIORITÀ 1: BLIP_ID + camera
+  // P1: BLIP_ID + camera (gruppi multi-camera)
   if (target.dbId) {
     const c1 = (target.cameraName || roomName(target.r) || '').toLowerCase().trim();
     const m1 = list.find(b =>
@@ -37,7 +27,7 @@ function findMatch(target, list) {
   const dayT  = Math.round((target.s?.getTime?.() || 0) / DAY_MS);
   const dispT = (target.d || '').trim().toLowerCase();
 
-  // PRIORITÀ 2: nome + camera + data esatta
+  // P2: nome + camera + data esatta
   let m = list.find(b => {
     if (_normName(b.n) !== nomT) return false;
     if ((b.cameraName || roomName(b.r) || '').toLowerCase().trim() !== camT) return false;
@@ -45,7 +35,7 @@ function findMatch(target, list) {
   });
   if (m) return m;
 
-  // PRIORITÀ 3: fuzzy ±1 giorno
+  // P3: fuzzy ±1 giorno
   m = list.find(b => {
     if (_normName(b.n) !== nomT) return false;
     if ((b.cameraName || roomName(b.r) || '').toLowerCase().trim() !== camT) return false;
@@ -54,7 +44,7 @@ function findMatch(target, list) {
   });
   if (m) return m;
 
-  // PRIORITÀ 4: overlap multi-mese ±1 giorno + normalizzazione camera
+  // P4: overlap multi-mese ±1 giorno + normalizzazione camera
   const sT = target.s?.getTime?.() || 0;
   const eT = target.e?.getTime?.() || 0;
   const yT = target.s ? new Date(target.s).getFullYear() : 0;
@@ -76,4 +66,4 @@ function findMatch(target, list) {
   return m || null;
 }
 
-console.log('[Blip] store-patch v4 attiva — findMatch P1+P4 corretti');
+console.log('[Blip] store-patch v5 — findMatch P1+P4 + no const redecl');

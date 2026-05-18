@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '4'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '5'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -1484,16 +1484,23 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
   const dbActiveCount = dbActive.length;
   syncLog(`DB: ${result.length} prenotazioni attive, rimossi ${toArchive.length}`, 'db');
 
-  // Scrivi BLIP_ID nella riga 46 per le prenotazioni nuove (fire & forget)
-  // Skip se l'import era grande: il token bucket è già sotto pressione e
-  // writeBlipIdsToRow46 farebbe scattare 429. Il bridge gestisce riga 46 lato Apps Script.
+  // ── Registra nuovi BLIP_ID in memoria E scrivi riga 46 ──────────────
+  // CRITICO: i nuovi BLIP_ID vanno aggiunti a _row46BlipIds SUBITO in memoria.
+  // Senza questo, al sync successivo findMatch P1 non li trova → re-importati
+  // → ciclo infinito "18 nuove prenotazioni" ad ogni sync.
+  // La scrittura fisica su foglio avviene in background (fire & forget),
+  // ma la protezione in memoria è immediata e spezza il ciclo.
+  if (toAddToDB.length > 0) {
+    toAddToDB.forEach(b => { if (b.dbId) _row46BlipIds.add(b.dbId); });
+    syncLog(`✓ ${toAddToDB.length} nuovi BLIP_ID aggiunti a _row46BlipIds (protezione immediata)`, 'ok');
+  }
   const toWriteRow46 = toAddToDB.filter(b => b.dbId && b._sheetCol && b.sheetName && b.sheetId);
-  if (toWriteRow46.length > 0 && toWriteRow46.length <= 10 && addSkipped === 0) {
+  if (toWriteRow46.length > 0) {
+    // Scrivi sempre — il token bucket gestisce il rate limiting
     writeBlipIdsToRow46(toWriteRow46).catch(e =>
       syncLog('⚠ Scrittura riga 46: ' + e.message, 'wrn')
     );
-  } else if (toWriteRow46.length > 10) {
-    syncLog(`⏭ Scrittura riga 46 rinviata (${toWriteRow46.length} celle — evita 429)`, 'syn');
+    syncLog(`📝 Scrittura riga 46: ${toWriteRow46.length} celle (fire & forget)`, 'syn');
   }
 
   return result;
