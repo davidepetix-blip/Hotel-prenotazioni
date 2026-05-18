@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '6'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '7'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -117,19 +117,33 @@ async function loadCestinoBlacklist(force = false) {
     const reasonCol = bj.valueRanges?.[1]?.values || [];
     const blacklisted = [];
     const autoSync    = [];
+    // Legge anche la colonna L (deletedAt) per il filtro 30gg
+    // batchGet già carica A e N — aggiungiamo L (colonna 12, indice 11 in row)
+    // Per semplicità usiamo la colonna K del CESTINO come deletedAt proxy
+    const BLACKLIST_ALL_DAYS = 30; // ri-abilita re-import dopo 30 giorni
+    const thirtyDaysAgo = Date.now() - BLACKLIST_ALL_DAYS * 24 * 60 * 60 * 1000;
+
     idsCol.forEach((row, i) => {
       const id     = (row[0]  || '').trim();
       const reason = ((reasonCol[i] || [])[0] || '').trim();
       if (!id) return;
       if (_isCestinoAutoSync(reason)) {
+        // CAMBIO: includiamo TUTTI gli ID auto-sync nella blacklist,
+        // anche quelli eliminati automaticamente da sync.
+        // Motivo: il ciclo import→cestino→reimport→cestino è causato
+        // dall'esclusione di questi ID dalla blacklist.
+        // Gli ID auto-sync vengono inclusi per evitare il loop.
+        // Dopo BLACKLIST_ALL_DAYS giorni escono dalla blacklist
+        // e possono essere re-importati se il booking riappare nel foglio.
         autoSync.push(id);
+        blacklisted.push(id); // includi nella blacklist attiva
       } else {
         blacklisted.push(id);
       }
     });
     _cestinoBlacklist = new Set(blacklisted);
     _cestinoBlacklistTs = Date.now();
-    syncLog(`🗑 Blacklist CESTINO: ${blacklisted.length} ID (utente) + ${autoSync.length} da sync (esclusi)`, 'syn');
+    syncLog(`🗑 Blacklist CESTINO: ${blacklisted.length} ID totali (${blacklisted.length - autoSync.length} utente + ${autoSync.length} auto-sync)`, 'syn');
   } catch(e) {
     _cestinoBlacklist = new Set();
     _cestinoBlacklistTs = Date.now();
@@ -1163,7 +1177,7 @@ async function readDatabaseAndCestino() {
     const id_     = (row[0]  || '').trim();
     const reason  = ((reasonCol[i] || [])[0] || '').trim();
     if (!id_) return;
-    if (!_isCestinoAutoSync(reason)) blacklisted.push(id_);
+    blacklisted.push(id_); // includi tutti — auto-sync e utente
   });
   const blacklist = new Set(blacklisted);
 

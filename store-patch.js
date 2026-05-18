@@ -1,5 +1,5 @@
-window._blipStorePatch = '6';
-try { BLIP_VER_STORE = '6-patch'; } catch(e) {}
+window._blipStorePatch = '7';
+try { BLIP_VER_STORE = '7-patch'; } catch(e) {}
 
 function findMatch(target, list) {
   if (target.dbId) {
@@ -48,4 +48,4 @@ function findMatch(target, list) {
   });
   return m || null;
 }
-console.log('[Blip] store-patch v6');
+console.log('[Blip] store-patch v7 — blacklist completa + findMatch P1-P4');
