@@ -76,19 +76,4 @@ function findMatch(target, list) {
   return m || null;
 }
 
-console.log('[Blip] store-patch v4 attiva — findMatch P1+P4 corretti');  const camTN = _nc(camT);
-
-  m = list.find(b => {
-    if (_normName(b.n) !== nomT) return false;
-    if (_nc(b.cameraName || roomName(b.r) || '') !== camTN) return false;
-    const dDb = (b.d || '').trim().toLowerCase();
-    if (dDb && dT && dDb !== dT) return false;
-    const sDb = b.s?.getTime?.() || 0;
-    const eDb = b.e?.getTime?.() || 0;
-    const yDb = b.s ? new Date(b.s).getFullYear() : 0;
-    if (yDb !== yT) return false;
-    // ±1 giorno per gestire frammenti adiacenti a cambio mese
-    return sDb < eT + DAY_MS && eDb + DAY_MS >= sT;
-  });
-  return m || null;
-}
+console.log('[Blip] store-patch v4 attiva — findMatch P1+P4 corretti');
