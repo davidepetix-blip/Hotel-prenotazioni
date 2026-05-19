@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '38'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '39'; // ← incrementa ad ogni modifica
 
 // BILL_SETTINGS_KEY definita in core.js
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -98,6 +98,7 @@ function billSettingsDefault() {
       { id:'cambioLenzuola', label:'🛏 Cambio lenzuola',   prezzo:0,  unita:'volta'   },
       { id:'luce',           label:'⚡ Consumo elettrico',  prezzo:0,  unita:'kwh'     },
       { id:'acqua',          label:'💧 Consumo idrico',     prezzo:0,  unita:'mc'      },
+      { id:'sconto',         label:'🏷 Sconto',              prezzo:0,  unita:'volta', tipo:'sconto' },
     ],
   };
 }
@@ -1012,8 +1013,11 @@ function calcolaConto(booking, extraRows = []) {
 
   for (const ex of extraRows) {
     const tot = parseFloat((ex.qty * ex.unitPrice).toFixed(2));
-    // Le extra hanno aliquota 22% salvo override esplicito sulla riga
-    righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:tot, tipo:'extra', iva: ex.iva ?? ivaExtra });
+    // Sconti: tipo:'sconto', IVA uguale al pernottamento, totale negativo
+    // Extra normali: IVA 22% salvo override
+    const tipoRiga = ex.tipo === 'sconto' ? 'sconto' : 'extra';
+    const ivaRiga  = ex.tipo === 'sconto' ? ivaBase : (ex.iva ?? ivaExtra);
+    righe.push({ label:ex.label, qty:ex.qty, unitPrice:ex.unitPrice, total:tot, tipo:tipoRiga, iva: ivaRiga, pct: ex.pct });
     subtotale += tot;
   }
 
@@ -1290,6 +1294,30 @@ function renderDrawerBill(b) {
         <button class="btn" onclick="addExtraVoce(${b.id})">+</button>
       </div>`;
 
+  // Sezione sconto — disponibile per tutti i tipi di prenotazione
+  const scontoHtml = `
+    <div class="conti-section-title" style="margin-top:10px;display:flex;align-items:center;gap:6px">
+      🏷 Sconto
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <select id="scontoTipo_${b.id}" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);min-width:130px"
+        onchange="(function(){
+          const t=document.getElementById('scontoTipo_${b.id}').value;
+          const lbl=document.getElementById('scontoValLbl_${b.id}');
+          if(lbl) lbl.textContent = t==='percentuale' ? '%' : '€';
+        })()">
+        <option value="importo">Importo fisso</option>
+        <option value="percentuale">Percentuale %</option>
+      </select>
+      <input type="number" id="scontoVal_${b.id}" placeholder="0" min="0" step="0.01"
+        style="width:80px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right">
+      <span id="scontoValLbl_${b.id}" style="font-size:12px;color:var(--text3);min-width:16px">€</span>
+      <button class="btn" onclick="addScontoVoce(${b.id})"
+        style="padding:5px 14px;font-size:12px;background:var(--danger,#e53e3e);color:#fff;border:none;border-radius:6px;cursor:pointer">
+        − Applica sconto
+      </button>
+    </div>`;
+
   // Consumo elettrico/idrico (solo se extra configurato con unita kwh/mc)
   const consumiHtml = !isAppart ? '' : `
     <div class="conti-section-title" style="margin-top:10px">Consumi (lettura contatori)</div>
@@ -1374,7 +1402,7 @@ function renderDrawerBill(b) {
     ${ovs ? '' : renderExtraRows(b.id)}
     <div class="conti-section-title" style="margin-top:14px">Aggiungi voce</div>
     ${extraAdder}
-    ${consumiHtml}
+    ${scontoHtml}${consumiHtml}
     ${(()=>{
       const _ce = _ceOuter;
       const _si = _ce ? (STATO_CFG[getStatoContoCalcolato(_ce)]||STATO_CFG.bozza) : null;
@@ -1510,6 +1538,29 @@ function addExtraLibero(bid) {
   const ck = _ck(bid);
   const extras = getExtraForBooking(ck);
   extras.push({ label, qty, unitPrice:price, unita:'' });
+  setExtraForBooking(ck, extras);
+  refreshBillTab(bid);
+}
+
+function addScontoVoce(bid) {
+  // Legge i valori dal picker sconto nel drawer
+  const tipoEl = document.getElementById(`scontoTipo_${bid}`);
+  const valEl  = document.getElementById(`scontoVal_${bid}`);
+  const tipo   = tipoEl?.value || 'importo'; // 'importo' | 'percentuale'
+  const val    = parseFloat(valEl?.value || 0);
+  if (!val || val <= 0) return;
+
+  const ck     = _ck(bid);
+  const extras = getExtraForBooking(ck);
+
+  if (tipo === 'percentuale') {
+    // Calcola importo come percentuale del subtotale corrente (escludi sconti)
+    const conto = calcolaConto(getBookingById(bid), extras.filter(e => e.tipo !== 'sconto'));
+    const importo = parseFloat((conto.totale * val / 100).toFixed(2));
+    extras.push({ label:`🏷 Sconto ${val}%`, qty:1, unitPrice:-importo, unita:'', tipo:'sconto', pct:val });
+  } else {
+    extras.push({ label:`🏷 Sconto`, qty:1, unitPrice:-Math.abs(val), unita:'', tipo:'sconto' });
+  }
   setExtraForBooking(ck, extras);
   refreshBillTab(bid);
 }
