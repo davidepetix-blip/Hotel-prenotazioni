@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '7'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '8'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -1298,13 +1298,16 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       // (guard in Priority 4), ma se il match è avvenuto per P1/P2/P3 (stessa data
       // esatta), aggiorniamo la disposizione nel DB record esistente.
       const changed =
+        match.n !== sheet.n ||  // ← nome modificato sul foglio
         match.d !== sheet.d || match.c !== sheet.c || match.note !== sheet.note ||
         Math.abs(match.e.getTime() - sheet.e.getTime()) > DAY_MS/2 ||
         Math.abs(match.s.getTime() - sheet.s.getTime()) > DAY_MS/2;
       if (changed) {
+        if (match.n !== sheet.n && sheet.n)
+          syncLog(`📝 Nome aggiornato: "${match.n}" → "${sheet.n}" (${match.dbId||'?'})`, 'syn');
         if (match.d !== sheet.d && sheet.d)
           syncLog(`📝 Disposizione aggiornata: ${match.n} (${match.dbId||'?'}) ${match.d||'?'} → ${sheet.d}`, 'syn');
-        match.d = sheet.d; match.c = sheet.c; match.note = sheet.note;
+        match.n = sheet.n; match.d = sheet.d; match.c = sheet.c; match.note = sheet.note;
         match.s = sheet.s; match.e = sheet.e; match.ts = nowISO(); match.fonte = 'manuale';
         toUpdateInDB.push(match);
       }

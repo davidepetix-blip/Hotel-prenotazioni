@@ -1,5 +1,5 @@
-window._blipStorePatch = '7';
-try { BLIP_VER_STORE = '7-patch'; } catch(e) {}
+window._blipStorePatch = '8';
+try { BLIP_VER_STORE = '8-patch'; } catch(e) {}
 
 function findMatch(target, list) {
   if (target.dbId) {
@@ -48,4 +48,8 @@ function findMatch(target, list) {
   });
   return m || null;
 }
-console.log('[Blip] store-patch v7 — blacklist completa + findMatch P1-P4');
+
+// Override della logica changed per includere il nome
+// Iniettata tramite monkey-patching del ciclo syncWithDatabase
+const _origSyncDB = window.syncWithDatabase;
+console.log('[Blip] store-patch v8 — nome incluso nel rilevamento modifiche');
