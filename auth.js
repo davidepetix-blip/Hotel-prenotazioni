@@ -130,15 +130,21 @@ async function onLoginSuccess() {
   } catch(e) {}
 
   // ── Step 2: impostazioni dal DB (include adminEmails/staffEmails/geminiApiKey) ──
-  // loadBillSettingsDB popola window._blipAdminEmails e window._blipStaffEmails
+  // Invalida la cache prima del caricamento per forzare lettura fresca dal DB
+  try { localStorage.removeItem('hotelBillSettingsCache'); } catch(e) {}
   if (DATABASE_SHEET_ID || loadDbSheetId()) {
     DATABASE_SHEET_ID = DATABASE_SHEET_ID || loadDbSheetId();
     try {
       if (typeof loadBillSettingsDB === 'function') {
         const s = await loadBillSettingsDB();
-        if (s) localStorage.setItem('hotelBillSettings', JSON.stringify(s));
+        if (s) {
+          localStorage.setItem('hotelBillSettings', JSON.stringify(s));
+          // Aggiorna globals immediatamente
+          if (s.webAppUrl)    window._blipWebAppUrl  = s.webAppUrl.trim();
+          if (s.geminiApiKey) { window._blipGeminiKey = s.geminiApiKey; localStorage.setItem('hotelGeminiApiKey', s.geminiApiKey); }
+        }
       }
-    } catch(e) {}
+    } catch(e) { console.warn('[auth] loadBillSettingsDB:', e.message); }
   }
 
   // ── Step 3: calcola ruolo utente ────────────────────────────────

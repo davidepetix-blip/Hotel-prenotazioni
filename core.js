@@ -41,7 +41,11 @@ const DEFAULT_ANNUAL_SHEETS = [
   { year: 2026, sheetId: '1XTalxQBUFywBW4DL3JwSJvKkPlOhstAbRMH4DWx-eGI', label: '2026' },
 ];
 
-let DATABASE_SHEET_ID = '';
+// ── DATABASE_SHEET_ID ────────────────────────────────────────────
+// ID del foglio Google Sheets usato come database centrale.
+// Hardcoded qui per funzionare su qualsiasi dispositivo senza configurazione.
+// Se vuoto, l'app chiede all'utente di inserirlo nelle impostazioni.
+let DATABASE_SHEET_ID = '1NW0pda7a2NZ_opEeEsFvsq53SIMtgmM1-peUOXYQ4';
 
 const DB_COLS = {
   ID:         1,  // A

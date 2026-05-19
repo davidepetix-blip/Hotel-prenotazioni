@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '37'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '38'; // ← incrementa ad ogni modifica
 
 // BILL_SETTINGS_KEY definita in core.js
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -192,7 +192,10 @@ async function loadBillSettingsDB() {
   } catch(e) {}
 
   // 2. Leggi dal DB
-  if (!DATABASE_SHEET_ID) return loadBillSettingsLocal();
+  // Prova a recuperare DATABASE_SHEET_ID se non ancora in memoria
+  const _effDbId = DATABASE_SHEET_ID || loadDbSheetId() || '';
+  if (!_effDbId) return loadBillSettingsLocal();
+  if (_effDbId && !DATABASE_SHEET_ID) DATABASE_SHEET_ID = _effDbId; // imposta per le chiamate successive
   try {
     const d = await dbGet(`${IMPOSTAZIONI_SHEET}!A2:B99`);
     const rows = d.values || [];
@@ -217,6 +220,21 @@ async function loadBillSettingsDB() {
       if (webAppUrlDirect) saved.webAppUrl = webAppUrlDirect;
       localStorage.setItem(_C_SETTINGS, JSON.stringify({ ts:Date.now(), data:saved }));
       merged = mergeSettings(saved);
+    }
+
+    // Carica fogli annuali dal DB se presenti
+    if (map['annualSheets']) {
+      try {
+        const sheets = JSON.parse(map['annualSheets']);
+        if (Array.isArray(sheets) && sheets.length) {
+          annualSheets = sheets;
+          if (typeof saveAnnualSheetsLS === 'function') saveAnnualSheetsLS(sheets);
+        }
+      } catch(e) {}
+    }
+    // Carica codice struttura dal DB
+    if (map['codiceStruttura']) {
+      localStorage.setItem('hotelCodiceStruttura', map['codiceStruttura']);
     }
 
     // Imposta il global accessibile ovunque senza await
@@ -257,13 +275,13 @@ async function saveBillSettingsDB(s) {
 
     // Leggi posizioni di tutte le chiavi gestite
     const keyRows = {};
-    ['billSettings','webAppUrl','adminEmails','staffEmails','geminiApiKey'].forEach(k => {
+    ['billSettings','webAppUrl','adminEmails','staffEmails','geminiApiKey','annualSheets','codiceStruttura'].forEach(k => {
       const idx = rows.findIndex(r => r[0] === k);
       keyRows[k] = idx >= 0 ? idx + 2 : null;
     });
     // Assegna righe libere ai nuovi campi (in fondo)
     let nextFree = rows.length + 2;
-    ['billSettings','webAppUrl','adminEmails','staffEmails','geminiApiKey'].forEach(k => {
+    ['billSettings','webAppUrl','adminEmails','staffEmails','geminiApiKey','annualSheets','codiceStruttura'].forEach(k => {
       if (keyRows[k] === null) { keyRows[k] = nextFree++; }
     });
 
@@ -280,6 +298,18 @@ async function saveBillSettingsDB(s) {
     if (s.geminiApiKey !== undefined) {
       data.push({ range:`${IMPOSTAZIONI_SHEET}!A${keyRows['geminiApiKey']}:B${keyRows['geminiApiKey']}`, values:[['geminiApiKey', s.geminiApiKey||'']] });
       if (s.geminiApiKey) localStorage.setItem('hotelGeminiApiKey', s.geminiApiKey);
+    }
+    // Salva fogli annuali e codice struttura nel DB
+    if (typeof annualSheets !== 'undefined' && annualSheets.length) {
+      if (!keyRows['annualSheets']) { keyRows['annualSheets'] = nextFree++; }
+      data.push({ range:`${IMPOSTAZIONI_SHEET}!A${keyRows['annualSheets']}:B${keyRows['annualSheets']}`,
+        values:[['annualSheets', JSON.stringify(annualSheets)]] });
+    }
+    const _codStr = localStorage.getItem('hotelCodiceStruttura') || '';
+    if (_codStr) {
+      if (!keyRows['codiceStruttura']) { keyRows['codiceStruttura'] = nextFree++; }
+      data.push({ range:`${IMPOSTAZIONI_SHEET}!A${keyRows['codiceStruttura']}:B${keyRows['codiceStruttura']}`,
+        values:[['codiceStruttura', _codStr]] });
     }
 
     await apiFetch(
@@ -744,7 +774,18 @@ function billingBorderColor(bid) {
 }
 
 // Settings billing (async)
-function loadBillSettings() { return loadBillSettingsLocal(); } // sincrono per compatibilità render
+function loadBillSettings() {
+  // Prima prova la cache DB (più aggiornata) poi il localStorage legacy
+  try {
+    const dbCache = localStorage.getItem(_C_SETTINGS);
+    if (dbCache) {
+      const p = JSON.parse(dbCache);
+      // Usa la cache DB anche se scaduta — è comunque più affidabile del localStorage legacy
+      if (p.data) return mergeSettings(p.data);
+    }
+  } catch(e) {}
+  return loadBillSettingsLocal();
+}
 function loadBillSettingsLocal() {
   try {
     const raw = localStorage.getItem(BILL_SETTINGS_KEY);
@@ -3532,7 +3573,12 @@ function saveContiSettings() {
   });
 
   saveBillSettings(cfg);
+  // Invalida cache in memoria — il prossimo render legge dal DB aggiornato
+  localStorage.removeItem(_C_SETTINGS);
+  // Aggiorna _blipWebAppUrl immediatamente
+  if (cfg.webAppUrl) window._blipWebAppUrl = cfg.webAppUrl.trim();
+  if (cfg.geminiApiKey) { window._blipGeminiKey = cfg.geminiApiKey; localStorage.setItem('hotelGeminiApiKey', cfg.geminiApiKey); }
   closeContiSettings();
   renderContiTab(_contiTab);
-  showToast('✓ Tariffe salvate','success');
+  showToast('✓ Tariffe salvate e sincronizzate sul DB','success');
 }
