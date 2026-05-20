@@ -156,6 +156,7 @@ function render() {
 
   updateStats();
   document.getElementById('mlabel').textContent = `${MONTHS_S[curM]} ${curY}`;
+}
 
 function _buildLegend() {
   return `<div class="legend">
@@ -244,100 +245,6 @@ function _initInfiniteScroll() {
       setTimeout(() => { _ganttScrolling = false; }, 200);
     }
   }, { passive: true });
-}
-
-
-  let h = `<div class="legend">
-    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #34a853;background:var(--surface2);margin-right:4px;"></span>Pagato</span>
-    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #4285f4;background:var(--surface2);margin-right:4px;"></span>Fatturato</span>
-    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #fa7b17;background:var(--surface2);margin-right:4px;"></span>Emesso</span>
-    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #9e9e9e;background:var(--surface2);margin-right:4px;"></span>Bozza</span>
-    <span class="lsep"></span>
-    <span class="leg"><span style="display:inline-block;width:2px;height:9px;background:var(--accent);margin-right:4px;"></span>Oggi</span>
-    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;outline:2px dashed #ff6b6b;margin-right:4px;"></span>Adiacente</span>
-    <span class="leg"><span style="display:inline-block;width:14px;height:9px;border-radius:2px;background:var(--text3);opacity:.25;margin-right:1px;vertical-align:middle"></span><span style="display:inline-block;width:6px;height:9px;margin-right:4px;vertical-align:middle"></span>Checkout (parziale)</span>
-  </div>`;
-
-  h+=`<div class="dheader">`;
-  for(let d=1;d<=days;d++){
-    const dow=new Date(curY,curM,d).getDay();
-    const cls=isNow&&d===tod?'today':dow===0?'sunday':'';
-    h+=`<div class="dhcell ${cls}"><div class="dhnum">${d}</div><div class="dhdow">${DAYS_IT[dow]}</div></div>`;
-  }
-  h+=`</div>`;
-
-  const ms=new Date(curY,curM,1), me=new Date(curY,curM+1,0);
-  const groups=[...new Set(ROOMS.map(r=>r.g))];
-
-  groups.forEach(g=>{
-    const gr=ROOMS.filter(r=>r.g===g);
-    let sc='';
-    for(let d=1;d<=days;d++){ const dow=new Date(curY,curM,d).getDay(); sc+=`<div class="seccell${dow===0?' sunday':''}"></div>`; }
-    h+=`<div class="secrow"><div class="seclabel">${g}</div><div class="seccells">${sc}</div></div>`;
-
-    gr.forEach(room=>{
-      const rb=bookings.filter(b=>b.r===room.id&&b.s<=me&&b.e>=ms);
-      let cells='';
-      for(let d=1;d<=days;d++){
-        const dow=new Date(curY,curM,d).getDay();
-        const tc=isNow&&d===tod?'todaycol':dow===0?'sunday':'';
-        cells+=`<div class="dcell ${tc}" onclick="cellClick('${room.id}',${d})"></div>`;
-      }
-      let bars='';
-      rb.forEach(b=>{
-        const vs=b.s<ms?ms:b.s, ve=b.e>me?me:b.e;
-        const sd=vs.getDate(), ed=ve.getDate();
-        // 'continues' = prenotazione continua nel mese successivo → larghezza piena
-        const continues = b.e > me;
-        // Giorno di checkout: la barra occupa solo il 40% della cella —
-        // così la camera risulta visivamente libera per il pomeriggio
-        // e un check-in nella stessa giornata non si sovrappone.
-        const checkoutFrac = 0.40;
-        const w = continues
-          ? (ed-sd+1)*CW - 2                          // continua: piena
-          : (ed-sd)*CW + Math.round(CW*checkoutFrac); // ultimo giorno: 40%
-        const lx=(sd-1)*CW+1;
-        const tc = '#1a1916'; // testo sempre scuro — tutti i colori della palette sono pastello
-        const adj=adjConflict(b).length>0;
-        const _billBorder = (typeof billingBorderColor === 'function') ? billingBorderColor(b.dbId || b.id) : null;
-        const _borderStyle = _billBorder ? `border-left:3px solid ${_billBorder};` : '';
-        // Testo adattivo: leggibile anche su barre strette (soggiorni 1-2 giorni)
-        const _notti = Math.round((b.e - b.s) / 86400000);
-        let _label, _fs;
-        if (w >= 80) {
-          _label = `${b.n}<span class="bdisp">${b.d}</span>`;
-          _fs = '11px';
-        } else if (w >= 50) {
-          const _pt = b.n.split(' ')[0];
-          _label = `${_pt}<span class="bdisp">${_notti}n</span>`;
-          _fs = '11px';
-        } else if (w >= 26) {
-          _label = b.n.slice(0, 4);
-          _fs = '10px';
-        } else {
-          _label = '';
-          _fs = '10px';
-        }
-        bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
-          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};${_borderStyle}font-size:${_fs};"
-          onclick="selBook(${b.id},event)"
-          data-bid="${b.id}"
-          onmouseenter="if(!('ontouchstart' in window))showTT(event,${b.id})"
-          onmouseleave="hideTT()">
-          ${_label}</div>`;
-      });
-      let tv='';
-      if(isNow){ const tx=(tod-1)*CW+CW/2-1; tv=`<div class="tvline" style="left:${tx}px"></div>`; }
-      const _today=new Date(); _today.setHours(12,0,0,0);
-      const _opst=getRoomDayStatus(room.id,_today);
-      const _opLabels={'cambio':'Cambio','occupata':'Occupata','uscita':'Uscita oggi','arrivo':'Arrivo oggi','pronta':'Pronta','da-preparare':'Da preparare','controllare':'Controllare/Rassettare','fuori-servizio':'Fuori servizio'};
-      const _dot=`<span class="room-status-dot rsd-op-${_opst.opId}" title="${_opLabels[_opst.opId]||''}"></span>`;
-      h+=`<div class="rrow"><div class="rlabel" onclick="event.stopPropagation();openRoomDrawer('${room.id}')" style="cursor:pointer;">${room.name}${_dot}</div><div class="dcwrap">${cells}${bars}${tv}</div></div>`;
-    });
-  });
-
-  document.getElementById('ginner').innerHTML = h;
-  updateStats();
 }
 
 function updateStats(){
