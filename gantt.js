@@ -1505,6 +1505,8 @@ function checkW(){
   if (bs) bs.style.display = w ? 'inline-flex' : 'none';
   const be = document.getElementById('btnEmail');
   if (be) be.style.display = (w && window.userRole === 'admin') ? 'inline-flex' : 'none';
+  const bc = document.getElementById('btnClienti');
+  if (bc) bc.style.display = w ? 'inline-flex' : 'none';
 }
 window.addEventListener('resize',checkW);
 
