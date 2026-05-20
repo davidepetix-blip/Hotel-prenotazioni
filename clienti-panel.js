@@ -12,6 +12,8 @@ let _cpSelected  = null;
 let _cpMergeSet  = new Set();
 let _cpSort      = { key: 'nSoggiorni', dir: -1 };
 let _cpFilter    = 'tutti';
+let _cpEditMode  = null;  // id del cliente in modifica
+let _cpNewClientFor = null; // id 'UNCENSED:...' per cui stiamo creando
 let _cpQuery     = '';
 
 // ── Inizializza ───────────────────────────────────────────────────
@@ -265,6 +267,7 @@ function cpRender() {
 
 // ── Detail panel ──────────────────────────────────────────────────
 function cpDetailHTML(c) {
+  if (_cpEditMode === c.id) return cpEditFormHTML(c);
   const bs = _cpGetBookings(c);
   const row = (k, v) => v ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:11px;color:var(--text3)">${k}</span><span style="font-size:11px;color:var(--text);font-weight:500;text-align:right;max-width:200px">${v}</span></div>` : '';
 
@@ -351,24 +354,72 @@ function cpPrepareMergeGroup(id) {
 }
 
 function cpCensisci(id) {
-  // Apre il modal prenotazione con il nome pre-compilato, così l'utente
-  // può creare la scheda anagrafica al prossimo salvataggio
-  const c = _cpClienti.find(x=>x.id===id);
-  if (!c) return;
-  closeClientiPanel();
-  setTimeout(() => {
-    if (typeof openModal === 'function') {
-      openModal();
-      setTimeout(() => {
-        const fName = document.getElementById('fName');
-        if (fName) { fName.value = c.nome; fName.dispatchEvent(new Event('input')); }
-      }, 100);
-    }
-  }, 200);
+  _cpSelected = _cpClienti.find(c => c.id === id) || null;
+  _cpNewClientFor = id; // indica che stiamo creando ex-novo per questo "da censire"
+  _cpEditMode = id;
+  cpRender();
+  setTimeout(() => document.getElementById('cp-edit-nome')?.focus(), 50);
 }
 
 function cpEditClient(id) {
-  if (typeof preimpostaClienteModal === 'function') preimpostaClienteModal(id);
+  _cpSelected = _cpClienti.find(c => c.id === id) || null;
+  _cpEditMode = id;
+  cpRender();
+  setTimeout(() => document.getElementById('cp-edit-nome')?.focus(), 50);
+}
+
+async function cpSaveClient() {
+  const btn = document.getElementById('cp-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Salvataggio...'; }
+  try {
+    const nome      = document.getElementById('cp-edit-nome')?.value?.trim() || '';
+    const email     = document.getElementById('cp-edit-email')?.value?.trim() || '';
+    const telefono  = document.getElementById('cp-edit-tel')?.value?.trim() || '';
+    const docTipo   = document.getElementById('cp-edit-docTipo')?.value || '';
+    const docNum    = document.getElementById('cp-edit-docNum')?.value?.trim() || '';
+    const naz       = document.getElementById('cp-edit-naz')?.value?.trim() || '';
+    const dataN     = document.getElementById('cp-edit-dataN')?.value?.trim() || '';
+    const note      = document.getElementById('cp-edit-note')?.value?.trim() || '';
+
+    if (!nome) { alert('Il nome è obbligatorio.'); if(btn){btn.disabled=false;btn.textContent='💾 Salva';} return; }
+
+    if (_cpNewClientFor) {
+      // Crea nuovo cliente
+      const created = await creaCliente({ nome, email, telefono, docTipo, docNum, nazionalita:naz, dataNascita:dataN, note });
+      // Collega tutte le prenotazioni del "da censire" al nuovo cliente
+      const k = _normNome(nome);
+      const uncBs = typeof bookings !== 'undefined'
+        ? bookings.filter(b => !b.deleted && !b.clienteId && _normNome(b.n) === k)
+        : [];
+      for (const b of uncBs) {
+        b.clienteId = created.id;
+        if (typeof dbUpdateRow === 'function') {
+          await dbUpdateRow(b.dbRow, bookingToDbRow(b, b.fonte || 'app'));
+        }
+      }
+      if (typeof showToast === 'function') showToast('✅ Scheda anagrafica creata — ' + uncBs.length + ' prenotaz. collegate', 'success');
+    } else {
+      // Aggiorna cliente esistente
+      const c = _cpClienti.find(x => x.id === _cpEditMode);
+      if (!c) return;
+      Object.assign(c, { nome, email, telefono, docTipo, docNum, nazionalita:naz, dataNascita:dataN, note });
+      if (typeof aggiornaCliente === 'function') await aggiornaCliente(c);
+      if (typeof showToast === 'function') showToast('✅ Cliente aggiornato', 'success');
+    }
+
+    _cpEditMode = null;
+    _cpNewClientFor = null;
+    await cpInit();
+  } catch(e) {
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Salva'; }
+  }
+}
+
+function cpCancelEdit() {
+  _cpEditMode = null;
+  _cpNewClientFor = null;
+  cpRender();
 }
 
 async function cpMerge() {
