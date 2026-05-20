@@ -248,7 +248,7 @@ function cpRender() {
       </div>
 
       ${_cpSelected ? `
-        <div style="width:340px;min-width:340px;border-left:1px solid var(--border);background:var(--surface);overflow-y:auto">
+        <div id="cp-detail-panel" class="cp-detail-panel">
           ${cpDetailHTML(_cpSelected)}
         </div>
       ` : ''}
@@ -340,6 +340,10 @@ function cpSort(key)    { _cpSort = _cpSort.key===key?{key,dir:-_cpSort.dir}:{ke
 function cpSelectClient(id) {
   _cpSelected = _cpClienti.find(c => c.id === id) || null;
   cpRender();
+  // Su mobile scrolla il panel in cima
+  if (window.innerWidth < 700) {
+    setTimeout(() => document.getElementById('cp-detail-panel')?.scrollIntoView(), 50);
+  }
 }
 function cpToggleMerge(id, on) { if(on) _cpMergeSet.add(id); else _cpMergeSet.delete(id); cpRender(); }
 function cpSelectAll(on)       { if(on) _cpFiltered.forEach(c=>_cpMergeSet.add(c.id)); else _cpMergeSet.clear(); cpRender(); }
@@ -358,14 +362,20 @@ function cpCensisci(id) {
   _cpNewClientFor = id; // indica che stiamo creando ex-novo per questo "da censire"
   _cpEditMode = id;
   cpRender();
-  setTimeout(() => document.getElementById('cp-edit-nome')?.focus(), 50);
+  setTimeout(() => {
+    document.getElementById('cp-edit-nome')?.focus();
+    if (window.innerWidth < 700) document.getElementById('cp-detail-panel')?.scrollIntoView({ behavior:'smooth' });
+  }, 80);
 }
 
 function cpEditClient(id) {
   _cpSelected = _cpClienti.find(c => c.id === id) || null;
   _cpEditMode = id;
   cpRender();
-  setTimeout(() => document.getElementById('cp-edit-nome')?.focus(), 50);
+  setTimeout(() => {
+    document.getElementById('cp-edit-nome')?.focus();
+    if (window.innerWidth < 700) document.getElementById('cp-detail-panel')?.scrollIntoView();
+  }, 50);
 }
 
 async function cpSaveClient() {
