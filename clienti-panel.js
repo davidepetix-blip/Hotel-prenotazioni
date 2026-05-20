@@ -480,4 +480,40 @@ function openClientiPanel() {
 function closeClientiPanel() {
   const p = document.getElementById('cp-panel');
   if (p) p.remove();
+  // Rimuovi il parametro dall'URL senza ricaricare la pagina
+  const url = new URL(window.location.href);
+  if (url.searchParams.has('clienti')) {
+    url.searchParams.delete('clienti');
+    history.replaceState(null, '', url.toString());
+  }
+}
+
+// ── Auto-open da URL ──────────────────────────────────────────────
+// Supporta: ?clienti oppure #clienti
+// Esempio: https://davidepetix-blip.github.io/Hotel-prenotazioni/?clienti
+function _cpCheckUrlAutoOpen() {
+  const hasParam = new URL(window.location.href).searchParams.has('clienti');
+  const hasHash  = window.location.hash === '#clienti';
+  if (!hasParam && !hasHash) return;
+
+  // Aspetta che l'app sia pronta (login completato)
+  const tryOpen = () => {
+    // Se l'utente è loggato (accessToken disponibile)
+    if (typeof accessToken !== 'undefined' && accessToken) {
+      openClientiPanel();
+    } else {
+      // Riprova ogni 500ms finché non è loggato
+      setTimeout(tryOpen, 500);
+    }
+  };
+  setTimeout(tryOpen, 300);
+}
+
+// Esegui al caricamento del file
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _cpCheckUrlAutoOpen);
+  } else {
+    _cpCheckUrlAutoOpen();
+  }
 }
