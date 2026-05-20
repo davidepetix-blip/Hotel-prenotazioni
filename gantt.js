@@ -13,23 +13,239 @@
 // Dipende da: core.js, api.js, auth.js, store.js, rooms.js, clienti.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_GANTT = '31';
+const BLIP_VER_GANTT = '32';
 const BLIP_VER_ROOMS_REF = '1'; // rooms.js caricato prima di gantt.js // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
-function render() {
-  // Al primo render con DATABASE_SHEET_ID disponibile, precarica i dati di conto.
-  // preloadContoDati() è asincrona: chiama render() di nuovo al completamento.
-  if (!_billingPreloaded && typeof preloadContoDati === 'function' && typeof DATABASE_SHEET_ID !== 'undefined' && DATABASE_SHEET_ID) {
-    _billingPreloaded = true;
-    preloadContoDati(); // async — ri-renderizza da sola al completamento
-  }
-  const days = dim(curY, curM);
+// ── SCROLL CONTINUO ─────────────────────────────────────────────────────────
+// Invece di rendere un mese alla volta, rendiamo una finestra di mesi consecutivi.
+// _ganttMonths = array di { y, m } dei mesi attualmente renderizzati.
+// Quando l'utente scrolla fino al bordo, aggiungiamo il mese successivo/precedente.
+// Il pulsante "Oggi" scrolla alla posizione corretta senza re-render.
+// ─────────────────────────────────────────────────────────────────────────────
+let _ganttMonths = []; // mesi attualmente nel DOM
+let _ganttScrolling = false; // mutex anti-loop
+
+function _addOffset(y, m, delta) {
+  m += delta;
+  while (m > 11) { m -= 12; y++; }
+  while (m <  0) { m += 12; y--; }
+  return { y, m };
+}
+
+function _renderMonthBlock(y, m) {
+  const days = dim(y, m);
   const now  = new Date();
-  const isNow = now.getFullYear()===curY && now.getMonth()===curM;
+  const isNow = now.getFullYear() === y && now.getMonth() === m;
   const tod  = now.getDate();
   const CW   = 34;
+  const ms   = new Date(y, m, 1), me = new Date(y, m+1, 0);
+  me.setHours(23,59,59);
+
+  let h = `<div class="month-block" data-y="${y}" data-m="${m}" style="display:inline-block;vertical-align:top;border-right:2px solid var(--accent);opacity:.3;">`;
+
+  // Header mese
+  h += `<div class="month-block-label" style="padding:4px 8px;font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.08em;background:var(--surface);position:sticky;top:0;z-index:10;border-bottom:1px solid var(--border);">${MONTHS_S[m]} ${y}</div>`;
+
+  // Header giorni
+  h += `<div class="dheader">`;
+  for (let d = 1; d <= days; d++) {
+    const dow = new Date(y, m, d).getDay();
+    const cls = isNow && d === tod ? 'today' : dow === 0 ? 'sunday' : '';
+    h += `<div class="dhcell ${cls}"><div class="dhnum">${d}</div><div class="dhdow">${DAYS_IT[dow]}</div></div>`;
+  }
+  h += `</div>`;
+
+  // Gruppi e camere
+  const groups = [...new Set(ROOMS.map(r => r.g))];
+  groups.forEach(g => {
+    const gr = ROOMS.filter(r => r.g === g);
+    let sc = '';
+    for (let d = 1; d <= days; d++) {
+      const dow = new Date(y, m, d).getDay();
+      sc += `<div class="seccell${dow === 0 ? ' sunday' : ''}"></div>`;
+    }
+    h += `<div class="secrow"><div class="seclabel">${g}</div><div class="seccells">${sc}</div></div>`;
+
+    gr.forEach(room => {
+      const rb = bookings.filter(b => b.r === room.id && b.s <= me && b.e >= ms && !b.deleted);
+      let cells = '';
+      for (let d = 1; d <= days; d++) {
+        const dow = new Date(y, m, d).getDay();
+        const tc = isNow && d === tod ? 'todaycol' : dow === 0 ? 'sunday' : '';
+        cells += `<div class="dcell ${tc}" onclick="cellClick('${room.id}',${d},${y},${m})"></div>`;
+      }
+      let bars = '';
+      rb.forEach(b => {
+        const vs = b.s < ms ? ms : b.s, ve = b.e > me ? me : b.e;
+        const sd = vs.getDate(), ed = ve.getDate();
+        const continues = b.e > me;
+        const checkoutFrac = 0.40;
+        const w = continues
+          ? (ed - sd + 1) * CW - 2
+          : (ed - sd) * CW + Math.round(CW * checkoutFrac);
+        const lx = (sd - 1) * CW + 1;
+        const tc2 = '#1a1916';
+        const adj = adjConflict(b).length > 0;
+        const _billBorder = (typeof billingBorderColor === 'function') ? billingBorderColor(b.dbId || b.id) : null;
+        const _borderStyle = _billBorder ? `border-left:3px solid ${_billBorder};` : '';
+        const _isPre = b.fonte === 'form-web' && b.statoPrenotazione === 'pre';
+        const _preBg = _isPre ? '#e5e7eb' : b.c;
+        const _preStyle = _isPre ? 'border:2px dashed #9ca3af;opacity:.9;' : '';
+        const _notti = Math.round((b.e - b.s) / 86400000);
+        let _label, _fs;
+        if (w >= 80) {
+          _label = `${b.n}<span class="bdisp">${b.d}</span>`;
+          _fs = '11px';
+        } else if (w >= 50) {
+          const _pt = b.n.split(' ')[0];
+          _label = `${_pt}<span class="bdisp">${_notti}n</span>`;
+          _fs = '11px';
+        } else if (w >= 26) {
+          _label = b.n.slice(0, 4);
+          _fs = '10px';
+        } else {
+          _label = '';
+          _fs = '10px';
+        }
+        bars += `<div class="bbar${adj ? ' adj' : ''}${b.pending ? ' pending' : ''}${continues ? ' continues' : ''}"
+          style="left:${lx}px;width:${w}px;background:${_preBg};color:${tc2};${_borderStyle}${_preStyle}font-size:${_fs};"
+          onclick="selBook(${b.id},event)"
+          data-bid="${b.id}"
+          onmouseenter="if(!('ontouchstart' in window))showTT(event,${b.id})"
+          onmouseleave="hideTT()">
+          ${_label}</div>`;
+      });
+      let tv = '';
+      if (isNow) { const tx = (tod - 1) * CW + CW / 2 - 1; tv = `<div class="tvline" style="left:${tx}px"></div>`; }
+      const _today2 = new Date(); _today2.setHours(12,0,0,0);
+      const _opst = getRoomDayStatus(room.id, _today2);
+      const _opLabels = {'cambio':'Cambio','occupata':'Occupata','uscita':'Uscita oggi','arrivo':'Arrivo oggi','pronta':'Pronta','da-preparare':'Da preparare','controllare':'Controllare/Rassettare','fuori-servizio':'Fuori servizio'};
+      const _dot = `<span class="room-status-dot rsd-op-${_opst.opId}" title="${_opLabels[_opst.opId]||''}"></span>`;
+      h += `<div class="rrow"><div class="rlabel" onclick="event.stopPropagation();openRoomDrawer('${room.id}')" style="cursor:pointer;">${room.name}${_dot}</div><div class="dcwrap">${cells}${bars}${tv}</div></div>`;
+    });
+  });
+
+  h += `</div>`; // month-block
+  return h;
+}
+
+function render() {
+  if (!_billingPreloaded && typeof preloadContoDati === 'function' && DATABASE_SHEET_ID) {
+    _billingPreloaded = true;
+    preloadContoDati();
+  }
+  // Inizializza finestra di 3 mesi: mese precedente, corrente, successivo
+  const prev = _addOffset(curY, curM, -1);
+  const next = _addOffset(curY, curM,  1);
+  _ganttMonths = [prev, {y:curY, m:curM}, next];
+
+  const ginner = document.getElementById('ginner');
+  const legend = _buildLegend();
+  ginner.innerHTML = legend + _ganttMonths.map(mo => _renderMonthBlock(mo.y, mo.m)).join('');
+
+  // Scrolla al mese corrente (il secondo blocco)
+  requestAnimationFrame(() => {
+    const blocks = ginner.querySelectorAll('.month-block');
+    if (blocks[1]) {
+      document.getElementById('gscroll').scrollLeft = blocks[1].offsetLeft - 4;
+    }
+    _highlightCurrentMonth();
+    _initInfiniteScroll();
+  });
+
+  updateStats();
   document.getElementById('mlabel').textContent = `${MONTHS_S[curM]} ${curY}`;
+
+function _buildLegend() {
+  return `<div class="legend">
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #34a853;background:var(--surface2);margin-right:4px;"></span>Pagato</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #4285f4;background:var(--surface2);margin-right:4px;"></span>Fatturato</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #fa7b17;background:var(--surface2);margin-right:4px;"></span>Emesso</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #9e9e9e;background:var(--surface2);margin-right:4px;"></span>Bozza</span>
+    <span class="lsep"></span>
+    <span class="leg"><span style="display:inline-block;width:2px;height:9px;background:var(--accent);margin-right:4px;"></span>Oggi</span>
+    <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;outline:2px dashed #ff6b6b;margin-right:4px;"></span>Adiacente</span>
+  </div>`;
+}
+
+function _highlightCurrentMonth() {
+  // Evidenzia il mese visibile al centro aggiornando mlabel
+  const scroll = document.getElementById('gscroll');
+  if (!scroll) return;
+  const cx = scroll.scrollLeft + scroll.clientWidth / 2;
+  const blocks = document.querySelectorAll('.month-block');
+  blocks.forEach(b => {
+    const left = b.offsetLeft, right = left + b.offsetWidth;
+    const visible = cx >= left && cx < right;
+    b.style.opacity = visible ? '1' : '0.55';
+    if (visible) {
+      const y = parseInt(b.dataset.y), m = parseInt(b.dataset.m);
+      curY = y; curM = m;
+      document.getElementById('mlabel').textContent = `${MONTHS_S[m]} ${y}`;
+    }
+  });
+}
+
+function _initInfiniteScroll() {
+  const scroll = document.getElementById('gscroll');
+  if (!scroll || scroll._infiniteInitialized) return;
+  scroll._infiniteInitialized = true;
+
+  scroll.addEventListener('scroll', () => {
+    if (_ganttScrolling) return;
+    _highlightCurrentMonth();
+
+    const maxScroll = scroll.scrollWidth - scroll.clientWidth;
+    const THRESHOLD = 300; // px dal bordo per triggerare il caricamento
+
+    // Vicino al bordo destro → aggiungi mese successivo
+    if (scroll.scrollLeft >= maxScroll - THRESHOLD) {
+      _ganttScrolling = true;
+      const last = _ganttMonths[_ganttMonths.length - 1];
+      const next = _addOffset(last.y, last.m, 1);
+      _ganttMonths.push(next);
+      const ginner = document.getElementById('ginner');
+      const div = document.createElement('div');
+      div.innerHTML = _renderMonthBlock(next.y, next.m);
+      ginner.appendChild(div.firstElementChild);
+      // Rimuovi il primo mese se ne abbiamo troppi (max 7)
+      if (_ganttMonths.length > 7) {
+        const firstBlock = ginner.querySelector('.month-block');
+        if (firstBlock) {
+          const removedW = firstBlock.offsetWidth;
+          firstBlock.remove();
+          _ganttMonths.shift();
+          scroll.scrollLeft -= removedW;
+        }
+      }
+      setTimeout(() => { _ganttScrolling = false; }, 200);
+    }
+
+    // Vicino al bordo sinistro → aggiungi mese precedente
+    if (scroll.scrollLeft <= THRESHOLD) {
+      _ganttScrolling = true;
+      const first = _ganttMonths[0];
+      const prev = _addOffset(first.y, first.m, -1);
+      _ganttMonths.unshift(prev);
+      const ginner = document.getElementById('ginner');
+      const div = document.createElement('div');
+      div.innerHTML = _renderMonthBlock(prev.y, prev.m);
+      const newBlock = div.firstElementChild;
+      ginner.insertBefore(newBlock, ginner.querySelector('.month-block'));
+      // Mantieni la posizione di scroll (il nuovo blocco è a sinistra)
+      scroll.scrollLeft += newBlock.offsetWidth;
+      // Rimuovi l'ultimo mese se ne abbiamo troppi
+      if (_ganttMonths.length > 7) {
+        const blocks = ginner.querySelectorAll('.month-block');
+        const lastBlock = blocks[blocks.length - 1];
+        if (lastBlock) { lastBlock.remove(); _ganttMonths.pop(); }
+      }
+      setTimeout(() => { _ganttScrolling = false; }, 200);
+    }
+  }, { passive: true });
+}
+
 
   let h = `<div class="legend">
     <span class="leg"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;border-left:3px solid #34a853;background:var(--surface2);margin-right:4px;"></span>Pagato</span>
@@ -85,17 +301,30 @@ function render() {
         const adj=adjConflict(b).length>0;
         const _billBorder = (typeof billingBorderColor === 'function') ? billingBorderColor(b.dbId || b.id) : null;
         const _borderStyle = _billBorder ? `border-left:3px solid ${_billBorder};` : '';
-        // Pre-prenotazioni da form web: bordo tratteggiato grigio
-        const _isPre = b.fonte === 'form-web' && b.statoPrenotazione === 'pre';
-        const _preBg = _isPre ? '#e5e7eb' : b.c;
-        const _preStyle = _isPre ? 'border:2px dashed #9ca3af;opacity:.9;' : '';
+        // Testo adattivo: leggibile anche su barre strette (soggiorni 1-2 giorni)
+        const _notti = Math.round((b.e - b.s) / 86400000);
+        let _label, _fs;
+        if (w >= 80) {
+          _label = `${b.n}<span class="bdisp">${b.d}</span>`;
+          _fs = '11px';
+        } else if (w >= 50) {
+          const _pt = b.n.split(' ')[0];
+          _label = `${_pt}<span class="bdisp">${_notti}n</span>`;
+          _fs = '11px';
+        } else if (w >= 26) {
+          _label = b.n.slice(0, 4);
+          _fs = '10px';
+        } else {
+          _label = '';
+          _fs = '10px';
+        }
         bars+=`<div class="bbar${adj?' adj':''}${b.pending?' pending':''}${continues?' continues':''}"
-          style="left:${lx}px;width:${w}px;background:${_preBg};color:${tc};${_borderStyle}${_preStyle}"
+          style="left:${lx}px;width:${w}px;background:${b.c};color:${tc};${_borderStyle}font-size:${_fs};"
           onclick="selBook(${b.id},event)"
           data-bid="${b.id}"
           onmouseenter="if(!('ontouchstart' in window))showTT(event,${b.id})"
           onmouseleave="hideTT()">
-          ${b.n}<span class="bdisp">${b.d}</span></div>`;
+          ${_label}</div>`;
       });
       let tv='';
       if(isNow){ const tx=(tod-1)*CW+CW/2-1; tv=`<div class="tvline" style="left:${tx}px"></div>`; }
@@ -121,26 +350,36 @@ function updateStats(){
 }
 
 function changeMonth(d, animate=false){
-  curM += d;
-  if(curM > 11){ curM = 0; curY++; }
-  if(curM <  0){ curM = 11; curY--; }
-  render();
-  // Breve fade-in sul nuovo contenuto
-  if(animate){
-    const gi = document.getElementById('ginner');
-    if(gi){
-      gi.style.opacity = '0';
-      gi.style.transform = d > 0 ? 'translateX(32px)' : 'translateX(-32px)';
-      requestAnimationFrame(() => {
-        gi.style.transition = 'opacity .2s ease, transform .2s ease';
-        gi.style.opacity = '1';
-        gi.style.transform = 'translateX(0)';
-        setTimeout(() => { gi.style.transition = ''; }, 220);
-      });
-    }
+  // Con lo scroll continuo, changeMonth naviga al mese target saltando direttamente
+  const target = _addOffset(curY, curM, d);
+  curY = target.y; curM = target.m;
+  // Cerca il blocco del mese target nel DOM
+  const targetBlock = document.querySelector(`.month-block[data-y="${curY}"][data-m="${curM}"]`);
+  if (targetBlock) {
+    // Il mese è già renderizzato — scrolla semplicemente
+    document.getElementById('gscroll').scrollLeft = targetBlock.offsetLeft - 4;
+    _highlightCurrentMonth();
+  } else {
+    // Il mese non è in finestra — re-render centrato sul nuovo mese
+    render();
   }
 }
-function goToday(){ const t=new Date(); curM=t.getMonth(); curY=t.getFullYear(); render(); setTimeout(()=>{ document.getElementById('gscroll').scrollLeft=Math.max(0,(t.getDate()-4)*34+90); },60); }
+function goToday(){
+  const t = new Date(); curM = t.getMonth(); curY = t.getFullYear();
+  const todayBlock = document.querySelector(`.month-block[data-y="${curY}"][data-m="${curM}"]`);
+  if (todayBlock) {
+    const CW = 34;
+    const todayX = todayBlock.offsetLeft + (t.getDate() - 4) * CW;
+    document.getElementById('gscroll').scrollLeft = Math.max(todayBlock.offsetLeft - 4, todayX - 90);
+    _highlightCurrentMonth();
+  } else {
+    render();
+    setTimeout(() => {
+      const b = document.querySelector(`.month-block[data-y="${curY}"][data-m="${curM}"]`);
+      if (b) document.getElementById('gscroll').scrollLeft = b.offsetLeft - 4;
+    }, 60);
+  }
+}
 
 // ── SWIPE orizzontale per cambiare mese ──
 // Logica: se l'utente ha scrollato fino al bordo E continua a trascinare
@@ -211,19 +450,12 @@ function selBook(id,e){
   </div>`;
   document.getElementById('drtitle').textContent=b.n;
   document.getElementById('drsub').textContent=`CAMERA ${roomName(b.r)} · ${roomGroup(b.r)}`;
-  const isPreBook = b.fonte === 'form-web' && b.statoPrenotazione === 'pre';
   document.getElementById('drbody').innerHTML=`
     ${adjHtml}
-    ${isPreBook ? `
-    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px">
-      <div style="font-weight:700;font-size:13px;color:#92400e;margin-bottom:4px">⏳ PRE-PRENOTAZIONE da form web</div>
-      <div style="color:#92400e">Richiesta non ancora confermata — il cliente aspetta risposta.<br>
-      <b>Email:</b> ${b.note?.match(/[\w.+\-]+@[\w.\-]+\.\w+/)?.[0] || '—'}</div>
-    </div>` : ''}
     <div class="dr-bill-tabs">
       <div class="dr-bill-tab active" onclick="drTab(this,'drTabInfo')">📋 Dettagli</div>
-      ${!isPreBook ? `<div class="dr-bill-tab" onclick="drTab(this,'drTabBill')">💶 Conto</div>` : ''}
-      ${!isPreBook ? `<div class="dr-bill-tab" onclick="drTabCheckin(this,${b.id})">🛎 Check-in</div>` : ''}
+      <div class="dr-bill-tab" onclick="drTab(this,'drTabBill')">💶 Conto</div>
+      <div class="dr-bill-tab" onclick="drTabCheckin(this,${b.id})">🛎 Check-in</div>
     </div>
     <div id="drTabInfo">
     <div class="dcard">
@@ -237,20 +469,10 @@ function selBook(id,e){
       ${b.note?`<div class="drow"><span class="dkey">Note</span><span class="dval">${b.note}</span></div>`:''}
       ${b.fromSheet?`<div class="drow"><span class="dkey">Fonte</span><span class="dval" style="color:var(--success)">📋 Google Sheets</span></div>`:''}
     </div>
-    ${isPreBook ? `
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px">
-      <button class="btn" style="background:#2d6a4f;color:#fff;justify-content:center;font-weight:700;font-size:13px"
-        onclick="confermaPrenotazione(${b.id})">
-        ✅ Conferma prenotazione → scrivi su Gantt
-      </button>
-      <button class="btn danger" onclick="rifiutaPrenotazione(${b.id})" style="justify-content:center">
-        ✕ Rifiuta e cancella
-      </button>
-    </div>` : `
     <div style="display:flex;gap:8px;">
       <button class="btn" onclick="editBook(${b.id})" style="flex:1;justify-content:center;">✎ Modifica</button>
       <button class="btn danger" onclick="delBook(${b.id})" style="flex:1;justify-content:center;">✕ Elimina</button>
-    </div>`}
+    </div>
     <div class="synchint">
       ${(()=>{
         const frags = splitBookingByMonth(b);
@@ -399,88 +621,6 @@ function openDrawer(){
   document.body.style.overflow = 'hidden';
   // Su mobile: dopo 100ms nascondi ancora il tooltip (race condition Android)
   if ('ontouchstart' in window) setTimeout(() => { if(tt) tt.style.display='none'; }, 100);
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// PRE-PRENOTAZIONI — Conferma / Rifiuta
-// ═══════════════════════════════════════════════════════════════════
-
-/**
- * Conferma una pre-prenotazione:
- *   1. Scrive la prenotazione sul foglio grafico via bridgeSalva()
- *   2. Aggiorna lo statoPrenotazione nel DB → 'confermata'
- *   3. Cambia il colore da grigio a verde default
- *   4. Chiude il drawer e ricarica
- */
-async function confermaPrenotazione(bookingId) {
-  const b = bookings.find(x => x.id === bookingId);
-  if (!b) return;
-  if (!confirm(`Confermare la prenotazione di ${b.n}?
-
-Verrà scritta sul foglio grafico con colore verde e rimossa dallo stato "pre-prenotazione".`)) return;
-
-  showLoading('Conferma in corso…');
-  try {
-    // Scegli colore: se è rimasto grigio (#D9D9D9) usa verde default
-    const colore = (b.c === '#D9D9D9' || b.c === '#d9d9d9') ? '#52B788' : b.c;
-
-    // Costruisci booking da passare al bridge
-    const bConf = {
-      ...b,
-      c: colore,
-      statoPrenotazione: 'confermata',
-      fonte: 'app',
-      note: (b.note || '').replace('⏳ PRE-PREN. da form web — ', '').replace('⏳ PRE-PRENOTAZIONE da form web — ', '').trim(),
-    };
-
-    // Scrivi sul foglio grafico
-    await bridgeSalva(bConf, null);
-
-    // Aggiorna lo stato nel DB
-    if (b.dbRow) {
-      await dbUpdateRow(b.dbRow, bookingToDbRow({
-        ...bConf,
-        dbId: b.dbId,
-        id:   b.id,
-      }, 'app'));
-    }
-
-    hideLoading();
-    showToast(`✅ ${b.n} confermata sul Gantt`, 'success');
-    syncLog(`✅ Pre-prenotazione confermata: ${b.n} (${b.dbId})`, 'ok');
-
-    // Ricarica
-    closeDrawer();
-    setTimeout(() => { loadFromSheets._forceNext = true; loadFromSheets(); }, 1500);
-  } catch(e) {
-    hideLoading();
-    showToast('❌ Errore conferma: ' + e.message, 'error');
-    syncLog('❌ confermaPrenotazione: ' + e.message, 'err');
-  }
-}
-
-/**
- * Rifiuta una pre-prenotazione:
- *   1. La cancella dal DB (CESTINO con reason 'Rifiutata')
- *   2. Chiude il drawer
- */
-async function rifiutaPrenotazione(bookingId) {
-  const b = bookings.find(x => x.id === bookingId);
-  if (!b) return;
-  if (!confirm(`Rifiutare e cancellare la pre-prenotazione di ${b.n}?
-
-Verrà eliminata. Ricordati di rispondere al cliente.`)) return;
-
-  showLoading('Cancellazione…');
-  try {
-    await delBook(bookingId, true); // true = skip confirm (già confermato sopra)
-    hideLoading();
-    showToast(`Pre-prenotazione di ${b.n} eliminata`, 'info');
-    closeDrawer();
-  } catch(e) {
-    hideLoading();
-    showToast('❌ Errore: ' + e.message, 'error');
-  }
 }
 
 // openRoomDrawer() → rooms.js

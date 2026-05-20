@@ -133,10 +133,15 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 /* ── BODY ── */
 .body { flex: 1; display: flex; overflow: hidden; }
 .gscroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; }
-.ginner { min-width: max-content; padding-bottom: 20px; background: var(--bg);
-  transition: opacity .18s ease, transform .18s ease; }
-.ginner.slide-left  { opacity: 0; transform: translateX(-48px); }
-.ginner.slide-right { opacity: 0; transform: translateX( 48px); }
+.ginner { min-width: max-content; padding-bottom: 20px; background: var(--bg); display: flex; align-items: flex-start; }
+/* Mesi affiancati — scroll continuo */
+.month-block { display: inline-block; vertical-align: top; border-right: 2px solid var(--border); transition: opacity .2s ease; }
+.month-block-label { padding: 3px 10px; font-size: 10px; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: .1em; background: var(--surface);
+  position: sticky; top: 0; z-index: 10; border-bottom: 1px solid var(--border);
+  width: max-content; white-space: nowrap; }
+.ginner.slide-left  { opacity: 0; }
+.ginner.slide-right { opacity: 0; }
 /* Frecce mese su mobile — nascoste, rimpiazzate dallo swipe */
 @media (max-width: 600px) {
   .month-nav button { opacity: .45; font-size: 18px; padding: 0 6px; }
@@ -799,9 +804,9 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
   <div class="logo">Albergo<span class="logo-sub">prenotazioni</span></div>
   <div class="spacer"></div>
   <div class="month-nav">
-    <button onclick="changeMonth(-1)">‹</button>
+    <button onclick="changeMonth(-1)" title="Mese precedente (o scrolla)">‹</button>
     <div class="mlabel" id="mlabel">GEN 2026</div>
-    <button onclick="changeMonth(1)">›</button>
+    <button onclick="changeMonth(1)" title="Mese successivo (o scrolla)">›</button>
   </div>
   <button class="btn btn-icon sync-btn" onclick="forceSync()" title="Leggi da JSON_2026 (1 chiamata API)">
     ↻<span class="sync-dot" id="syncDot"></span>
