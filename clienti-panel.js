@@ -599,20 +599,54 @@ async function cpMerge() {
   if (!confirm(`Unificare in "${master.nome}"?\nLe prenotazioni di ${toMerge.map(c=>c.nome).join(', ')} verranno attribuite a ${master.nome}.`)) return;
   try {
     if (typeof showLoading==='function') showLoading('Unificazione...');
+
     for (const dup of toMerge) {
+      // 1. Aggiorna il clienteId di tutte le prenotazioni del duplicato → master
       const dupBs = typeof bookings!=='undefined' ? bookings.filter(b=>b.clienteId===dup.id) : [];
       for (const b of dupBs) {
         b.clienteId = master.id;
         if (typeof dbUpdateRow==='function') await dbUpdateRow(b.dbRow, bookingToDbRow(b, b.fonte||'app'));
       }
+
+      // 2. Aggiorna il contatore soggiorni del master
+      master.nSoggiorni = (master.nSoggiorni||0) + (dup.nSoggiorni||0);
+
+      // 3. Marca il duplicato come [UNIFICATO] nel foglio CLIENTI
+      //    Sovrascrive la colonna B (NOME) per escluderlo dai futuri caricamenti
+      if (dup.dbRow && DATABASE_SHEET_ID) {
+        const nomeMarcato = '[UNIFICATO→' + master.id + ']';
+        const rangeUnif = encodeURIComponent(
+          CLIENTI_SHEET + '!A' + dup.dbRow + ':O' + dup.dbRow
+        );
+        const rowUnif = [
+          dup.id, nomeMarcato, dup.email, dup.telefono,
+          dup.docTipo, dup.docNum, dup.nazionalita, dup.dataNascita,
+          dup.note, dup.primaVisita, String(dup.nSoggiorni||0),
+          dup.tsCreazione||'', new Date().toISOString(),
+          dup.cfPiva||'', dup.indirizzo||''
+        ];
+        await apiFetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${rangeUnif}?valueInputOption=RAW`,
+          { method:'PUT', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ values:[rowUnif] }) }
+        );
+      }
     }
+
+    // 4. Aggiorna il master nel foglio (soggiorni aggiornati)
+    if (typeof aggiornaCliente==='function') await aggiornaCliente(master);
+
+    // 5. Invalida la cache così loadClienti rilegge dal foglio
+    if (typeof _clientiCache !== 'undefined') window._clientiCache = null;
+
     _cpMergeSet.clear();
     if (typeof hideLoading==='function') hideLoading();
-    if (typeof showToast==='function') showToast('✅ Clienti unificati','success');
+    if (typeof showToast==='function') showToast('✅ Clienti unificati — duplicati rimossi dal registro','success');
     await cpInit();
   } catch(e) {
     if (typeof hideLoading==='function') hideLoading();
     if (typeof showToast==='function') showToast('❌ '+e.message,'error');
+    console.error('[cpMerge]', e);
   }
 }
 
