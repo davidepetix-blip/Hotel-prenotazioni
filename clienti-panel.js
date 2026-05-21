@@ -371,9 +371,14 @@ function cpEditClient(id) {
 // ── Modale dettaglio/edit ─────────────────────────────────────────
 // Renderizzata FUORI dal layout del pannello — nessun conflitto con overflow/z-index
 function _cpOpenModal() {
-  _cpCloseModal(); // rimuovi eventuale modale precedente
+  _cpCloseModal();
   const c = _cpSelected;
-  if (!c) return;
+  // LOG visibile per debug — rimosso dopo verifica
+  console.log('[CP] _cpOpenModal: _cpSelected=', _cpSelected, '_cpEditMode=', _cpEditMode);
+  if (!c) {
+    console.warn('[CP] _cpOpenModal: _cpSelected è null — ritorno');
+    return;
+  }
 
   const ov = document.createElement('div');
   ov.id = 'cp-modal-ov';
@@ -394,6 +399,7 @@ function _cpOpenModal() {
 
   ov.appendChild(box);
   document.body.appendChild(ov);
+  console.log('[CP] modal appendato a body, id=cp-modal-ov, trovato:', !!document.getElementById('cp-modal-ov'));
 }
 
 function _cpCloseModal() {
@@ -625,19 +631,24 @@ function cpDebug() {
     const primo = _cpClienti[0];
     lines.push(inf('Test con: "' + primo.nome + '" (' + primo._tipo + ')'));
     try {
-      window._cpSelected = primo;
-      window._cpEditMode = null;
-      window._cpNewClientFor = null;
-      _cpOpenModal();
-      const modalOk = !!document.getElementById('cp-modal-ov');
-      lines.push((modalOk ? ok : err)('_cpOpenModal() eseguita — modal nel DOM: ' + modalOk));
-      if (modalOk) {
-        lines.push(ok('FUNZIONA! Chiudo il modal di test...'));
-        setTimeout(_cpCloseModal, 2000);
-      }
+      // Test con cpSelectClient (flow reale — imposta _cpSelected internamente)
+      lines.push(inf('Chiamo cpSelectClient("' + primo.id + '")...'));
+      cpSelectClient(primo.id);
+      // Piccola pausa poi verifica
+      setTimeout(() => {
+        const modalOk = !!document.getElementById('cp-modal-ov');
+        lines.push((modalOk ? ok : err)('modal nel DOM dopo cpSelectClient: ' + modalOk));
+        if (!modalOk) {
+          lines.push(err('Il modal non è stato creato — controlla la console del browser'));
+        } else {
+          lines.push(ok('FUNZIONA! Chiudo tra 3s...'));
+          setTimeout(_cpCloseModal, 3000);
+        }
+        _cpShowDebugModal(lines);
+      }, 150);
+      return; // _cpShowDebugModal chiamato nel timeout
     } catch(e) {
-      lines.push(err('_cpOpenModal() ERRORE: ' + e.message));
-      lines.push(err('Stack: ' + (e.stack||'').split('\n')[1]));
+      lines.push(err('ERRORE: ' + e.message));
     }
   } else {
     lines.push(err('_cpClienti vuoto — loadClienti non ha caricato dati'));
