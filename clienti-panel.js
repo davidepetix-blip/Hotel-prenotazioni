@@ -264,7 +264,7 @@ function cpRender() {
 
 // ── Detail panel ──────────────────────────────────────────────────
 function cpDetailHTML(c) {
-  if (_cpEditMode === c.id) return cpEditFormHTML(c);
+  // Delegato a modal — questa funzione non è più usata
   const bs = _cpGetBookings(c);
   const row = (k, v) => v ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:11px;color:var(--text3)">${k}</span><span style="font-size:11px;color:var(--text);font-weight:500;text-align:right;max-width:200px">${v}</span></div>` : '';
 
@@ -383,10 +383,16 @@ function _cpOpenModal() {
   const box = document.createElement('div');
   box.id = 'cp-modal-box';
   box.style.cssText = 'background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-md);width:min(480px,100%);max-height:90vh;overflow-y:auto;border:1px solid var(--border)';
-  box.innerHTML = (_cpEditMode === c.id) ? cpEditFormHTML(c) : cpDetailModalHTML(c);
+  try {
+    box.innerHTML = (_cpEditMode === c.id) ? cpEditFormHTML(c) : cpDetailModalHTML(c);
+  } catch(e) {
+    box.innerHTML = `<div style="padding:20px;color:red;font-family:monospace;font-size:12px">
+      <b>Errore rendering modal:</b><br>${e.message}<br><br>
+      <button onclick="document.getElementById('cp-modal-ov').remove()" style="margin-top:8px">Chiudi</button>
+    </div>`;
+  }
 
   ov.appendChild(box);
-  // Monta FUORI da cp-panel per evitare conflitti di stacking context
   document.body.appendChild(ov);
 }
 
@@ -395,6 +401,50 @@ function _cpCloseModal() {
 }
 
 // ── Detail view nel modal (non-edit mode) ─────────────────────────
+function cpEditFormHTML(c) {
+  const iNew = !!_cpNewClientFor;
+  const inp = (id, lbl, val, type, ph) =>
+    `<div style="margin-bottom:10px">
+      <label style="display:block;font-size:11px;font-weight:600;color:var(--text3);margin-bottom:3px">${lbl}</label>
+      <input id="cp-edit-${id}" type="${type||'text'}" value="${(val||'').toString().replace(/"/g,'&quot;')}" placeholder="${ph||''}"
+        style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;color:var(--text);background:var(--bg);box-sizing:border-box">
+    </div>`;
+
+  const docOpts = ['CI','Passaporto','Patente','Altro'].map(o =>
+    `<option value="${o}" ${(c.docTipo||'CI')===o?'selected':''}>${o}</option>`).join('');
+
+  return `
+    <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:14px;font-weight:700;color:var(--text)">${iNew ? '+ Nuova scheda' : '✎ Modifica cliente'}</div>
+      <button class="btn" style="padding:4px 10px;height:auto" onclick="cpCancelEdit()">← Indietro</button>
+    </div>
+    <div style="padding:14px 16px">
+      ${iNew ? `<div style="margin-bottom:12px;padding:8px;background:var(--success-light);border-radius:var(--radius);font-size:12px;color:var(--success)">
+        Creazione scheda per <b>${c.nome}</b> — ${_cpGetBookings(c).length} prenotaz. verranno collegate.
+      </div>` : ''}
+      ${inp('nome','Nome completo *',c.nome,'text','Mario Rossi')}
+      ${inp('email','Email',c.email,'email','mario@example.com')}
+      ${inp('tel','Telefono',c.telefono,'tel','+39 333 123456')}
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="flex:0 0 130px">
+          <label style="display:block;font-size:11px;font-weight:600;color:var(--text3);margin-bottom:3px">Documento</label>
+          <select id="cp-edit-docTipo" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;color:var(--text);background:var(--bg)">${docOpts}</select>
+        </div>
+        <div style="flex:1">${inp('docNum','Numero',c.docNum,'text','AB1234567')}</div>
+      </div>
+      ${inp('naz','Nazionalità',c.nazionalita||'IT','text','IT')}
+      ${inp('dataN','Data di nascita',c.dataNascita,'text','gg/mm/aaaa')}
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--text3);margin-bottom:3px">Note</label>
+        <textarea id="cp-edit-note" rows="2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical">${c.note||''}</textarea>
+      </div>
+      <button id="cp-save-btn" class="btn" onclick="cpSaveClient()"
+        style="width:100%;background:var(--accent);color:#fff;border-color:var(--accent);justify-content:center;font-size:14px;padding:10px;height:auto">
+        💾 ${iNew ? 'Crea scheda anagrafica' : 'Salva modifiche'}
+      </button>
+    </div>`;
+}
+
 function cpDetailModalHTML(c) {
   const bs = _cpGetBookings(c);
   const row = (k, v) => v
