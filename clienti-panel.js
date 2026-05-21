@@ -168,6 +168,7 @@ function cpRender() {
       <div style="flex:1"></div>
       <button class="btn" onclick="cpEsportaCSV()">↓ CSV</button>
       <button class="btn" onclick="cpInit()">↺</button>
+      <button class="btn" onclick="cpDebug()" style="background:#f59e0b;color:#fff;border-color:#f59e0b">🐛</button>
       <button class="btn" onclick="closeClientiPanel()">✕ Chiudi</button>
     </div>
 
@@ -540,6 +541,94 @@ async function cpMerge() {
     if (typeof hideLoading==='function') hideLoading();
     if (typeof showToast==='function') showToast('❌ '+e.message,'error');
   }
+}
+
+function cpDebug() {
+  const lines = [];
+  const ok  = s => '✅ ' + s;
+  const err = s => '❌ ' + s;
+  const inf = s => 'ℹ ' + s;
+
+  lines.push('── VERSIONI ──');
+  lines.push(inf('_blipStorePatch: ' + (window._blipStorePatch || 'NON CARICATO')));
+  lines.push(inf('BLIP_VER_CP: ' + (typeof BLIP_VER_CP !== 'undefined' ? BLIP_VER_CP : 'N/D')));
+
+  lines.push('── FUNZIONI ──');
+  ['cpCensisci','cpEditClient','_cpOpenModal','_cpCloseModal',
+   'cpDetailModalHTML','cpEditFormHTML','cpSaveClient',
+   'creaCliente','aggiornaCliente','loadClienti'].forEach(f => {
+    lines.push((typeof window[f]==='function' ? ok : err)(f));
+  });
+
+  lines.push('── STATO ──');
+  lines.push(inf('_cpClienti: ' + (typeof _cpClienti !== 'undefined' ? _cpClienti.length + ' clienti' : 'UNDEFINED')));
+  lines.push(inf('_cpSelected: ' + (typeof _cpSelected !== 'undefined' ? (_cpSelected?.nome || 'null') : 'UNDEFINED')));
+  lines.push(inf('_cpEditMode: ' + (typeof _cpEditMode !== 'undefined' ? _cpEditMode : 'UNDEFINED')));
+
+  lines.push('── DOM ──');
+  lines.push((document.getElementById('cp-panel') ? ok : err)('cp-panel'));
+  lines.push((document.getElementById('cp-app') ? ok : err)('cp-app'));
+  lines.push((document.getElementById('cp-modal-ov') ? ok : err)('cp-modal-ov (modal aperto)'));
+
+  lines.push('── TEST MODAL ──');
+  if (typeof _cpClienti !== 'undefined' && _cpClienti.length > 0) {
+    const primo = _cpClienti[0];
+    lines.push(inf('Test con: "' + primo.nome + '" (' + primo._tipo + ')'));
+    try {
+      window._cpSelected = primo;
+      window._cpEditMode = null;
+      window._cpNewClientFor = null;
+      _cpOpenModal();
+      const modalOk = !!document.getElementById('cp-modal-ov');
+      lines.push((modalOk ? ok : err)('_cpOpenModal() eseguita — modal nel DOM: ' + modalOk));
+      if (modalOk) {
+        lines.push(ok('FUNZIONA! Chiudo il modal di test...'));
+        setTimeout(_cpCloseModal, 2000);
+      }
+    } catch(e) {
+      lines.push(err('_cpOpenModal() ERRORE: ' + e.message));
+      lines.push(err('Stack: ' + (e.stack||'').split('\n')[1]));
+    }
+  } else {
+    lines.push(err('_cpClienti vuoto — loadClienti non ha caricato dati'));
+    // Prova loadClienti
+    if (typeof loadClienti === 'function') {
+      lines.push(inf('Tentativo loadClienti()...'));
+      loadClienti(true).then(r => {
+        lines.push(ok('loadClienti OK: ' + r.length + ' clienti'));
+        _cpShowDebugModal(lines);
+      }).catch(e => {
+        lines.push(err('loadClienti ERRORE: ' + e.message));
+        _cpShowDebugModal(lines);
+      });
+      return;
+    }
+  }
+  _cpShowDebugModal(lines);
+}
+
+function _cpShowDebugModal(lines) {
+  document.getElementById('cp-debug-modal')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'cp-debug-modal';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML = `
+    <div style="background:#1a1a1a;color:#e8e8e8;border-radius:8px;width:min(520px,100%);max-height:85vh;overflow:auto;font-family:monospace;font-size:12px;border:1px solid #333">
+      <div style="padding:10px 14px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-weight:700;color:#f59e0b">🐛 Blip Debug</span>
+        <button onclick="document.getElementById('cp-debug-modal').remove()" style="background:none;border:none;color:#999;font-size:18px;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:12px 14px;white-space:pre-wrap;line-height:1.8">${
+        lines.map(l =>
+          l.startsWith('✅') ? '<span style="color:#4ade80">'+l+'</span>' :
+          l.startsWith('❌') ? '<span style="color:#f87171">'+l+'</span>' :
+          l.startsWith('ℹ')  ? '<span style="color:#93c5fd">'+l+'</span>' :
+          '<span style="color:#f59e0b;font-weight:700">'+l+'</span>'
+        ).join('\n')
+      }</div>
+    </div>`;
+  ov.onclick = e => { if(e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
 }
 
 function cpEsportaCSV() {
