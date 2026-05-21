@@ -31,7 +31,9 @@ async function cpInit() {
 
   // 3. Unisci in lista unica
   _cpClienti = [
-    ...censiti.map(c => ({ ...c, _tipo: 'censito' })),
+    ...censiti
+      .filter(c => !c.nome.startsWith('[UNIFICATO') && !c.nome.startsWith('[ELIMINATO'))
+      .map(c => ({ ...c, _tipo: 'censito' })),
     ...daCensire.map(c => ({ ...c, _tipo: 'daCensire' })),
   ];
 
@@ -88,15 +90,30 @@ function _cpMinDate(bs) {
 
 // ── Trova duplicati per nome normalizzato ─────────────────────────
 function _cpFindDuplicates() {
+  const attivi = _cpClienti.filter(c =>
+    !c.nome.startsWith('[UNIFICATO') && !c.nome.startsWith('[ELIMINATO')
+  );
+  const dupIds = new Set();
+  // Criterio 1: stesso telefono
+  const byTel = {};
+  attivi.forEach(c => {
+    const t = (c.telefono||'').replace(/\s/g,'').replace(/^\+39/,'');
+    if (!t || t.length < 6) return;
+    if (!byTel[t]) byTel[t] = [];
+    byTel[t].push(c.id);
+  });
+  Object.values(byTel).filter(g=>g.length>1).forEach(g=>g.forEach(id=>dupIds.add(id)));
+  // Criterio 2: stesso nome normalizzato
   const byName = {};
-  _cpClienti.forEach(c => {
+  attivi.forEach(c => {
     const k = _normNome(c.nome);
     if (!byName[k]) byName[k] = [];
     byName[k].push(c.id);
   });
-  const dupIds = new Set();
-  Object.values(byName).filter(g => g.length > 1).forEach(g => g.forEach(id => dupIds.add(id)));
-  _cpClienti.forEach(c => { c._isDup = dupIds.has(c.id); });
+  Object.values(byName).filter(g=>g.length>1).forEach(g=>g.forEach(id=>dupIds.add(id)));
+  _cpClienti.forEach(c => {
+    c._isDup = dupIds.has(c.id) && !c.nome.startsWith('[UNIFICATO') && !c.nome.startsWith('[ELIMINATO');
+  });
 }
 
 // ── Filtra e ordina ───────────────────────────────────────────────
@@ -300,6 +317,8 @@ function cpDetailHTML(c) {
       ${row('Documento', c.docTipo ? c.docTipo+' '+c.docNum : c.docNum)}
       ${row('Nazionalità', c.nazionalita)}
       ${row('Data nascita', c.dataNascita)}
+      ${row('CF / P.IVA', c.cfPiva)}
+      ${row('Indirizzo', c.indirizzo)}
       ${row('Note', c.note)}
       ${!c.email && !c.docNum && c._tipo === 'censito' ? '<div style="font-size:11px;color:var(--text3)">Dati mancanti — modifica per completare</div>' : ''}
     </div>
@@ -433,6 +452,9 @@ function cpEditFormHTML(c) {
       </div>
       ${inp('naz','Nazionalità',c.nazionalita||'IT','text','IT')}
       ${inp('dataN','Data di nascita',c.dataNascita,'text','gg/mm/aaaa')}
+      <div style="margin:12px 0 6px;padding-top:8px;border-top:1px solid var(--border)"><span style="font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Dati fiscali / Azienda</span></div>
+      ${inp('cfpiva','CF / Partita IVA',c.cfPiva||'','text','RSSMRA80A01H501U')}
+      ${inp('indirizzo','Indirizzo',c.indirizzo||'','text','Via Roma 1, Milano')}
       <div style="margin-bottom:14px">
         <label style="display:block;font-size:11px;font-weight:600;color:var(--text3);margin-bottom:3px">Note</label>
         <textarea id="cp-edit-note" rows="2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;color:var(--text);background:var(--bg);box-sizing:border-box;resize:vertical">${c.note||''}</textarea>
@@ -520,12 +542,14 @@ async function cpSaveClient() {
     const naz       = document.getElementById('cp-edit-naz')?.value?.trim() || '';
     const dataN     = document.getElementById('cp-edit-dataN')?.value?.trim() || '';
     const note      = document.getElementById('cp-edit-note')?.value?.trim() || '';
+    const cfPiva    = document.getElementById('cp-edit-cfpiva')?.value?.trim() || '';
+    const indirizzo = document.getElementById('cp-edit-indirizzo')?.value?.trim() || '';
 
     if (!nome) { alert('Il nome è obbligatorio.'); if(btn){btn.disabled=false;btn.textContent='💾 Salva';} return; }
 
     if (_cpNewClientFor) {
       // Crea nuovo cliente
-      const created = await creaCliente({ nome, email, telefono, docTipo, docNum, nazionalita:naz, dataNascita:dataN, note });
+      const created = await creaCliente({ nome, email, telefono, docTipo, docNum, nazionalita:naz, dataNascita:dataN, note, cfPiva, indirizzo });
       // Collega tutte le prenotazioni del "da censire" al nuovo cliente
       const k = _normNome(nome);
       const uncBs = typeof bookings !== 'undefined'
@@ -543,7 +567,7 @@ async function cpSaveClient() {
       // Aggiorna cliente esistente
       const c = _cpClienti.find(x => x.id === _cpEditMode);
       if (!c) return;
-      Object.assign(c, { nome, email, telefono, docTipo, docNum, nazionalita:naz, dataNascita:dataN, note });
+      Object.assign(c, { nome, email, telefono, docTipo, docNum, nazionalita:naz, dataNascita:dataN, note, cfPiva, indirizzo });
       if (typeof aggiornaCliente === 'function') await aggiornaCliente(c);
       if (typeof showToast === 'function') showToast('✅ Cliente aggiornato', 'success');
       _cpCloseModal();
@@ -686,10 +710,10 @@ function _cpShowDebugModal(lines) {
 }
 
 function cpEsportaCSV() {
-  const header = 'ID,Nome,Stato,Email,Telefono,Doc,Nazionalità,Data nascita,Prima visita,Soggiorni';
+  const header = 'ID,Nome,Stato,Email,Telefono,Doc,CF/PIVA,Indirizzo,Nazionalità,Data nascita,Prima visita,Soggiorni';
   const rows = _cpFiltered.map(c =>
     [c.id,c.nome,c._tipo==='censito'?'Censito':'Da censire',c.email,c.telefono,
-     (c.docTipo||'')+' '+(c.docNum||''),c.nazionalita,c.dataNascita,c.primaVisita,c.nSoggiorni]
+     (c.docTipo||'')+' '+(c.docNum||''),c.cfPiva||'',c.indirizzo||'',c.nazionalita,c.dataNascita,c.primaVisita,c.nSoggiorni]
     .map(v=>`"${(v||'').toString().replace(/"/g,'""')}"`).join(',')
   );
   const a = document.createElement('a');

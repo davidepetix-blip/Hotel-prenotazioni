@@ -3,7 +3,7 @@
 // Dipende da: core.js, sync.js (DATABASE_SHEET_ID, apiFetch, dbGet)
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_CLIENTI = '1';
+const BLIP_VER_CLIENTI = '2';
 
 const CLIENTI_SHEET = 'CLIENTI';
 
@@ -22,6 +22,8 @@ const CLI_COLS = {
   N_SOGGIORNI: 11, // K
   TS_CREAZIONE:12, // L
   TS_AGG:      13, // M
+  CF_PIVA:     14, // N  CF o Partita IVA
+  INDIRIZZO:   15, // O  indirizzo completo
 };
 
 // Cache in-memory per la sessione
@@ -54,7 +56,7 @@ async function ensureClientiSheet() {
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(CLIENTI_SHEET+'!A1:M1')}?valueInputOption=RAW`;
       await apiFetch(url, {
         method: 'PUT', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ values: [['CLIENTE_ID','NOME','EMAIL','TELEFONO','DOC_TIPO','DOC_NUM','NAZIONALITA','DATA_NASCITA','NOTE','PRIMA_VISITA','N_SOGGIORNI','TS_CREAZIONE','TS_AGG']] })
+        body: JSON.stringify({ values: [['CLIENTE_ID','NOME','EMAIL','TELEFONO','DOC_TIPO','DOC_NUM','NAZIONALITA','DATA_NASCITA','NOTE','PRIMA_VISITA','N_SOGGIORNI','TS_CREAZIONE','TS_AGG','CF_PIVA','INDIRIZZO']] })
       });
     }
   } catch(e) { console.warn('[CLIENTI] ensure:', e.message); }
@@ -79,6 +81,8 @@ function _rowToCliente(row, rowNum) {
     nSoggiorni:  parseInt(get(CLI_COLS.N_SOGGIORNI - 1)) || 0,
     tsCreazione: get(CLI_COLS.TS_CREAZIONE - 1),
     tsAgg:       get(CLI_COLS.TS_AGG - 1),
+    cfPiva:      get(CLI_COLS.CF_PIVA - 1),
+    indirizzo:   get(CLI_COLS.INDIRIZZO - 1),
     dbRow:       rowNum,
   };
 }
@@ -90,7 +94,7 @@ async function loadClienti(forceRefresh = false) {
   if (!DATABASE_SHEET_ID) return [];
   try {
     await ensureClientiSheet();
-    const d = await dbGet(`${CLIENTI_SHEET}!A2:M9999`);
+    const d = await dbGet(`${CLIENTI_SHEET}!A2:O9999`);
     const rows = d.values || [];
     _clientiCache = rows
       .map((row, i) => _rowToCliente(row, i + 2))
@@ -138,6 +142,8 @@ function _clienteToRow(c) {
     String(c.nSoggiorni || 1),
     c.tsCreazione || now,
     now,
+    c.cfPiva      || '',
+    c.indirizzo   || '',
   ];
 }
 
@@ -170,7 +176,7 @@ async function creaCliente(dati) {
 async function aggiornaCliente(cliente) {
   if (!DATABASE_SHEET_ID || !cliente.dbRow) throw new Error('dbRow mancante');
   const row = _clienteToRow(cliente);
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(CLIENTI_SHEET+'!A'+cliente.dbRow+':M'+cliente.dbRow)}?valueInputOption=RAW`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(CLIENTI_SHEET+'!A'+cliente.dbRow+':O'+cliente.dbRow)}?valueInputOption=RAW`;
   const r = await apiFetch(url, {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ values: [row] })
