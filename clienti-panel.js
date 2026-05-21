@@ -247,11 +247,7 @@ function cpRender() {
         `}
       </div>
 
-      ${_cpSelected ? `
-        <div id="cp-detail-panel" class="cp-detail-panel">
-          ${cpDetailHTML(_cpSelected)}
-        </div>
-      ` : ''}
+
     </div>
 
     ${_cpMergeSet.size >= 2 ? `
@@ -339,11 +335,9 @@ function cpSort(key)    { _cpSort = _cpSort.key===key?{key,dir:-_cpSort.dir}:{ke
 
 function cpSelectClient(id) {
   _cpSelected = _cpClienti.find(c => c.id === id) || null;
-  cpRender();
-  // Su mobile scrolla il panel in cima
-  if (window.innerWidth < 700) {
-    setTimeout(() => document.getElementById('cp-detail-panel')?.scrollIntoView(), 50);
-  }
+  _cpEditMode = null;
+  _cpNewClientFor = null;
+  _cpOpenModal();
 }
 function cpToggleMerge(id, on) { if(on) _cpMergeSet.add(id); else _cpMergeSet.delete(id); cpRender(); }
 function cpSelectAll(on)       { if(on) _cpFiltered.forEach(c=>_cpMergeSet.add(c.id)); else _cpMergeSet.clear(); cpRender(); }
@@ -359,23 +353,109 @@ function cpPrepareMergeGroup(id) {
 
 function cpCensisci(id) {
   _cpSelected = _cpClienti.find(c => c.id === id) || null;
-  _cpNewClientFor = id; // indica che stiamo creando ex-novo per questo "da censire"
+  _cpNewClientFor = id;
   _cpEditMode = id;
-  cpRender();
-  setTimeout(() => {
-    document.getElementById('cp-edit-nome')?.focus();
-    if (window.innerWidth < 700) document.getElementById('cp-detail-panel')?.scrollIntoView({ behavior:'smooth' });
-  }, 80);
+  _cpOpenModal();
+  setTimeout(() => document.getElementById('cp-edit-nome')?.focus(), 120);
 }
 
 function cpEditClient(id) {
   _cpSelected = _cpClienti.find(c => c.id === id) || null;
   _cpEditMode = id;
-  cpRender();
-  setTimeout(() => {
-    document.getElementById('cp-edit-nome')?.focus();
-    if (window.innerWidth < 700) document.getElementById('cp-detail-panel')?.scrollIntoView();
-  }, 50);
+  _cpNewClientFor = null;
+  _cpOpenModal();
+  setTimeout(() => document.getElementById('cp-edit-nome')?.focus(), 120);
+}
+
+// ── Modale dettaglio/edit ─────────────────────────────────────────
+// Renderizzata FUORI dal layout del pannello — nessun conflitto con overflow/z-index
+function _cpOpenModal() {
+  _cpCloseModal(); // rimuovi eventuale modale precedente
+  const c = _cpSelected;
+  if (!c) return;
+
+  const ov = document.createElement('div');
+  ov.id = 'cp-modal-ov';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.onclick = e => { if (e.target === ov) _cpCloseModal(); };
+
+  const box = document.createElement('div');
+  box.id = 'cp-modal-box';
+  box.style.cssText = 'background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-md);width:min(480px,100%);max-height:90vh;overflow-y:auto;border:1px solid var(--border)';
+  box.innerHTML = (_cpEditMode === c.id) ? cpEditFormHTML(c) : cpDetailModalHTML(c);
+
+  ov.appendChild(box);
+  // Monta FUORI da cp-panel per evitare conflitti di stacking context
+  document.body.appendChild(ov);
+}
+
+function _cpCloseModal() {
+  document.getElementById('cp-modal-ov')?.remove();
+}
+
+// ── Detail view nel modal (non-edit mode) ─────────────────────────
+function cpDetailModalHTML(c) {
+  const bs = _cpGetBookings(c);
+  const row = (k, v) => v
+    ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;gap:12px"><span style="font-size:11px;color:var(--text3);white-space:nowrap">${k}</span><span style="font-size:11px;color:var(--text);font-weight:500;text-align:right">${v}</span></div>`
+    : '';
+
+  return `
+    <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--text)">${c.nome}</div>
+        <div style="font-size:10px;color:var(--text3);font-family:monospace">${c.id}</div>
+      </div>
+      <button class="btn" style="padding:4px 10px;height:auto;font-size:12px;flex-shrink:0" onclick="_cpCloseModal()">✕ Chiudi</button>
+    </div>
+
+    ${c._tipo === 'daCensire' ? `
+      <div style="margin:12px 16px;padding:10px;background:var(--danger-light);border-radius:var(--radius)">
+        <div style="font-size:12px;font-weight:600;color:var(--danger);margin-bottom:6px">⚠ Cliente non censito</div>
+        <button class="btn" style="background:var(--accent);color:#fff;border-color:var(--accent);font-size:12px;width:100%;justify-content:center"
+          onclick="_cpCloseModal();cpCensisci('${c.id}')">+ Crea scheda anagrafica</button>
+      </div>` : ''}
+
+    ${c._isDup ? `
+      <div style="margin:12px 16px;padding:10px;background:#fff8f0;border-radius:var(--radius);border:1px solid #fde8c8">
+        <div style="font-size:11px;font-weight:600;color:#856404;margin-bottom:6px">≡ Possibile duplicato</div>
+        <button class="btn" style="background:#f59e0b;color:#fff;border-color:#f59e0b;font-size:11px;width:100%;justify-content:center"
+          onclick="_cpCloseModal();cpPrepareMergeGroup('${c.id}')">⚡ Prepara unificazione</button>
+      </div>` : ''}
+
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+      <div style="font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Dati anagrafici</div>
+      ${row('Email', c.email)}
+      ${row('Telefono', c.telefono)}
+      ${row('Documento', c.docTipo ? c.docTipo+' '+c.docNum : c.docNum)}
+      ${row('Nazionalità', c.nazionalita)}
+      ${row('Data nascita', c.dataNascita)}
+      ${row('Note', c.note)}
+      ${c._tipo === 'censito' && !c.email && !c.docNum ? '<div style="font-size:11px;color:var(--text3)">Dati mancanti</div>' : ''}
+    </div>
+
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+      <div style="font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Soggiorni (${bs.length})</div>
+      ${bs.length === 0
+        ? '<div style="font-size:11px;color:var(--text3)">Nessuna prenotazione collegata</div>'
+        : bs.sort((a,b) => new Date(b.s)-new Date(a.s)).slice(0,6).map(b => `
+          <div onclick="_cpCloseModal();setTimeout(()=>{selBook(${b.id},null)},100)" style="padding:7px 8px;border-radius:var(--radius);margin-bottom:4px;background:var(--surface2);border:1px solid var(--border);cursor:pointer">
+            <div style="display:flex;justify-content:space-between">
+              <span style="font-size:11px;font-weight:600">${typeof fmt==='function'?fmt(b.s):b.s} → ${typeof fmt==='function'?fmt(b.e):b.e}</span>
+              <span style="font-size:10px;color:var(--text3)">${Math.round((new Date(b.e)-new Date(b.s))/86400000)}n</span>
+            </div>
+            <div style="font-size:10px;color:var(--text3);margin-top:2px">Camera ${typeof roomName==='function'?roomName(b.r):b.r} · ${b.d||'—'}</div>
+          </div>
+        `).join('')}
+    </div>
+
+    <div style="padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap">
+      ${c._tipo === 'censito'
+        ? `<button class="btn" style="background:var(--accent);color:#fff;border-color:var(--accent)" onclick="_cpCloseModal();cpEditClient('${c.id}')">✎ Modifica dati</button>`
+        : ''}
+      <button class="btn" onclick="_cpCloseModal();cpToggleMerge('${c.id}',true)">+ Unifica</button>
+    </div>
+  `;
 }
 
 async function cpSaveClient() {
@@ -408,6 +488,7 @@ async function cpSaveClient() {
         }
       }
       if (typeof showToast === 'function') showToast('✅ Scheda anagrafica creata — ' + uncBs.length + ' prenotaz. collegate', 'success');
+      _cpCloseModal();
     } else {
       // Aggiorna cliente esistente
       const c = _cpClienti.find(x => x.id === _cpEditMode);
@@ -415,6 +496,7 @@ async function cpSaveClient() {
       Object.assign(c, { nome, email, telefono, docTipo, docNum, nazionalita:naz, dataNascita:dataN, note });
       if (typeof aggiornaCliente === 'function') await aggiornaCliente(c);
       if (typeof showToast === 'function') showToast('✅ Cliente aggiornato', 'success');
+      _cpCloseModal();
     }
 
     _cpEditMode = null;
@@ -429,7 +511,8 @@ async function cpSaveClient() {
 function cpCancelEdit() {
   _cpEditMode = null;
   _cpNewClientFor = null;
-  cpRender();
+  _cpSelected = null;
+  _cpCloseModal();
 }
 
 async function cpMerge() {
