@@ -168,7 +168,6 @@ function cpRender() {
       <div style="flex:1"></div>
       <button class="btn" onclick="cpEsportaCSV()">↓ CSV</button>
       <button class="btn" onclick="cpInit()">↺</button>
-      <button class="btn" onclick="cpDebug()" style="background:#f59e0b;color:#fff;border-color:#f59e0b">🐛</button>
       <button class="btn" onclick="closeClientiPanel()">✕ Chiudi</button>
     </div>
 
@@ -373,12 +372,7 @@ function cpEditClient(id) {
 function _cpOpenModal() {
   _cpCloseModal();
   const c = _cpSelected;
-  // LOG visibile per debug — rimosso dopo verifica
-  console.log('[CP] _cpOpenModal: _cpSelected=', _cpSelected, '_cpEditMode=', _cpEditMode);
-  if (!c) {
-    console.warn('[CP] _cpOpenModal: _cpSelected è null — ritorno');
-    return;
-  }
+  if (!c) return;
 
   const ov = document.createElement('div');
   ov.id = 'cp-modal-ov';
@@ -399,7 +393,6 @@ function _cpOpenModal() {
 
   ov.appendChild(box);
   document.body.appendChild(ov);
-  console.log('[CP] modal appendato a body, id=cp-modal-ov, trovato:', !!document.getElementById('cp-modal-ov'));
 }
 
 function _cpCloseModal() {
