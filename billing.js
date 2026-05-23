@@ -2557,7 +2557,16 @@ function renderContoGruppo() {
   const alDef  = `${curY}-${mesPad(curM+1)}-${new Date(curY,curM+1,0).getDate()}`;
 
   // Autocomplete nomi clienti
-  const nomiUnici = [...new Set(bookings.map(b=>b.n).filter(Boolean))].sort();
+  // Datalist: prima i clienti censiti (con nome anagrafica ufficiale),
+  // poi i nomi "da censire" presenti nel Gantt non ancora collegati a un cliente
+  const clientiCensiti = typeof _clientiCache !== 'undefined' && _clientiCache
+    ? _clientiCache.filter(c => !c.nome.startsWith('[UNIFICATO') && !c.nome.startsWith('[ELIMINATO'))
+    : [];
+  const nomiCensiti = clientiCensiti.map(c => c.nome);
+  const nomiGanttNonCensiti = [...new Set(
+    bookings.filter(bk => !bk.clienteId && bk.n).map(bk => bk.n)
+  )].filter(n => !nomiCensiti.some(nc => nc.toLowerCase() === n.toLowerCase()));
+  const nomiUnici = [...nomiCensiti, ...nomiGanttNonCensiti].sort();
   const datalist  = nomiUnici.map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('');
 
   return `
@@ -2638,11 +2647,25 @@ function cercaContoGruppo() {
   const dalD = dal ? new Date(dal+'T00:00:00') : null;
   const alD  = al  ? new Date(al +'T23:59:59') : null;
 
-  // Cerca prenotazioni che contengono il nome e si sovrappongono al periodo
-  const trovate = bookings.filter(b => {
-    if (!b.n.toLowerCase().includes(nome)) return false;
-    if (dalD && b.e < dalD) return false;
-    if (alD  && b.s > alD)  return false;
+  // Cerca clienti censiti il cui nome corrisponde alla ricerca
+  const clientiMatch = typeof _clientiCache !== 'undefined' && _clientiCache
+    ? _clientiCache.filter(c =>
+        !c.nome.startsWith('[UNIFICATO') &&
+        !c.nome.startsWith('[ELIMINATO') &&
+        c.nome.toLowerCase().includes(nome)
+      )
+    : [];
+  const clienteIds = new Set(clientiMatch.map(c => c.id));
+
+  // Cerca prenotazioni per clienteId (anagrafica unificata) O per nome Gantt
+  const trovate = bookings.filter(bk => {
+    // Match per clienteId → copre tutte le varianti unificate
+    const matchCliente = bk.clienteId && clienteIds.has(bk.clienteId);
+    // Match per nome Gantt (fallback per prenotazioni non ancora censite)
+    const matchNome = bk.n && bk.n.toLowerCase().includes(nome);
+    if (!matchCliente && !matchNome) return false;
+    if (dalD && bk.e < dalD) return false;
+    if (alD  && bk.s > alD)  return false;
     return true;
   }).sort((a,b)=>a.s-b.s);
 
