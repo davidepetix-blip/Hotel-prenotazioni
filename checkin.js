@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '25'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '26'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -831,6 +831,10 @@ function _exportAlloggiatiItems(items){
     if(gIdx===0&&g.luogoRilascio&&!_alRisolviLuogo(g.luogoRilascio)){const k=_alNorm(g.luogoRilascio);if(!visti.has('R:'+k)){visti.add('R:'+k);comuniMancanti.push({nomeComune:g.luogoRilascio,label:'rilascio - '+cleanAl(g.cognome)+' '+cleanAl(g.nome)});}}
   });});
   if(comuniMancanti.length>0){_alChiediCodiciMancanti(comuniMancanti,()=>_exportAlloggiatiItems(items));return;}
+  _mostraAnteprimaAlloggiati(items); // mostra anteprima invece di scaricare direttamente
+}
+
+function _mostraAnteprimaAlloggiati(items){
   const toFmt=s=>{if(!s)return'          ';const c=s.replace(/-/g,'').replace(/\//g,'');if(c.length!==8)return'          ';let gg,mm,aaaa;if(/^(19|20)\d{6}$/.test(c)){aaaa=c.slice(0,4);mm=c.slice(4,6);gg=c.slice(6,8);}else{gg=c.slice(0,2);mm=c.slice(2,4);aaaa=c.slice(4,8);}return`${gg}/${mm}/${aaaa}`;};
   const nGiorni=(a,p)=>{try{const g=Math.round((new Date(p)-new Date(a))/86400000);return String(Math.min(Math.max(g,1),30)).padStart(2,'0');}catch{return'01';}};
   let lines=[];
@@ -861,6 +865,146 @@ function _exportAlloggiatiItems(items){
   const url=URL.createObjectURL(blob);const a=document.createElement('a');
   a.href=url;a.download=`alloggiati_${today}.txt`;a.click();URL.revokeObjectURL(url);
   showToast('File generato - '+lines.length+' record','success');
+  document.getElementById('al-preview-modal')?.remove();
+}
+
+// ── Anteprima Alloggiati con modifica manuale ──────────────────────
+// Mostra tutti i dati prima di generare il .txt.
+// L'utente può correggere codici stato/comune sbagliati.
+function _mostraAnteprimaAlloggiati(items) {
+  document.getElementById('al-preview-modal')?.remove();
+
+  // Costruisci struttura dati editabile per ogni ospite
+  const ospiti = [];
+  items.forEach(ci => {
+    const b = bookings.find(bk => bk.dbId === ci.preId);
+    const arrISO = ci.data;
+    const parISO = b ? new Date(b.e).toISOString().slice(0,10) : ci.data;
+    ci.guests.forEach((g, gIdx) => {
+      ospiti.push({
+        ci, b, arrISO, parISO,
+        isCapo: gIdx === 0,
+        gIdx,
+        // Campi modificabili
+        cognome:      g.cognome || '',
+        nome:         g.nome || '',
+        sesso:        g.sesso || 'M',
+        dataNascita:  g.dataNascita || '',
+        cittadinanza: g.cittadinanza || 'ITALIA',
+        luogoNascita: g.luogoNascita || '',
+        statoNascita: g.statoNascita || '',
+        tipoDoc:      g.tipoDoc || '',
+        numDoc:       g.numDoc || '',
+        luogoRilascio: g.luogoRilascio || '',
+      });
+    });
+  });
+
+  const rowHtml = (o, idx) => {
+    const notti = (() => { try { return Math.round((new Date(o.parISO)-new Date(o.arrISO))/86400000); } catch(e) { return 1; }})();
+    const bg = o.isCapo ? '' : 'background:var(--surface2);';
+    return `<div style="${bg}border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px" data-idx="${idx}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase">${o.isCapo ? '👤 Capo-gruppo / Singolo' : '👥 Accompagnatore'}</span>
+        <span style="font-size:10px;color:var(--text3)">${o.arrISO} · ${notti}n</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">
+        ${alEditCell(idx,'cognome','Cognome',o.cognome)}
+        ${alEditCell(idx,'nome','Nome',o.nome)}
+        ${alEditCell(idx,'dataNascita','Data nascita',o.dataNascita)}
+        ${alEditCell(idx,'luogoNascita','Luogo nascita',o.luogoNascita)}
+        ${alEditCell(idx,'cittadinanza','Cittadinanza',o.cittadinanza)}
+        ${alEditCell(idx,'statoNascita','Stato nascita',o.statoNascita)}
+        ${o.isCapo ? alEditCell(idx,'tipoDoc','Tipo doc',o.tipoDoc) : ''}
+        ${o.isCapo ? alEditCell(idx,'numDoc','N° documento',o.numDoc) : ''}
+        ${o.isCapo ? alEditCell(idx,'luogoRilascio','Luogo rilascio',o.luogoRilascio) : ''}
+      </div>
+    </div>`;
+  };
+
+  const modal = document.createElement('div');
+  modal.id = 'al-preview-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center;padding:0';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border-radius:16px 16px 0 0;width:min(640px,100%);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 -4px 32px rgba(0,0,0,.2)">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+        <span style="font-size:14px;font-weight:700;color:var(--text)">🛎 Anteprima Alloggiati Web</span>
+        <span style="font-size:11px;color:var(--text3);flex:1">${ospiti.length} record · Verifica e correggi prima di scaricare</span>
+        <button class="btn" style="padding:4px 10px;height:auto" onclick="document.getElementById('al-preview-modal').remove()">✕</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:12px 16px">
+        <div id="al-ospiti-list">
+          ${ospiti.map((o,i) => rowHtml(o,i)).join('')}
+        </div>
+      </div>
+      <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px">
+        <button class="btn" onclick="document.getElementById('al-preview-modal').remove()" style="flex:0 0 auto">Annulla</button>
+        <button class="btn primary" onclick="_scaricaDaAnteprima()" style="flex:1;justify-content:center;background:var(--accent);color:#fff;border-color:var(--accent)">
+          ⬇ Scarica .txt
+        </button>
+      </div>
+    </div>`;
+  modal.onclick = e => { if(e.target===modal) modal.remove(); };
+  document.body.appendChild(modal);
+
+  // Salva struttura ospiti globalmente per la funzione di download
+  window._alOspitiAnteprima = ospiti;
+}
+
+function alEditCell(idx, field, label, value) {
+  return `<div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:2px">${label}</div>
+    <input data-idx="${idx}" data-field="${field}" value="${(value||'').replace(/"/g,'&quot;')}"
+      onchange="window._alOspitiAnteprima[${idx}]['${field}']=this.value"
+      style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;background:var(--bg);color:var(--text);box-sizing:border-box">
+  </div>`;
+}
+
+function _scaricaDaAnteprima() {
+  const ospiti = window._alOspitiAnteprima;
+  if(!ospiti || !ospiti.length) return;
+  const today = new Date().toISOString().slice(0,10);
+  const toFmt = s => {
+    if(!s) return'          ';
+    const c=s.replace(/-/g,'').replace(/\//g,'');
+    if(c.length!==8) return'          ';
+    let gg,mm,aaaa;
+    if(/^(19|20)\d{6}$/.test(c)){aaaa=c.slice(0,4);mm=c.slice(4,6);gg=c.slice(6,8);}
+    else{gg=c.slice(0,2);mm=c.slice(2,4);aaaa=c.slice(4,8);}
+    return `${gg}/${mm}/${aaaa}`;
+  };
+  const nGiorni = (a,p) => {
+    try{const g=Math.round((new Date(p)-new Date(a))/86400000);return String(Math.min(Math.max(g,1),30)).padStart(2,'0');}catch{return'01';}
+  };
+  const lines = ospiti.map(o => {
+    const tipoAllog = o.isCapo ? '16' : '19';
+    const isIta = _normCitIsIta(o.cittadinanza||'ITALIA');
+    let comN='         ', provN='  ';
+    if(isIta && o.luogoNascita){
+      const found=_alCodiceComune(o.luogoNascita);
+      if(found){comN=found.cod;provN=padR(found.prov,2);}
+    }
+    const statoN=_alCodiceStato(isIta?'ITALIA':_normCitNome(o.statoNascita||o.cittadinanza||'ITALIA')).padStart(9,'0');
+    const cittad=_alCodiceStato(_normCitNome(o.cittadinanza||'ITALIA')).padStart(9,'0');
+    const tipoDoc=o.isCapo?padR(_alCodiceDoc(o.tipoDoc),5):'     ';
+    const numDoc=o.isCapo?padR(cleanAl(o.numDoc||''),20):'                    ';
+    let luogoRil='         ';
+    if(o.isCapo && o.luogoRilascio){const rl=_alRisolviLuogo(o.luogoRilascio);if(rl)luogoRil=rl.cod;}
+    const record=tipoAllog+toFmt(o.arrISO)+nGiorni(o.arrISO,o.parISO)+
+      padR(cleanAl(o.cognome),50)+padR(cleanAl(o.nome),30)+
+      (_alNorm(o.sesso||'M').charAt(0)==='F'?'2':'1')+
+      toFmt(o.dataNascita)+comN+provN+statoN+cittad+tipoDoc+numDoc+luogoRil;
+    if(record.length!==168) console.warn('[Alloggiati] len='+record.length, o.cognome);
+    return record;
+  });
+  const content=lines.join('\r\n');
+  const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=`alloggiati_${today}.txt`; a.click();
+  URL.revokeObjectURL(url);
+  showToast('File scaricato — '+lines.length+' record','success');
+  document.getElementById('al-preview-modal')?.remove();
 }
 
 // Helper testo Alloggiati Web

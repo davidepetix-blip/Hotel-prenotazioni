@@ -439,7 +439,8 @@ function renderCheckinDrawerTab(bookingNumId, _reloaded=false) {
   if (typeof syncLog === 'function') syncLog('CI trovato: '+(ci?'SI cam='+ci.camera+' data='+ci.data:'NO'), ci?'ok':'wrn');
   const oggi = new Date().toISOString().slice(0,10);
   const checkinDate = b.s.toISOString().slice(0,10);
-  const isLate = checkinDate < oggi;
+  const isToday = checkinDate === oggi;
+  const isLate  = checkinDate < oggi; // check-in già passato (ieri o prima)
   if (ci) {
     const capo = ci.guests && ci.guests[0] ? ci.guests[0] : {};
     tabEl.innerHTML =
@@ -454,11 +455,17 @@ function renderCheckinDrawerTab(bookingNumId, _reloaded=false) {
       '<button class="btn" onclick="exportAlloggiati(\'all\')" style="flex:1;justify-content:center">⬇ .txt</button>' +
       '</div></div>';
   } else if (checkinDate <= oggi) {
-    const giorni = Math.round((Date.now() - b.s.getTime()) / 86400000);
+    // Calcola giorni di ritardo in base alle DATE (non orari) per evitare falsi ritardi
+    const msPerDay = 86400000;
+    const todayMidnight = new Date(oggi + 'T00:00:00').getTime();
+    const checkinMidnight = new Date(checkinDate + 'T00:00:00').getTime();
+    const giorni = Math.round((todayMidnight - checkinMidnight) / msPerDay);
+    const ritardoMsg = isLate && giorni > 0
+      ? '<div style="background:#f8d7da;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#842029">' +
+        '⚠ Check-in in ritardo<br><span style="font-size:11px">Arrivo ' + giorni + ' giorno' + (giorni > 1 ? 'i' : '') + ' fa</span></div>'
+      : (isToday ? '<div style="background:#fff3cd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#664d03">🛎 Arrivo previsto oggi</div>' : '');
     tabEl.innerHTML =
-      '<div style="padding:14px">' +
-      (isLate ? '<div style="background:#f8d7da;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#842029">' +
-        '⚠ Check-in in ritardo<br><span style="font-size:11px">Arrivo ' + giorni + ' giorno/i fa</span></div>' : '') +
+      '<div style="padding:14px">' + ritardoMsg +
       '<button class="btn primary" onclick="openCiModal(\'' + b.dbId + '\')" style="width:100%;justify-content:center;margin-top:4px">' +
       '🛎 Registra check-in ora</button></div>';
   } else {
