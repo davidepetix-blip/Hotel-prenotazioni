@@ -2225,7 +2225,7 @@ function renderContiLista() {
         ].filter(Boolean).join(' · ');
         return `<div class="bill-list-item">
           <div class="bill-list-dot" style="background:${dot}"></div>
-          <div class="bill-list-info" onclick="riapriFoglio('${c.bookingId}')" style="cursor:pointer;flex:1">
+          <div class="bill-list-info" onclick="${c.isGroupMaster && c.groupId ? `riapriFogliGruppo('${c.groupId}')` : `riapriFoglio('${c.bookingId}')`}" style="cursor:pointer;flex:1">
             <div class="bill-list-name">${c.nome} ${isGruppo?'<span style="font-size:9px;background:#e8f4fd;color:#1a6fa8;padding:1px 5px;border-radius:8px;margin-left:4px">GRUPPO</span>':''}</div>
             <div class="bill-list-sub">Cam. ${c.camera} · ${fmt(ci)} → ${fmt(co)}</div>
             ${metaExtra?`<div style="font-size:10px;color:var(--text3);margin-top:2px">${metaExtra}</div>`:''}
