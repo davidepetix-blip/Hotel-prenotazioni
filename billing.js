@@ -2892,51 +2892,86 @@ function editExtraGruppoSalvato(btn, labelOld, qtyOld, prezzoOld, totOld) {
   const g = window._gruppoCorrente;
   if (!g) return;
 
+  // Salva riferimento al container della riga nel DOM (prima che l'overlay lo oscuri)
+  const rowContainer = btn.closest('[data-extra-row]') || btn.parentElement?.parentElement;
+
   const overlay = document.createElement('div');
-  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-end;justify-content:center';
-  overlay.innerHTML=`
+  overlay.id = '_grpEditOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-end;justify-content:center';
+  overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:460px;box-sizing:border-box">
       <div style="font-size:13px;font-weight:600;margin-bottom:14px;display:flex;justify-content:space-between">
         <span>✏️ Modifica voce</span>
-        <button onclick="this.closest('[style*=fixed]').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--text2)">✕</button>
+        <button onclick="document.getElementById('_grpEditOverlay').remove()"
+          style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--text2)">✕</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:10px">
-        <input id="_grpLabel" value="${labelOld.replace(/"/g,'&quot;')}"
+        <input id="_grpEditLabel" value="${labelOld.replace(/"/g,'&quot;')}"
           style="border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;width:100%;box-sizing:border-box" placeholder="Descrizione">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div>
             <label style="font-size:11px;color:var(--text3)">Qtà</label>
-            <input id="_grpQty" type="number" step="0.01" value="${qtyOld}"
+            <input id="_grpEditQty" type="number" step="0.01" value="${qtyOld}"
               style="border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;width:100%;box-sizing:border-box">
           </div>
           <div>
             <label style="font-size:11px;color:var(--text3)">Prezzo unitario €</label>
-            <input id="_grpPrezzo" type="number" step="0.01" value="${prezzoOld}"
+            <input id="_grpEditPrezzo" type="number" step="0.01" value="${prezzoOld}"
               style="border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;width:100%;box-sizing:border-box">
           </div>
         </div>
-        <button onclick="
-          const lbl=document.getElementById('_grpLabel').value.trim();
-          const qty=parseFloat(document.getElementById('_grpQty').value)||1;
-          const prz=parseFloat(document.getElementById('_grpPrezzo').value)||0;
-          const tot=parseFloat((qty*prz).toFixed(2));
-          const g=window._gruppoCorrente;
-          // Aggiorna in extraGruppo e righe
-          const ei=g.extraGruppo.findIndex(r=>r.label===('${labelOld.replace(/'/g,"\\'")}')&&r.qty===${qtyOld}&&r.unitPrice===${prezzoOld});
-          if(ei>=0){g.extraGruppo[ei]={label:lbl,qty,unitPrice:prz,total:tot,tipo:'extra'};}
-          const ri=g.righe.findIndex(r=>r.tipo==='extra'&&r.label===('${labelOld.replace(/'/g,"\\'")}')&&r.qty===${qtyOld});
-          if(ri>=0){g.righe[ri]={label:lbl,qty,unitPrice:prz,total:tot,tipo:'extra'};}
-          g.totale=parseFloat((g.totale-${totOld}+tot).toFixed(2));
-          // Aggiorna riga DOM
-          const row=document.querySelector('[data-extra-lbl=\\'${labelOld.replace(/'/g,"\\'")}\\']')||btn.closest('div');
-          if(row){row.querySelector('span:first-child').textContent=lbl+' ('+qty+' × '+prz.toFixed(2)+'€)';row.querySelector('span:last-child').firstChild.textContent=tot.toFixed(2)+'€';}
-          aggiornaRiepilogoGruppo();
-          this.closest('[style*=fixed]').remove();
-        " class="btn primary" style="justify-content:center">✓ Applica</button>
+        <button id="_grpEditApplica" class="btn primary" style="justify-content:center">✓ Applica</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
-  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+
+  // Gestione Applica — fuori dall'inline onclick per evitare problemi di escaping
+  document.getElementById('_grpEditApplica').addEventListener('click', function() {
+    const lbl = (document.getElementById('_grpEditLabel').value || '').trim();
+    const qty = parseFloat(document.getElementById('_grpEditQty').value) || 1;
+    const prz = parseFloat(document.getElementById('_grpEditPrezzo').value) || 0;
+    const tot = parseFloat((qty * prz).toFixed(2));
+    const g   = window._gruppoCorrente;
+    if (!g || !lbl) return;
+
+    // Aggiorna extraGruppo
+    const ei = g.extraGruppo.findIndex(r =>
+      r.label === labelOld && Math.abs(r.qty - qtyOld) < 0.001 && Math.abs(r.unitPrice - prezzoOld) < 0.001
+    );
+    if (ei >= 0) g.extraGruppo[ei] = { label: lbl, qty, unitPrice: prz, total: tot, tipo: 'extra' };
+
+    // Aggiorna righe
+    const ri = g.righe.findIndex(r =>
+      r.tipo === 'extra' && r.label === labelOld && Math.abs(r.qty - qtyOld) < 0.001
+    );
+    if (ri >= 0) g.righe[ri] = { label: lbl, qty, unitPrice: prz, total: tot, tipo: 'extra' };
+
+    // Ricalcola totale
+    g.totale = parseFloat((g.totale - totOld + tot).toFixed(2));
+
+    // Chiudi overlay e ri-renderizza la sezione extra (più affidabile di aggiornare il DOM inline)
+    overlay.remove();
+
+    // Re-render completo della sezione extra del gruppo
+    const extraEl = document.getElementById('grpExtraList');
+    if (extraEl && g.extraGruppo) {
+      extraEl.innerHTML = g.extraGruppo.map((r, i) => `
+        <div data-extra-row="${i}" style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+          <span style="font-size:12px;flex:1">${r.label} (${r.qty} × ${r.unitPrice.toFixed(2)}€)</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:13px;font-weight:600;color:var(--accent)">${r.total.toFixed(2)}€</span>
+            <button onclick="editExtraGruppoSalvato(this,'${r.label.replace(/'/g,"\'")}',${r.qty},${r.unitPrice},${r.total})"
+              style="border:none;background:none;cursor:pointer;font-size:14px">✏️</button>
+            <button onclick="rimuoviExtraGruppo(this,${r.total},'${r.label.replace(/'/g,"\'")}',${r.qty},${r.unitPrice})"
+              style="border:none;background:none;cursor:pointer;font-size:14px;color:var(--danger)">✕</button>
+          </span>
+        </div>`).join('');
+    }
+
+    aggiornaRiepilogoGruppo();
+  });
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 }
 
 function rimuoviExtraGruppo(btn, tot, label, qty, prezzo) {
