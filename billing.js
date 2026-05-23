@@ -2512,11 +2512,30 @@ function riapriFogliGruppo(groupId) {
 
 function riapriFoglio(bid, apriTabConto) {
   closeConti();
-  // bookingId può essere un BLIP_ID stringa ("PRE-2026-...") o un id numerico legacy.
-  // Cerca prima per dbId (BLIP_ID), poi per id numerico come fallback.
   const bidStr = String(bid);
-  const b = bookings.find(x => x.dbId === bidStr)
-         || bookings.find(x => String(x.id) === bidStr);
+
+  // Cerca il booking direttamente
+  let b = bookings.find(x => x.dbId === bidStr)
+       || bookings.find(x => String(x.id) === bidStr);
+
+  // Se non trovato, potrebbe essere un conto di gruppo:
+  // cerca il conto master che contiene questo bookingId e prova con gli altri
+  if (!b) {
+    const cMaster = conti.find(c =>
+      c.isGroupMaster && c.bookingIds &&
+      c.bookingIds.some(id => String(id) === bidStr)
+    );
+    if (cMaster?.bookingIds) {
+      // Prova tutti i bookingId del gruppo finché ne trova uno valido
+      for (const altId of cMaster.bookingIds) {
+        const altStr = String(altId);
+        b = bookings.find(x => x.dbId === altStr)
+          || bookings.find(x => String(x.id) === altStr);
+        if (b) break;
+      }
+    }
+  }
+
   if (b) {
     setTimeout(() => {
       if (typeof selBook === 'function') {
@@ -2531,7 +2550,8 @@ function riapriFoglio(bid, apriTabConto) {
     }, 80);
   } else {
     showToast('Prenotazione non trovata — ricarica la pagina', 'error');
-    console.warn('[riapriFoglio] booking non trovato per bid:', bid);
+    console.warn('[riapriFoglio] booking non trovato per bid:', bid,
+      '— potrebbe essere un conto di gruppo con bookingIds obsoleti');
   }
 }
 
