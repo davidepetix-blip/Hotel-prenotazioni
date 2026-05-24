@@ -1799,6 +1799,77 @@ function buildPdfDoc(b, room, conto, cfg, isAppart) {
 
 function closePdfOverlay() { document.getElementById('pdfOverlay').classList.remove('open'); }
 
+function blipStampaPDF() {
+  // Apre una finestra di stampa dedicata con il documento completo
+  // Funziona anche per documenti molto lunghi (conto gruppo multi-pagina)
+  const content = document.getElementById('printDoc')?.innerHTML || '';
+  const title   = document.getElementById('pdfTitle')?.textContent || 'Documento';
+  const fonti   = `
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=Playfair+Display:wght@600&display=swap">
+  `;
+
+  const win = window.open('', '_blank', 'width=700,height=900');
+  if (!win) {
+    // Popup bloccato — fallback a window.print() normale
+    window.print();
+    return;
+  }
+
+  win.document.write(`<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>${title.replace(/</g,'&lt;')}</title>
+  ${fonti}
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 12px; color: #1a1916; line-height: 1.5;
+      padding: 20px;
+    }
+    /* Replica stili doc Blip */
+    .doc-header { text-align:center; margin-bottom:24px; border-bottom:2px solid #2d6a4f; padding-bottom:14px; }
+    .doc-hotel-name { font-family:'Playfair Display',serif; font-size:22px; font-weight:600; color:#2d6a4f; }
+    .doc-hotel-address { font-size:11px; color:#555; margin-top:4px; }
+    .doc-type { font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#888; margin-top:6px; }
+    .doc-section { margin:16px 0 6px; }
+    .doc-section-title { font-size:9px; text-transform:uppercase; letter-spacing:.08em; color:#888; font-weight:600; border-bottom:1px solid #e0e0e0; padding-bottom:3px; margin-bottom:8px; }
+    .doc-row { display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f0f0f0; font-size:11px; }
+    .doc-row.total { font-weight:600; font-size:12px; border-top:2px solid #2d6a4f; margin-top:4px; padding-top:6px; }
+    .doc-row .label { flex:1; color:#444; }
+    .doc-row .val { font-weight:500; text-align:right; }
+    .doc-row .val.green { color:#2d6a4f; }
+    .doc-table { width:100%; border-collapse:collapse; font-size:11px; margin:8px 0; }
+    .doc-table th { background:#f5f5f5; padding:5px 8px; text-align:left; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:#666; }
+    .doc-table td { padding:5px 8px; border-bottom:1px solid #f0f0f0; vertical-align:top; }
+    .doc-table tr:last-child td { border-bottom:none; }
+    .doc-label { font-size:10px; color:#888; margin-bottom:2px; }
+    .doc-val { font-size:13px; font-weight:600; }
+    .green { color:#2d6a4f; }
+    .pill { display:inline-block; padding:1px 8px; border-radius:12px; font-size:9px; font-weight:600; }
+    .pill-green { background:#d8f3dc; color:#2d6a4f; }
+    .pill-gray  { background:#f0f0f0; color:#666; }
+    @media print {
+      body { padding: 8px; font-size: 11px; }
+      tr { page-break-inside: avoid; }
+      .doc-header { margin-bottom: 16px; }
+    }
+  </style>
+</head>
+<body>
+  ${content}
+  <script>
+    // Auto-print dopo caricamento font
+    window.onload = function() {
+      setTimeout(function() { window.print(); }, 400);
+    };
+  <\/script>
+</body>
+</html>`);
+  win.document.close();
+}
+
 function shareDocWhatsApp() {
   const t = document.getElementById('printDoc').innerText.split('\n').filter(l=>l.trim()).slice(0,25).join('\n');
   window.open(`https://wa.me/?text=${encodeURIComponent(t)}`,'_blank');
