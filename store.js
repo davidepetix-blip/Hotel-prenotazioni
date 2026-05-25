@@ -1364,13 +1364,20 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       result.push(db); continue;
     }
 
-    // GUARD riga 46: se il BLIP_ID è presente nella riga 46 del foglio grafico
-    // significa che la prenotazione esiste fisicamente nel foglio ma Apps Script
-    // non ha aggiornato la riga 45 (JSON). Non cestinare — è visibile nel foglio.
-    if (db.dbId && _row46BlipIds.has(db.dbId)) {
-      syncLog(`🛡 Protetta da riga 46: ${db.n} (${db.dbId})`, 'wrn');
-      result.push(db); continue;
+// NUOVO — time-bounded: protegge solo in fallback o se booking è recente (< 2h)
+// Con blipId nel JSON, "non essere nel JSON" = non essere sul Gantt.
+// Riga 46 stale (booking rimosso dal Gantt senza pulizia riga 46) causava fantasmi.
+if (db.dbId && _row46BlipIds.has(db.dbId)) {
+    const tsModifica = db.ts ? new Date(db.ts).getTime() : 0;
+    const etaMs      = Date.now() - tsModifica;
+    const FINESTRA_MS = 2 * 60 * 60 * 1000; // 2h — latenza max bridge + Apps Script
+    if (fromFallback || etaMs < FINESTRA_MS) {
+        syncLog(`🛡 Protetta da riga 46 (${fromFallback ? 'fallback' : Math.round(etaMs/60000) + 'min'}): ${db.n} (${db.dbId})`, 'wrn');
+        result.push(db); continue;
     }
+    // Booking vecchio, non in JSON → riga 46 stale → lascia passare agli altri guard
+    syncLog(`⚠ Riga 46 stale: ${db.n} (${db.dbId}) — non in JSON, vecchio ${Math.round(etaMs/3600000)}h`, 'inf');
+}
 
     // GUARD merge-mese: Apps Script unisce prenotazioni multi-mese con nomi leggermente
     // diversi (es. "Erasmus" + "Erasmus 24s" → un solo booking in JSON_ANNUALE).
