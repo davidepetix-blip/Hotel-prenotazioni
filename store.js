@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '8'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '9'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -977,7 +977,9 @@ function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
     // Questo permette a findMatch di usare la PRIORITÀ 1 (ID) invece della fuzzy
     // evitando duplicati quando il nome in DB differisce leggermente (es. trailing +)
     const _mapKey = sName + '|' + room.name + '|' + b.dal;
-    const _dbId   = _row46BookingMap[_mapKey] || null;
+    // PRIORITÀ: blipId scritto direttamente da aggiornaJSONAnnuale (via _caricaIndiceDB)
+    // Fallback: _row46BookingMap (riga 46 del foglio grafico) per retrocompatibilità
+    const _dbId = b.blipId || _row46BookingMap[_mapKey] || null;
     result.push({
       id: nid++, r: room.id, n: (b.nome||'—').replace(/\s*\+\s*$/, '').trim(), d: b.disposizione||'',
       c: color, s: new Date(yy,mm-1,dd,12), e: new Date(ye,me-1,de,12),
