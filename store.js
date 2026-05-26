@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '10'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '12'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -977,7 +977,9 @@ function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
     // Questo permette a findMatch di usare la PRIORITÀ 1 (ID) invece della fuzzy
     // evitando duplicati quando il nome in DB differisce leggermente (es. trailing +)
     const _mapKey = sName + '|' + room.name + '|' + b.dal;
-    const _dbId   = _row46BookingMap[_mapKey] || null;
+    // PRIORITA': blipId dal JSON (scritto da _caricaIndiceDB in Apps Script)
+    // Fallback: _row46BookingMap per retrocompatibilità
+    const _dbId = b.blipId || _row46BookingMap[_mapKey] || null;
     result.push({
       id: nid++, r: room.id, n: (b.nome||'—').replace(/\s*\+\s*$/, '').trim(), d: b.disposizione||'',
       c: color, s: new Date(yy,mm-1,dd,12), e: new Date(ye,me-1,de,12),
@@ -1362,41 +1364,62 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       result.push(db); continue;
     }
 
-    // GUARD riga 46 — TIME-BOUNDED (max 2h)
-    // Con blipId nel JSON, “non essere nel JSON” = non essere sul Gantt.
-    // La riga 46 può essere STALE: booking rimosso dal Gantt ma riga 46 non pulita.
-    // Proteggiamo solo entro la finestra di latenza bridge+trigger (2h).
-    // Dopo 2h, se il booking non è nel JSON è stato rimosso dal Gantt → cestinabile.
-    if (db.dbId && _row46BlipIds.has(db.dbId)) {
-      const etaRiga46 = db.ts ? Date.now() - new Date(db.ts).getTime() : Infinity;
-      if (etaRiga46 < 2 * 60 * 60 * 1000) {
-        syncLog(`🛡️ Riga 46 (recente ${Math.round(etaRiga46/60000)}min): ${db.n} (${db.dbId})`, 'wrn');
+    // ─────────────────────────────────────────────────────────────────
+    // GUARD riga 46 + GUARD merge-mese — logica unificata (v12)
+    // ─────────────────────────────────────────────────────────────────
+    //
+    // Con blipId nel JSON: "non in JSON" = "non sul Gantt".
+    // Riga 46 STALE (> 2h): booking ERA sul Gantt, ora rimosso.
+    //   → Un DUPLICATO sovrapposto ha stessa camera+nome+date ATTIVE nel JSON
+    //     ma il record DB non ha blipId corrispondente → è il vecchio duplicato.
+    //   → Un booking stale NON va protetto da merge-mese: l'overlap di date
+    //     con un booking attivo è esattamente la PROVA che è un duplicato.
+    //
+    // Senza riga 46 stale: potrebbe essere un FRAMMENTO di booking multi-mese.
+    //   → Proteggi solo se le date si sovrappongono con un booking attivo (legittimo).
+    //   → Non proteggi se non c'è alcun booking attivo con date sovrapposte (fantasma).
+    //
+    // DISTINZIONE CHIAVE:
+    //   stale riga46  + overlap date → DUPLICATO  → CESTINA
+    //   no riga46     + overlap date → FRAMMENTO → PROTEGGI
+    //   (qualsiasi)   + no overlap   → FANTASMA  → CESTINA
+    {
+      const _inRiga46  = !!(db.dbId && _row46BlipIds.has(db.dbId));
+      const _etaRiga46 = db.ts ? Date.now() - new Date(db.ts).getTime() : Infinity;
+      const _staleR46  = _inRiga46 && _etaRiga46 >= 2 * 60 * 60 * 1000;
+
+      // Riga 46 fresca (≤2h) → booking appena scritto, aspetta la latenza bridge→JSON
+      if (_inRiga46 && !_staleR46) {
+        syncLog(`🛡️ Riga 46 (recente ${Math.round(_etaRiga46/60000)}min): ${db.n} (${db.dbId})`, 'wrn');
         result.push(db); continue;
       }
-      // Stale → non protegge, va ai guard successivi o al cestino
-      syncLog(`⚠️ Riga 46 stale (${Math.round(etaRiga46/3600000)}h): ${db.n} (${db.dbId}) — lasciato passare`, 'inf');
-    }
 
-    // GUARD merge-mese: Apps Script unisce prenotazioni multi-mese con nomi leggermente
-    // diversi (es. "Erasmus" + "Erasmus 24s" → un solo booking in JSON_ANNUALE).
-    // Se il DB ha un entry con nome simile sulla stessa camera nello stesso mese,
-    // è quasi certamente un frammento del booking unito — non cestinare.
-    if (db.dbId && db.s && db.cameraName) {
-      const dbNomNorm = _normName(db.n);
-      const dbCam     = (db.cameraName || '').toLowerCase().trim();
-      const dbMese    = new Date(db.s).getMonth();
-      const dbAnno    = new Date(db.s).getFullYear();
-      const hasSimilarInSheet = sheetBookings.some(s => {
-        if (!s.s || !s.cameraName) return false;
-        if ((s.cameraName||'').toLowerCase().trim() !== dbCam) return false;
-        if (new Date(s.s).getFullYear() !== dbAnno) return false;
-        // Stessa camera, stesso anno: se il nome del foglio CONTIENE il nome DB o viceversa
-        const sNom = _normName(s.n);
-        return sNom.includes(dbNomNorm) || dbNomNorm.includes(sNom);
-      });
-      if (hasSimilarInSheet) {
-        syncLog(`🛡 Protetta (merge-mese): ${db.n} (${db.dbId})`, 'wrn');
-        result.push(db); continue;
+      if (_staleR46) {
+        // Stale: era sul Gantt, ora non c'è più nel JSON.
+        // NON applicare merge-mese: l'overlap è la prova che è un duplicato.
+        syncLog(`⚠️ Riga 46 stale (${Math.round(_etaRiga46/3600000)}h): ${db.n} (${db.dbId}) — bypass merge-mese`, 'inf');
+        // fall-through: va direttamente al fallback/form-web/cestino
+      } else if (db.s && db.e && db.cameraName) {
+        // Nessuna riga46: potrebbe essere frammento di booking multi-mese.
+        // Proteggi SOLO se le date si sovrappongono con un booking attivo simile.
+        const _dbNom  = _normName(db.n);
+        const _dbCam  = (db.cameraName || '').toLowerCase().trim();
+        const _dbAnno = new Date(db.s).getFullYear();
+        const _dbSt   = db.s.getTime();
+        const _dbEt   = db.e.getTime();
+        const _MARGIN = 2 * DAY_MS;
+        const _isFragment = sheetBookings.some(s => {
+          if (!s.s || !s.e || !s.cameraName) return false;
+          if ((s.cameraName||'').toLowerCase().trim() !== _dbCam) return false;
+          if (new Date(s.s).getFullYear() !== _dbAnno) return false;
+          const _sNom = _normName(s.n);
+          if (!_sNom.includes(_dbNom) && !_dbNom.includes(_sNom)) return false;
+          return _dbSt < s.e.getTime() + _MARGIN && _dbEt + _MARGIN > s.s.getTime();
+        });
+        if (_isFragment) {
+          syncLog(`🛡️ Frammento multi-mese: ${db.n} (${db.dbId})`, 'wrn');
+          result.push(db); continue;
+        }
       }
     }
 
@@ -1421,9 +1444,9 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       }
     }
 
-    // GUARD recente-DB rimosso: con blipId nel JSON la latenza bridge→JSON
-    // (5-30s reali) è già coperta dal guard isRecenteApp (2h) e dal guard
-    // riga 46 time-bounded (2h). I 30 giorni causavano fantasmi permanenti.
+    // GUARD recente-DB rimosso (v11): la latenza bridge→JSON (5-30s reali)
+    // è già coperta da isRecenteApp (2h) e da riga46 time-bounded (2h).
+    // I 30 giorni causavano fantasmi permanenti per booking rimossi dal Gantt.
 
     db.deleted      = true;
     db.deleteReason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
@@ -2391,12 +2414,9 @@ async function loadFromSheets() {
         // In fast path syncWithDatabase non viene chiamata, quindi senza questo
         // _cestinoBlacklist resterebbe null per tutta la sessione.
         loadCestinoBlacklist().catch(() => {});
-        // Auto-sync all'apertura: lancia subito una sync completa in background.
-        // Il fast-path ha già mostrato la cache → l'utente vede il Gantt immediatamente.
-        // La sync in background aggiorna silenziosamente senza bloccare l'UI.
-        // Usiamo un breve delay (3s) per permettere al render e ai moduli
-        // (billing, checkin) di completare il loro caricamento iniziale.
-        _lastFullSyncTs = 0; // forza bgSync a partire subito (bypassa cooldown)
+        // Auto-sync all'apertura: lancia bgSync dopo 3s (cache già mostrata).
+        // Aggiorna silenziosamente senza bloccare l'UI.
+        _lastFullSyncTs = 0; // bypassa cooldown per partire subito
         setTimeout(bgSync, 3000);
         startBgSync();
         return;
