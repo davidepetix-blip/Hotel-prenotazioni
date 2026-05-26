@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '9'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '10'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -977,9 +977,7 @@ function _parseJSONAnnualeBookings(parsed, sheetId, tabName) {
     // Questo permette a findMatch di usare la PRIORITÀ 1 (ID) invece della fuzzy
     // evitando duplicati quando il nome in DB differisce leggermente (es. trailing +)
     const _mapKey = sName + '|' + room.name + '|' + b.dal;
-    // PRIORITÀ: blipId scritto direttamente da aggiornaJSONAnnuale (via _caricaIndiceDB)
-    // Fallback: _row46BookingMap (riga 46 del foglio grafico) per retrocompatibilità
-    const _dbId = b.blipId || _row46BookingMap[_mapKey] || null;
+    const _dbId   = _row46BookingMap[_mapKey] || null;
     result.push({
       id: nid++, r: room.id, n: (b.nome||'—').replace(/\s*\+\s*$/, '').trim(), d: b.disposizione||'',
       c: color, s: new Date(yy,mm-1,dd,12), e: new Date(ye,me-1,de,12),
@@ -1364,20 +1362,20 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       result.push(db); continue;
     }
 
-// NUOVO — time-bounded: protegge solo in fallback o se booking è recente (< 2h)
-// Con blipId nel JSON, "non essere nel JSON" = non essere sul Gantt.
-// Riga 46 stale (booking rimosso dal Gantt senza pulizia riga 46) causava fantasmi.
-if (db.dbId && _row46BlipIds.has(db.dbId)) {
-    const tsModifica = db.ts ? new Date(db.ts).getTime() : 0;
-    const etaMs      = Date.now() - tsModifica;
-    const FINESTRA_MS = 2 * 60 * 60 * 1000; // 2h — latenza max bridge + Apps Script
-    if (fromFallback || etaMs < FINESTRA_MS) {
-        syncLog(`🛡 Protetta da riga 46 (${fromFallback ? 'fallback' : Math.round(etaMs/60000) + 'min'}): ${db.n} (${db.dbId})`, 'wrn');
+    // GUARD riga 46 — TIME-BOUNDED (max 2h)
+    // Con blipId nel JSON, “non essere nel JSON” = non essere sul Gantt.
+    // La riga 46 può essere STALE: booking rimosso dal Gantt ma riga 46 non pulita.
+    // Proteggiamo solo entro la finestra di latenza bridge+trigger (2h).
+    // Dopo 2h, se il booking non è nel JSON è stato rimosso dal Gantt → cestinabile.
+    if (db.dbId && _row46BlipIds.has(db.dbId)) {
+      const etaRiga46 = db.ts ? Date.now() - new Date(db.ts).getTime() : Infinity;
+      if (etaRiga46 < 2 * 60 * 60 * 1000) {
+        syncLog(`🛡️ Riga 46 (recente ${Math.round(etaRiga46/60000)}min): ${db.n} (${db.dbId})`, 'wrn');
         result.push(db); continue;
+      }
+      // Stale → non protegge, va ai guard successivi o al cestino
+      syncLog(`⚠️ Riga 46 stale (${Math.round(etaRiga46/3600000)}h): ${db.n} (${db.dbId}) — lasciato passare`, 'inf');
     }
-    // Booking vecchio, non in JSON → riga 46 stale → lascia passare agli altri guard
-    syncLog(`⚠ Riga 46 stale: ${db.n} (${db.dbId}) — non in JSON, vecchio ${Math.round(etaMs/3600000)}h`, 'inf');
-}
 
     // GUARD merge-mese: Apps Script unisce prenotazioni multi-mese con nomi leggermente
     // diversi (es. "Erasmus" + "Erasmus 24s" → un solo booking in JSON_ANNUALE).
@@ -1423,18 +1421,9 @@ if (db.dbId && _row46BlipIds.has(db.dbId)) {
       }
     }
 
-    // GUARD recente-DB: non cestinare prenotazioni create/aggiornate negli ultimi 30 giorni
-    // che non appaiono nel foglio. Potrebbe essere latenza bridge (Apps Script non ha
-    // ancora scritto nel foglio) o una prenotazione inserita direttamente nel DB.
-    // Dopo 30 giorni, se ancora non è nel foglio, è sicuramente un residuo.
-    // forceFullSync bypassa anche questo guard (🔄 esplicito dell'utente).
-    if (!forceFullSync && db.ts) {
-      const etaCreazione = Date.now() - new Date(db.ts).getTime();
-      if (etaCreazione < 30 * 24 * 60 * 60 * 1000) {
-        syncLog('🛡 Protetta (recente ' + Math.round(etaCreazione/86400000) + 'gg): ' + db.n + ' (' + (db.dbId||'no-id') + ')', 'wrn');
-        result.push(db); continue;
-      }
-    }
+    // GUARD recente-DB rimosso: con blipId nel JSON la latenza bridge→JSON
+    // (5-30s reali) è già coperta dal guard isRecenteApp (2h) e dal guard
+    // riga 46 time-bounded (2h). I 30 giorni causavano fantasmi permanenti.
 
     db.deleted      = true;
     db.deleteReason = 'Rimossa dal foglio Gantt · sync del ' + new Date().toLocaleDateString('it-IT');
@@ -2402,10 +2391,13 @@ async function loadFromSheets() {
         // In fast path syncWithDatabase non viene chiamata, quindi senza questo
         // _cestinoBlacklist resterebbe null per tutta la sessione.
         loadCestinoBlacklist().catch(() => {});
-        // Aspetta 90s prima del primo bgSync: preloadContoDati e CI data
-        // caricano in questo intervallo — partire prima causa burst 429
-        _lastFullSyncTs = Date.now() - BGSYNC_COOLDOWN_MS + 90 * 1000;
-        setTimeout(bgSync, 90 * 1000);
+        // Auto-sync all'apertura: lancia subito una sync completa in background.
+        // Il fast-path ha già mostrato la cache → l'utente vede il Gantt immediatamente.
+        // La sync in background aggiorna silenziosamente senza bloccare l'UI.
+        // Usiamo un breve delay (3s) per permettere al render e ai moduli
+        // (billing, checkin) di completare il loro caricamento iniziale.
+        _lastFullSyncTs = 0; // forza bgSync a partire subito (bypassa cooldown)
+        setTimeout(bgSync, 3000);
         startBgSync();
         return;
       }
