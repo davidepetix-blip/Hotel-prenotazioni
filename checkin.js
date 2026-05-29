@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '26'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '27'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -472,6 +472,18 @@ function openCiModalFromCi(key) {
   let ci = ciData[key]
         || Object.values(ciData).find(c => c.ciId === key)
         || (key && Object.values(ciData).find(c => c.preId === key));
+
+  // Fallback: key = 'cam:CAMERA:DATA' ma record salvato sotto BLIP_ID.
+  // Succede quando il check-in viene salvato dalla modale booking (chiave=BLIP_ID)
+  // ma lo storico chiama sempre con chiave cam:CAMERA:DATA.
+  if (!ci && key && key.startsWith('cam:')) {
+    const parts = key.split(':'); // ['cam', camera, data]
+    if (parts.length === 3) {
+      const camera = parts[1], data = parts[2];
+      ci = Object.values(ciData).find(c => c.camera === camera && c.data === data);
+    }
+  }
+
   if (!ci) { showToast('Scheda non trovata', 'error'); return; }
 
   // Booking opzionale — solo per titolo panel
