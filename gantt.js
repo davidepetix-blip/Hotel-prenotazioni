@@ -13,7 +13,7 @@
 // Dipende da: core.js, api.js, auth.js, store.js, rooms.js, clienti.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_GANTT = '32';
+const BLIP_VER_GANTT = '33';
 const BLIP_VER_ROOMS_REF = '1'; // rooms.js caricato prima di gantt.js // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
@@ -376,9 +376,10 @@ function selBook(id,e){
       ${b.note?`<div class="drow"><span class="dkey">Note</span><span class="dval">${b.note}</span></div>`:''}
       ${b.fromSheet?`<div class="drow"><span class="dkey">Fonte</span><span class="dval" style="color:var(--success)">📋 Google Sheets</span></div>`:''}
     </div>
-    <div style="display:flex;gap:8px;">
-      <button class="btn" onclick="editBook(${b.id})" style="flex:1;justify-content:center;">✎ Modifica</button>
-      <button class="btn danger" onclick="delBook(${b.id})" style="flex:1;justify-content:center;">✕ Elimina</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn" onclick="editBook(${b.id})" style="flex:1;min-width:80px;justify-content:center;">✎ Modifica</button>
+      <button class="btn" onclick="duplicaBook(${b.id})" style="flex:1;min-width:80px;justify-content:center;background:var(--accent2,#e8f5e9);color:var(--success,#2d6a4f);border-color:var(--success,#2d6a4f);">⧉ Duplica</button>
+      <button class="btn danger" onclick="delBook(${b.id})" style="flex:1;min-width:80px;justify-content:center;">✕ Elimina</button>
     </div>
     <div class="synchint">
       ${(()=>{
@@ -493,6 +494,100 @@ function editBook(id){
   window._editCameraName = _room ? _room.name : b.cameraName || b.r;
   window._editOrigRoom = b.r; // memorizza la camera originale per il bridge
   closeDrawer(); openModal(true);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DUPLICA PRENOTAZIONE
+// ═══════════════════════════════════════════════════════════════════
+// Copia nome, disposizione, colore, note dalla prenotazione originale.
+// Date: dal = domani, al = domani + durata_originale (in giorni).
+// Camera: stessa se disponibile, altrimenti prima libera con warning.
+// Apre il modal in modalità "nuova prenotazione" preimpostato.
+// ═══════════════════════════════════════════════════════════════════
+function duplicaBook(id) {
+  const b = bookings.find(x => x.id === id);
+  if (!b) return;
+
+  // Durata originale in giorni
+  const durataGG = Math.round((b.e.getTime() - b.s.getTime()) / 86400000);
+
+  // Date suggerite: da domani per la stessa durata
+  const newDal = new Date();
+  newDal.setDate(newDal.getDate() + 1);
+  newDal.setHours(12, 0, 0, 0);
+  const newAl = new Date(newDal);
+  newAl.setDate(newAl.getDate() + durataGG);
+
+  const fmtISO = d => d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+
+  // Chiudi drawer e imposta il modal come "nuova prenotazione"
+  closeDrawer();
+  editId = null;
+  window._editOrigRoom   = null;
+  window._editCameraName = null;
+
+  // Preimposta i campi del modal
+  document.getElementById('fName').value  = b.n;
+  document.getElementById('fNotes').value = b.note || '';
+  document.getElementById('fIn').value    = fmtISO(newDal);
+  document.getElementById('fOut').value   = fmtISO(newAl);
+
+  // Colore e letti dall'originale
+  selColor   = b.c;
+  bedCounts  = typeof parseBedString === 'function'
+    ? parseBedString(b.d)
+    : { m: 0, ms: 0, s: 0, c: 0, aff: 0 };
+
+  // Verifica disponibilità camera originale nel nuovo periodo
+  let cameraWarning = '';
+  const origRoom = ROOMS.find(r => r.id === b.r);
+  let targetRoomId = b.r;
+
+  if (typeof getRoomsAvailability === 'function') {
+    const avail = getRoomsAvailability(newDal, newAl, null);
+    const origAvail = avail[b.r];
+
+    if (origAvail && !origAvail.available) {
+      // Camera originale occupata → cerca la prima libera nello stesso gruppo
+      const sameGroup = ROOMS.filter(r =>
+        r.group === (origRoom ? origRoom.group : '') && avail[r.id]?.available
+      );
+      const altRoom = sameGroup[0] || ROOMS.find(r => avail[r.id]?.available);
+
+      if (altRoom) {
+        targetRoomId = altRoom.id;
+        const conflitti = origAvail.conflitti.map(c => c.n).join(', ');
+        cameraWarning = `⚠️ Camera ${origRoom ? origRoom.name : b.r} occupata (${conflitti})` +
+          ` → suggerita Camera ${altRoom.name}`;
+      } else {
+        targetRoomId = b.r; // nessuna libera — lascia l'originale, avvisa
+        cameraWarning = `⛔ Camera ${origRoom ? origRoom.name : b.r} occupata e nessuna alternativa disponibile nel periodo.`;
+      }
+    }
+    // Camera disponibile → nessun warning, usa l'originale
+  }
+
+  document.getElementById('fRoom').value = targetRoomId;
+
+  // Apri il modal
+  openModal(false);
+
+  // Mostra warning disponibilità (se presente) — dopo openModal che fa rebuildColors/Beds
+  if (cameraWarning) {
+    const errEl = document.getElementById('errmsg');
+    if (errEl) {
+      errEl.textContent = cameraWarning;
+      errEl.classList.add('show');
+      errEl.style.cssText += ';background:var(--warn-bg,#fff8e1);color:var(--warn,#856404);border-color:var(--warn,#856404)';
+    }
+    showToast(cameraWarning, 'warn');
+  }
+
+  // Titolo modal personalizzato
+  const mtitle = document.getElementById('mtitle');
+  if (mtitle) mtitle.textContent = 'Duplica Prenotazione';
 }
 
 async function delBook(id){
