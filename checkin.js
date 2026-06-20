@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '30'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '31'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -1438,7 +1438,7 @@ function renderDrawerCheckin(b) {
     // un badge di conferma invece dell'alert ritardo/oggi/futuro, e offre
     // comunque il pulsante per completare i documenti quando possibile.
     const arrivo = (typeof getArrivoForBooking === 'function') ? getArrivoForBooking(b) : null;
-    const arrivoBtn = arrivo ? '' : `<button class="btn" style="width:100%;justify-content:center;margin-top:6px;font-size:12px;" data-bid="${bid}" onclick='segnalaArrivo(bookings.find(x=>String(x.dbId||x.id)===this.dataset.bid))'>✓ Segnala arrivo (senza documenti)</button>`;
+    const arrivoBtn = arrivo ? '' : `<button class="btn" style="width:100%;justify-content:center;margin-top:6px;font-size:12px;" data-bid="${bid}" onclick='segnalaArrivo(bookings.find(x=>String(x.id)===this.dataset.bid))'>✓ Segnala arrivo (senza documenti)</button>`;
 
     if (arrivo) {
       const oraArr = arrivo.ts ? new Date(arrivo.ts).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}) : '';
