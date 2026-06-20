@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '29'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '30'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -992,39 +992,11 @@ function _exportAlloggiatiItems(items){
   _mostraAnteprimaAlloggiati(items); // mostra anteprima invece di scaricare direttamente
 }
 
-function _mostraAnteprimaAlloggiati(items){
-  const toFmt=s=>{if(!s)return'          ';const c=s.replace(/-/g,'').replace(/\//g,'');if(c.length!==8)return'          ';let gg,mm,aaaa;if(/^(19|20)\d{6}$/.test(c)){aaaa=c.slice(0,4);mm=c.slice(4,6);gg=c.slice(6,8);}else{gg=c.slice(0,2);mm=c.slice(2,4);aaaa=c.slice(4,8);}return`${gg}/${mm}/${aaaa}`;};
-  const nGiorni=(a,p)=>{try{const g=Math.round((new Date(p)-new Date(a))/86400000);return String(Math.min(Math.max(g,1),30)).padStart(2,'0');}catch{return'01';}};
-  let lines=[];
-  items.forEach(ci=>{
-    const b=bookings.find(bk=>bk.dbId===ci.preId);
-    const arrISO=ci.data,parISO=b?new Date(b.e).toISOString().slice(0,10):ci.data;
-    ci.guests.forEach((g,gIdx)=>{
-      const isCapo=gIdx===0,tipoAllog=isCapo?'16':'19';
-      const cognome=padR(cleanAl(g.cognome),50),nome=padR(cleanAl(g.nome),30);
-      const sesso=(_alNorm(g.sesso||'M').charAt(0)==='F')?'2':'1';
-      const dataN=toFmt(g.dataNascita||'');
-      const isIta=_normCitIsIta(g.cittadinanza||'ITALIA');
-      let comN='         ',provN='  ';
-      if(isIta&&g.luogoNascita){const found=_alCodiceComune(g.luogoNascita);if(found){comN=found.cod;provN=padR(found.prov,2);}}
-      const statoN=_alCodiceStato(isIta?'ITALIA':_normCitNome(g.statoNascita||g.cittadinanza||'ITALIA')).padStart(9,'0');
-      const cittad=_alCodiceStato(_normCitNome(g.cittadinanza||'ITALIA')).padStart(9,'0');
-      const tipoDoc=isCapo?padR(_alCodiceDoc(g.tipoDoc),5):'     ';
-      const numDoc=isCapo?padR(cleanAl(g.numDoc||''),20):'                    ';
-      let luogoRil='         ';
-      if(isCapo&&g.luogoRilascio){const rl=_alRisolviLuogo(g.luogoRilascio);if(rl)luogoRil=rl.cod;}
-      const record=tipoAllog+toFmt(arrISO)+nGiorni(arrISO,parISO)+cognome+nome+sesso+dataN+comN+provN+statoN+cittad+tipoDoc+numDoc+luogoRil;
-      if(record.length!==168)console.warn('[Alloggiati] len='+record.length,g.cognome);
-      lines.push(record);
-    });
-  });
-  const content=lines.join('\r\n');
-  const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
-  const url=URL.createObjectURL(blob);const a=document.createElement('a');
-  a.href=url;a.download=`alloggiati_${today}.txt`;a.click();URL.revokeObjectURL(url);
-  showToast('File generato - '+lines.length+' record','success');
-  document.getElementById('al-preview-modal')?.remove();
-}
+// FIX AUDIT: rimossa la prima definizione duplicata di _mostraAnteprimaAlloggiati
+// (generava direttamente il file .txt senza anteprima/modifica). Era dead code:
+// la dichiarazione successiva (sotto) la sovrascriveva sempre silenziosamente,
+// essendo dichiarata dopo nello stesso file. La versione attiva mostra un modal
+// di anteprima editabile prima di generare il file — comportamento corretto e voluto.
 
 // ── Anteprima Alloggiati con modifica manuale ──────────────────────
 // Mostra tutti i dati prima di generare il .txt.

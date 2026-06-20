@@ -15,7 +15,7 @@
 // Caricato PRIMA di: clienti.js, gantt.js, checkin.js, billing.js, bridge.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_STORE = '12'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
+const BLIP_VER_STORE = '13'; // ← incrementa ad ogni modifica (era BLIP_VER_SYNC)
 
 
 // ─────────────────────────────────────────────────────────────────
@@ -1120,7 +1120,11 @@ async function cleanupDeletedFromDb(dbRows) {
   if (alreadyDeleted.length === 0) return 0;
   // Se troviamo righe DELETED residue (es. da prima del fix), le eliminiamo
   syncLog(`⚠ Trovate ${alreadyDeleted.length} righe DELETED residue — pulizia…`, 'wrn');
-  try { await archiviaInCestino(alreadyDeleted, 'Pulizia residui DELETED'); } catch(e) {}
+  try {
+    await archiviaInCestino(alreadyDeleted, 'Pulizia residui DELETED');
+  } catch(e) {
+    syncLog(`❌ Pulizia residui DELETED fallita: ${e.message}`, 'err');
+  }
   return alreadyDeleted.length;
 }
 
@@ -1516,9 +1520,20 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       syncLog(`🗑 Candidato cestino: ${b.n} (${b.dbId||'no-id'}) anno=${anno} dbRow=${b.dbRow||'?'}`, 'wrn');
     });
     showLoading(`Cestino: ${toArchive.length} prenotazioni…`);
-    try { await archiviaInCestino(toArchive, 'Rimossa dal foglio Gantt · ' + new Date().toLocaleDateString('it-IT')); } catch(e) {}
-    const rimossi = toArchive.filter(b=>b.dbRow).length;
-    syncLog(`🗑 ${rimossi} → CESTINO`, 'wrn');
+    // FIX: il log "→ CESTINO" sparava SEMPRE, anche se archiviaInCestino falliva
+    // (catch silenzioso). Ora il successo/fallimento reale determina il log,
+    // così il pannello LOG riflette cosa è davvero successo.
+    let _archivioOk = false;
+    try {
+      await archiviaInCestino(toArchive, 'Rimossa dal foglio Gantt · ' + new Date().toLocaleDateString('it-IT'));
+      _archivioOk = true;
+    } catch(e) {
+      syncLog(`❌ Archiviazione CESTINO fallita: ${e.message} — ${toArchive.length} prenotazioni NON rimosse, riproverà al prossimo sync`, 'err');
+    }
+    if (_archivioOk) {
+      const rimossi = toArchive.filter(b=>b.dbRow).length;
+      syncLog(`🗑 ${rimossi} → CESTINO`, 'wrn');
+    }
   }
 
   const dbActiveCount = dbActive.length;
@@ -1536,7 +1551,8 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
   }
   const toWriteRow46 = toAddToDB.filter(b => b.dbId && b._sheetCol && b.sheetName && b.sheetId);
   if (toWriteRow46.length > 0) {
-    // Scrivi sempre — il token bucket gestisce il rate limiting
+    // Scrivi sempre — writeBlipIdsToRow46 ora usa apiFetch, quindi il token
+    // bucket gestisce davvero il rate limiting (prima usava fetch() crudo).
     writeBlipIdsToRow46(toWriteRow46).catch(e =>
       syncLog('⚠ Scrittura riga 46: ' + e.message, 'wrn')
     );
@@ -1642,11 +1658,14 @@ async function writeBlipIdsToRow46(bookings) {
     if (!data.length) continue;
 
     // ── STEP 3: batchUpdate solo delle celle che richiedono scrittura ──
+    // FIX: era fetch() crudo — bypassava il token bucket (rate limit) e il
+    // silent re-auth su 401 di apiFetch. Girando ad ogni sync, contribuiva
+    // al rischio di burst 429 senza che il bucket se ne accorgesse.
     try {
       const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + sheetId + '/values:batchUpdate';
-      const resp = await fetch(url, {
+      const resp = await apiFetch(url, {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ valueInputOption: 'RAW', data })
       });
       if (resp.ok) syncLog('✓ BLIP_ID scritti riga 46 in ' + sName + ': ' + data.length + ' celle', 'ok');

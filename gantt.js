@@ -13,7 +13,7 @@
 // Dipende da: core.js, api.js, auth.js, store.js, rooms.js, clienti.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_GANTT = '34';
+const BLIP_VER_GANTT = '35';
 const BLIP_VER_ROOMS_REF = '1'; // rooms.js caricato prima di gantt.js // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
@@ -418,15 +418,12 @@ function selBook(id,e){
   setTimeout(() => { if (typeof renderCheckinDrawerTab === 'function') renderCheckinDrawerTab(b.id); }, 50);
 }
 
-function drTabCheckin(el, bookingNumId) {
-  el.closest('#drbody').querySelectorAll('.dr-bill-tab').forEach(t=>t.classList.remove('active'));
-  el.classList.add('active');
-  ['drTabInfo','drTabBill','drTabCI'].forEach(id=>{
-    const d=document.getElementById(id);
-    if(d) d.style.display = id==='drTabCI'?'':'none';
-  });
-  if (typeof renderCheckinDrawerTab === 'function') renderCheckinDrawerTab(bookingNumId);
-}
+// FIX AUDIT: rimossa la duplicazione di drTabCheckin (era qui con selettori
+// DOM obsoleti '#drbody'/'.dr-bill-tab', incompatibili con la struttura
+// attuale del drawer). La versione attiva è in checkin.js (carica dopo,
+// quindi vinceva comunque) — questa qui era dead code pericoloso: se
+// l'ordine di caricamento fosse mai cambiato, avrebbe lanciato TypeError
+// su el.closest('#drbody') ritornando null.
 
 function renderCheckinDrawerTab(bookingNumId, _reloaded=false) {
   const tabEl = document.getElementById('drTabCI');
@@ -1326,7 +1323,11 @@ function setFilter(el, f) {
 
 function runSearch() {
   const q     = (document.getElementById('searchInput').value || '').toLowerCase().trim();
-  const now   = new Date(); now.setHours(0,0,0,0);
+  // FIX: le prenotazioni sono costruite a MEZZOGIORNO (new Date(y,m,d,12) in store.js).
+  // 'now' qui era a mezzanotte → un arrivo di OGGI (s=mezzogiorno) risultava sempre
+  // > now(mezzanotte), classificato erroneamente come 'futura' invece che 'oggi'.
+  // Allineando now alla stessa convenzione (mezzogiorno) il confronto torna corretto.
+  const now   = new Date(); now.setHours(12,0,0,0);
   const mesS  = new Date(curY, curM, 1);
   const mesE  = new Date(curY, curM+1, 0);
 
@@ -1388,7 +1389,9 @@ function renderSearchResults(lista, q) {
     return;
   }
 
-  const now = new Date(); now.setHours(0,0,0,0);
+  // Stessa correzione di runSearch(): allinea 'now' a mezzogiorno per
+  // coerenza con la convenzione di costruzione delle date prenotazione.
+  const now = new Date(); now.setHours(12,0,0,0);
   let lastGroup = null;
 
   el.innerHTML = lista.map(b => {
