@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '27'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '29'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -165,6 +165,147 @@ async function loadCiData(force=false) {
 }
 
 function invalidateCiCache() { localStorage.removeItem(CI_CACHE_KEY); }
+
+// ═══════════════════════════════════════════════════════════════════
+// ARRIVI — segnalazione arrivo ospite SENZA documenti (check-in leggero)
+// ═══════════════════════════════════════════════════════════════════
+// Foglio dedicato "ARRIVI", stesso pattern del foglio CHECK-IN.
+// Permette di segnare che l'ospite è fisicamente arrivato in struttura
+// prima di registrare i documenti completi (Alloggiati Web può attendere).
+// Colonne: A=ID_PRENOTAZIONE B=CAMERA C=DATA_ARRIVO D=TS E=UTENTE
+//
+// Se in seguito viene fatto il check-in documenti completo, ciData
+// prende priorità su arrivatiData nel rendering — il flag "arrivato"
+// resta come storico ma non viene più mostrato (sostituito dal check-in).
+// ═══════════════════════════════════════════════════════════════════
+
+const ARRIVI_SHEET_NAME = 'ARRIVI';
+const ARRIVI_CACHE_KEY  = 'hotelArriviCache';
+const ARRIVI_CACHE_TTL  = 5 * 60 * 1000; // 5 minuti — dato operativo, deve restare fresco multi-dispositivo
+
+let arrivatiData = {}; // { preId: {preId,camera,data,ts,utente,row}, 'cam:CAM:DATA': stesso }
+
+async function ensureArriviSheet() {
+  const id = DATABASE_SHEET_ID;
+  if (!id) return;
+  try {
+    const d = await dbGet(`${ARRIVI_SHEET_NAME}!A1:E1`);
+    if (d.values?.[0]?.[0] === 'ID_PRENOTAZIONE') return;
+  } catch(e) {
+    try {
+      const r = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({requests:[{addSheet:{properties:{title:ARRIVI_SHEET_NAME}}}]})
+      });
+      if (!r.ok) { const t=await r.text(); if (!t.includes('already')) throw new Error(t); }
+    } catch(e2) { if (!String(e2.message).includes('already')) throw e2; }
+  }
+  await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(ARRIVI_SHEET_NAME+'!A1:E1')}?valueInputOption=RAW`, {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({values:[['ID_PRENOTAZIONE','CAMERA','DATA_ARRIVO','TS','UTENTE']]})
+  });
+}
+
+async function readArriviSheet() {
+  try {
+    const d = await dbGet(`${ARRIVI_SHEET_NAME}!A2:E9999`);
+    const rows = d.values || [];
+    const result = {};
+    rows.forEach((row, i) => {
+      const preId = (row[0] || '').trim();
+      if (!preId) return;
+      const rec = {
+        preId,
+        camera: row[1] || '',
+        data:   row[2] || '',
+        ts:     row[3] || '',
+        utente: row[4] || '',
+        row:    i + 2,
+      };
+      result[preId] = rec;
+      if (rec.camera && rec.data) {
+        const camKey = 'cam:' + rec.camera + ':' + rec.data;
+        if (!result[camKey]) result[camKey] = rec;
+      }
+    });
+    return result;
+  } catch(e) { return {}; }
+}
+
+async function loadArrivatiData(force=false) {
+  if (!force) {
+    try {
+      const raw = localStorage.getItem(ARRIVI_CACHE_KEY);
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (Date.now() - p.ts < ARRIVI_CACHE_TTL) { arrivatiData = p.data; return; }
+      }
+    } catch(e) {}
+  }
+  if (!DATABASE_SHEET_ID) return;
+  try {
+    await ensureArriviSheet();
+    arrivatiData = await readArriviSheet();
+    localStorage.setItem(ARRIVI_CACHE_KEY, JSON.stringify({ts:Date.now(), data:arrivatiData}));
+  } catch(e) { console.warn('loadArrivatiData:', e.message); }
+}
+
+function invalidateArriviCache() { localStorage.removeItem(ARRIVI_CACHE_KEY); }
+
+// Stesso lookup a 3 livelli di getCiForBooking: dbId → id numerico → camera+data
+function getArrivoForBooking(b) {
+  if (!b) return null;
+  if (b.dbId && arrivatiData[b.dbId]) return arrivatiData[b.dbId];
+  if (arrivatiData[String(b.id)]) return arrivatiData[String(b.id)];
+  const camName = b.cameraName || (typeof roomName === 'function' ? roomName(b.r) : '') || '';
+  const arrivo  = b.s instanceof Date ? b.s.toISOString().slice(0,10) : '';
+  if (camName && arrivo) {
+    const found = Object.values(arrivatiData).find(a => a.camera === camName && a.data === arrivo);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Scrive la segnalazione di arrivo: append nel foglio + aggiornamento ottimistico locale
+async function segnalaArrivo(b) {
+  if (!b) return;
+  const preId = b.dbId || String(b.id);
+  const room  = typeof ROOMS !== 'undefined' ? ROOMS.find(r => r.id === b.r) : null;
+  const camera = room ? room.name : (b.cameraName || '');
+  const dataArr = b.s instanceof Date
+    ? b.s.toISOString().slice(0,10)
+    : new Date(b.s).toISOString().slice(0,10);
+  const utente = document.getElementById('userAvatar')?.title || '';
+  const ts = new Date().toISOString();
+
+  // Aggiornamento ottimistico locale — l'utente vede subito il badge
+  const rec = { preId, camera, data: dataArr, ts, utente };
+  arrivatiData[preId] = rec;
+  if (camera && dataArr) arrivatiData['cam:' + camera + ':' + dataArr] = rec;
+  try { localStorage.setItem(ARRIVI_CACHE_KEY, JSON.stringify({ts:Date.now(), data:arrivatiData})); } catch(e) {}
+
+  // Re-render immediato del tab check-in nel drawer (feedback istantaneo)
+  if (typeof renderCheckinDrawerTab === 'function') {
+    const tabEl = document.getElementById('drTabCI');
+    if (tabEl) { try { tabEl.innerHTML = renderDrawerCheckin(b); } catch(e) {} }
+  }
+  if (typeof showToast === 'function') showToast('Arrivo segnalato — registra i documenti quando possibile', 'success');
+
+  // Scrittura remota (silenziosa — se fallisce il dato resta comunque in cache locale)
+  try {
+    if (!DATABASE_SHEET_ID) return;
+    await ensureArriviSheet();
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET_ID}/values/${encodeURIComponent(ARRIVI_SHEET_NAME)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+    await apiFetch(url, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({values:[[preId, camera, dataArr, ts, utente]]})
+    });
+  } catch(e) {
+    if (typeof syncLog === 'function') syncLog('⚠ Scrittura ARRIVI fallita (dato salvato solo localmente): ' + e.message, 'wrn');
+  }
+}
 
 // Invalida cache se la versione del modulo è cambiata
 (function() {
@@ -1238,7 +1379,10 @@ function drTabCheckin(el, bookingId) {
   }
   panel.innerHTML = html;
   if (typeof loadCiData === 'function') {
-    loadCiData().then(() => {
+    Promise.all([
+      loadCiData(),
+      (typeof loadArrivatiData === 'function') ? loadArrivatiData() : Promise.resolve()
+    ]).then(() => {
       if (!panel.isConnected) return;
       try { const u = renderDrawerCheckin(b); if (u && u.trim()) panel.innerHTML = u; } catch(e) {}
     }).catch(() => {});
@@ -1261,10 +1405,22 @@ function renderDrawerCheckin(b) {
     const ci      = (ciData && b.dbId && ciData[b.dbId])
                  || (ciData && altKey && ciData[altKey])
                  || null;
-    const now     = Date.now();
-    const arrDate = b.s instanceof Date ? b.s : new Date(b.s);
-    const arrival = isNaN(arrDate.getTime()) ? now : arrDate.getTime();
-    const hoursToArrival = (arrival - now) / 36e5;
+    // ── Calcolo giorni a/da arrivo: confronto per GIORNO DI CALENDARIO ──
+    // b.s è costruito a mezzogiorno (new Date(y,m,d,12)) in store.js. Confrontare
+    // i timestamp esatti (ms) causa falsi "in ritardo": un arrivo oggi alle 12:00
+    // risulta già passato se "adesso" è dopo le 12:00, anche se è lo stesso giorno.
+    // Si confrontano invece le sole date (anno/mese/giorno), azzerando l'ora.
+    const _now = new Date();
+    const today0 = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate());
+    const arrRaw = b.s instanceof Date ? b.s : new Date(b.s);
+    const arrValid = !isNaN(arrRaw.getTime());
+    const arr0 = arrValid
+      ? new Date(arrRaw.getFullYear(), arrRaw.getMonth(), arrRaw.getDate())
+      : today0;
+    const diffDays = Math.round((arr0 - today0) / 86400000); // 0=oggi, <0=passato, >0=futuro
+    // hoursToArrival mantenuta per compatibilità con eventuale codice esterno,
+    // ma le decisioni sotto usano diffDays (granularità a giorno, non a ora).
+    const hoursToArrival = diffDays * 24;
 
     if (ci && ci.guests && ci.guests.length > 0) {
       const dataFmt = (ci.ts||'').slice(0,10).split('-').reverse().join('/');
@@ -1299,21 +1455,44 @@ function renderDrawerCheckin(b) {
           <button class="btn primary" style="flex:1;justify-content:center;" data-bid="${bid}" onclick="ciPreviewAlloggiati(this.dataset.bid)">⬇ Alloggiati</button>
         </div>`;
     }
-    if (hoursToArrival < 0) {
-      const giorni = Math.abs(Math.floor(hoursToArrival / 24));
+    // ── Segnalazione arrivo SENZA documenti (check-in leggero) ──
+    // Se l'ospite ha già segnalato l'arrivo (arrivatiData) ma non ha ancora
+    // fatto il check-in documenti completo (ci, già escluso sopra), mostra
+    // un badge di conferma invece dell'alert ritardo/oggi/futuro, e offre
+    // comunque il pulsante per completare i documenti quando possibile.
+    const arrivo = (typeof getArrivoForBooking === 'function') ? getArrivoForBooking(b) : null;
+    const arrivoBtn = arrivo ? '' : `<button class="btn" style="width:100%;justify-content:center;margin-top:6px;font-size:12px;" data-bid="${bid}" onclick='segnalaArrivo(bookings.find(x=>String(x.dbId||x.id)===this.dataset.bid))'>✓ Segnala arrivo (senza documenti)</button>`;
+
+    if (arrivo) {
+      const oraArr = arrivo.ts ? new Date(arrivo.ts).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}) : '';
+      return `<div class="ci-dr-alert" style="background:#ecfdf5;border-color:#10b981;color:#065f46;">🟢 Ospite arrivato${oraArr?' alle '+oraArr:''}<br>
+        <span style="font-size:11px;opacity:.85;">${arrivo.utente?'Segnalato da '+arrivo.utente+' — ':''}Documenti da registrare</span></div>
+        <button class="btn primary" style="width:100%;justify-content:center;margin-top:8px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Registra documenti ora</button>`;
+    }
+
+    if (diffDays < 0) {
+      // Il GIORNO di arrivo è nel passato (non solo l'ora) → davvero in ritardo
+      const giorni = Math.abs(diffDays);
       return `<div class="ci-dr-alert danger">⚠ Check-in in ritardo<br>
-        <span style="font-size:11px;opacity:.85;">Arrivo ${giorni>0?giorni+' giorn'+(giorni===1?'o':'i')+' fa':'oggi'} — non ancora registrato</span></div>
-        <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Registra check-in ora</button>`;
+        <span style="font-size:11px;opacity:.85;">Arrivo ${giorni} giorn${giorni===1?'o':'i'} fa — non ancora registrato</span></div>
+        <button class="btn primary" style="width:100%;justify-content:center;margin-top:8px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Registra check-in ora</button>
+        ${arrivoBtn}`;
     }
-    if (hoursToArrival <= 48) {
-      const ore = Math.floor(hoursToArrival);
-      const label = ore < 1 ? 'Meno di 1 ora' : ore < 24 ? ore+' or'+(ore===1?'a':'e') : Math.floor(ore/24)+' giorn'+(Math.floor(ore/24)===1?'o':'i');
-      return `<div class="ci-dr-alert warn">🕐 Arrivo tra ${label}<br>
+    if (diffDays === 0) {
+      // Arrivo OGGI — mai "in ritardo", indipendentemente dall'ora corrente
+      return `<div class="ci-dr-alert warn">📅 Arrivo oggi<br>
+        <span style="font-size:11px;opacity:.85;">Registra il check-in quando l'ospite arriva</span></div>
+        <button class="btn primary" style="width:100%;justify-content:center;margin-top:8px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Fai check-in</button>
+        ${arrivoBtn}`;
+    }
+    if (diffDays <= 2) {
+      const label = diffDays === 1 ? 'domani' : 'tra ' + diffDays + ' giorni';
+      return `<div class="ci-dr-alert warn">🕐 Arrivo ${label}<br>
         <span style="font-size:11px;opacity:.85;">Prepara il check-in in anticipo</span></div>
-        <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Fai check-in</button>`;
+        <button class="btn primary" style="width:100%;justify-content:center;margin-top:4px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Fai check-in</button>
+        ${arrivoBtn}`;
     }
-    const gg = Math.floor(hoursToArrival / 24);
-    return `<div class="ci-dr-future">Arrivo tra <strong>${gg} giorni</strong><br>
+    return `<div class="ci-dr-future">Arrivo tra <strong>${diffDays} giorni</strong><br>
       <span style="font-size:11px;color:var(--text3);">Il check-in può essere fatto fino a 48h prima o dopo l'arrivo.</span></div>
       <button class="btn" style="width:100%;justify-content:center;margin-top:12px;" data-bid="${bid}" onclick="openCiModal(this.dataset.bid)">🛎 Fai check-in in anticipo</button>`;
   } catch(e) {
