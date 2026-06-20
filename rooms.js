@@ -13,7 +13,7 @@
 // Caricato PRIMA di: gantt.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_ROOMS = '1';
+const BLIP_VER_ROOMS = '2';
 
 function openRoomDrawer(roomId) {
   const room = ROOMS.find(r=>r.id===roomId);
@@ -353,6 +353,14 @@ function getRoomDayStatus(roomId, date) {
     return { opId:'uscita', label:'Check-out oggi', uscente, entrante:null };
   }
   if (entrante) {
+    // Se l'ospite entrante ha già segnalato l'arrivo (arrivatiData), la camera
+    // è di fatto OCCUPATA da oggi → stato dedicato 'in-struttura'.
+    // Se ha completato anche il check-in documenti (ciData) → comunque in struttura.
+    const _arrivato = (typeof getArrivoForBooking === 'function' && getArrivoForBooking(entrante))
+                   || (typeof getCiForBooking === 'function' && getCiForBooking(entrante));
+    if (_arrivato) {
+      return { opId:'in-struttura', label:'In struttura', uscente:null, entrante, occupante:entrante };
+    }
     return { opId:'arrivo', label:'Arrivo oggi', uscente:null, entrante };
   }
   if (occupante) {
@@ -387,7 +395,15 @@ function opBadge(opId, label) {
 
 function openRoomDash() {
   _rdashFilter = 'tutti';
-  renderRoomDash();
+  // Carica arrivi e check-in così getRoomDayStatus può calcolare 'in-struttura'
+  const _loads = [];
+  if (typeof loadArrivatiData === 'function') _loads.push(loadArrivatiData());
+  if (typeof loadCiData === 'function')       _loads.push(loadCiData());
+  if (_loads.length) {
+    Promise.all(_loads).then(() => renderRoomDash()).catch(() => renderRoomDash());
+  } else {
+    renderRoomDash();
+  }
   document.getElementById('roomDashPage').classList.add('open');
 }
 function closeRoomDash() {
@@ -395,15 +411,26 @@ function closeRoomDash() {
 }
 
 function renderRoomDash() {
+  // Inietta CSS per lo stato 'in-struttura' (una sola volta)
+  if (!document.getElementById('_inStrutturaCss')) {
+    const _st = document.createElement('style');
+    _st.id = '_inStrutturaCss';
+    _st.textContent = `
+      .rdash-card.op-in-struttura { border-left:4px solid #10b981 !important; background:#ecfdf5; }
+      .rdash-badge.badge-op-in-struttura { background:#10b981; color:#fff; }
+    `;
+    document.head.appendChild(_st);
+  }
   const today = new Date(); today.setHours(12,0,0,0);
   const todayStr = today.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
 
   // Filtri operativi
-  const filtri = ['tutti','interventi','cambio','controllare','da-preparare','arrivo','uscita','occupata','pronta','fuori-servizio'];
+  const filtri = ['tutti','interventi','cambio','controllare','da-preparare','arrivo','in-struttura','uscita','occupata','pronta','fuori-servizio'];
   const fLabel  = {
     'tutti':'Tutti', 'interventi':'🧹 Interventi', 'cambio':'🔄 Cambio', 'controllare':'🟣 Controlla',
     'occupata':'🔴 Occupate', 'arrivo':'🔵 Arrivi', 'uscita':'🟡 Uscite',
-    'pronta':'🟢 Pronte', 'da-preparare':'🟠 Da pulire', 'fuori-servizio':'⚫ Fuori serv.'
+    'pronta':'🟢 Pronte', 'da-preparare':'🟠 Da pulire', 'fuori-servizio':'⚫ Fuori serv.',
+    'in-struttura':'🟢 In struttura'
   };
   let filtersHtml = `<div style="padding:10px 14px 4px;font-size:11px;color:var(--text3);font-weight:600;">Oggi: ${todayStr}</div>
   <div class="rdash-filters">`;
@@ -445,6 +472,10 @@ function renderRoomDash() {
     switch (st.opId) {
       case 'cambio':
         bucket = 0; tiebreak = 0; break;
+
+      case 'in-struttura':
+        // Ospite già arrivato oggi — informativo, in alto ma dopo i cambi
+        bucket = 1; tiebreak = -1; break;
 
       case 'arrivo':
         // Arrivo oggi: prima le non pulite (da fare subito), poi le già pronte
@@ -553,6 +584,16 @@ function renderRoomDash() {
           ${st.uscente.d ? `<span class="rdash-disp">${st.uscente.d}</span>` : ''}
         </div>
         <div style="font-size:10px;color:var(--text3);margin-top:3px;">Da pulire dopo uscita</div>`;
+      } else if (st.opId === 'in-struttura' && st.entrante) {
+        // Ospite arrivato oggi: nome + indicazione documenti
+        const _ciDone = (typeof getCiForBooking === 'function') && getCiForBooking(st.entrante);
+        detailHtml += `<div class="rdash-guest-row" style="margin-top:2px;">
+          <span class="rdash-guest-name">${st.entrante.n}</span>
+          ${st.entrante.d ? `<span class="rdash-disp">${st.entrante.d}</span>` : ''}
+        </div>
+        <div style="font-size:10px;color:${_ciDone ? 'var(--success,#2d6a4f)' : '#e67e22'};margin-top:3px;font-weight:600;">
+          ${_ciDone ? '✓ Arrivato · documenti registrati' : '🟢 Arrivato · documenti da registrare'}
+        </div>`;
       } else if (st.opId === 'arrivo' && st.entrante) {
         detailHtml += `<div class="rdash-guest-row" style="margin-top:2px;">
           <span class="rdash-guest-name">${st.entrante.n}</span>

@@ -291,6 +291,11 @@ async function segnalaArrivo(b) {
     const tabEl = document.getElementById('drTabCI');
     if (tabEl) { try { tabEl.innerHTML = renderDrawerCheckin(b); } catch(e) {} }
   }
+  // Aggiorna il pallino stato camera sul Gantt e l'eventuale pannello Stato Camere
+  if (typeof render === 'function') { try { render(); } catch(e) {} }
+  if (typeof renderRoomDash === 'function' && document.getElementById('roomDashPage')?.classList.contains('open')) {
+    try { renderRoomDash(); } catch(e) {}
+  }
   if (typeof showToast === 'function') showToast('Arrivo segnalato — registra i documenti quando possibile', 'success');
 
   // Scrittura remota (silenziosa — se fallisce il dato resta comunque in cache locale)

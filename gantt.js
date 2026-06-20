@@ -13,7 +13,7 @@
 // Dipende da: core.js, api.js, auth.js, store.js, rooms.js, clienti.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_GANTT = '33';
+const BLIP_VER_GANTT = '34';
 const BLIP_VER_ROOMS_REF = '1'; // rooms.js caricato prima di gantt.js // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
@@ -120,7 +120,7 @@ function _renderMonthBlock(y, m) {
       if (isNow) { const tx = (tod - 1) * CW + CW / 2 - 1; tv = `<div class="tvline" style="left:${tx}px"></div>`; }
       const _today2 = new Date(); _today2.setHours(12,0,0,0);
       const _opst = getRoomDayStatus(room.id, _today2);
-      const _opLabels = {'cambio':'Cambio','occupata':'Occupata','uscita':'Uscita oggi','arrivo':'Arrivo oggi','pronta':'Pronta','da-preparare':'Da preparare','controllare':'Controllare/Rassettare','fuori-servizio':'Fuori servizio'};
+      const _opLabels = {'cambio':'Cambio','occupata':'Occupata','uscita':'Uscita oggi','arrivo':'Arrivo oggi','in-struttura':'In struttura','pronta':'Pronta','da-preparare':'Da preparare','controllare':'Controllare/Rassettare','fuori-servizio':'Fuori servizio'};
       const _dot = `<span class="room-status-dot rsd-op-${_opst.opId}" title="${_opLabels[_opst.opId]||''}"></span>`;
       h += `<div class="rrow"><div class="rlabel" onclick="event.stopPropagation();openRoomDrawer('${room.id}')" style="cursor:pointer;">${room.name}${_dot}</div><div class="dcwrap">${cells}${bars}${tv}</div></div>`;
     });
@@ -131,9 +131,21 @@ function _renderMonthBlock(y, m) {
 }
 
 function render() {
+  // CSS pallino stato 'in-struttura' (iniettato una sola volta)
+  if (!document.getElementById('_inStrutturaDotCss')) {
+    const _s = document.createElement('style');
+    _s.id = '_inStrutturaDotCss';
+    _s.textContent = '.room-status-dot.rsd-op-in-struttura{background:#10b981 !important;}';
+    document.head.appendChild(_s);
+  }
   if (!_billingPreloaded && typeof preloadContoDati === 'function' && DATABASE_SHEET_ID) {
     _billingPreloaded = true;
     preloadContoDati();
+  }
+  // Carica arrivi una volta sola, poi ri-renderizza per aggiornare i pallini 'in-struttura'
+  if (!window._arriviPreloaded && typeof loadArrivatiData === 'function' && DATABASE_SHEET_ID) {
+    window._arriviPreloaded = true;
+    loadArrivatiData().then(() => { try { render(); } catch(e){} }).catch(()=>{});
   }
   // Inizializza finestra di 3 mesi: mese precedente, corrente, successivo
   const prev = _addOffset(curY, curM, -1);
