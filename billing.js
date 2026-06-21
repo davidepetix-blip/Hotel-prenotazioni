@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '40'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '41'; // ← incrementa ad ogni modifica
 
 // BILL_SETTINGS_KEY definita in core.js
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -1730,6 +1730,7 @@ function apriPdf(bid) {
   document.getElementById('pdfTitle').textContent=`Conto — ${b.n}`;
   document.getElementById('printDoc').innerHTML=buildPdfDoc(b,room,conto,cfg,isA);
   document.getElementById('pdfOverlay').classList.add('open');
+  _ensureShareImageButton();
 }
 
 function buildPdfDoc(b, room, conto, cfg, isAppart) {
@@ -1870,14 +1871,315 @@ function blipStampaPDF() {
   win.document.close();
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// CONDIVISIONE CONTO — testo strutturato + immagine
+// ═══════════════════════════════════════════════════════════════════
+// PRIMA: shareDocWhatsApp/shareDocEmail leggevano innerText del DOM
+// renderizzato — su una tabella questo appiattisce le celle senza
+// separatori, producendo testo illeggibile su WhatsApp (descrizione,
+// quantità, prezzo e importo tutti mescolati in un'unica riga).
+//
+// ORA: un unico estrattore (_getContoDatiCondivisibili) legge i dati
+// strutturati alla fonte (stessi usati per costruire l'HTML del PDF),
+// condiviso da testo WhatsApp/Email E dall'export immagine — un solo
+// punto da mantenere invece di tre rappresentazioni divergenti.
+// ═══════════════════════════════════════════════════════════════════
+
+// Raccoglie i dati del conto attualmente aperto nell'overlay (individuale
+// o di gruppo, distinti tramite il sentinel _currentPdfBid==='__gruppo__')
+// in un formato neutro. Ritorna null se nessun conto è aperto.
+function _getContoDatiCondivisibili() {
+  const cfg = loadBillSettings();
+
+  if (_currentPdfBid === '__gruppo__') {
+    const g = window._gruppoCorrente;
+    if (!g) return null;
+    const aliq = g.aliquotaIVA || cfg.aliquotaIVA || 10;
+    const imponibile = parseFloat((g.totale / (1+aliq/100)).toFixed(2));
+    const iva = parseFloat((g.totale - imponibile).toFixed(2));
+    return {
+      cfg, isGruppo: true,
+      tipo: 'Conto di gruppo',
+      nome: g.nome,
+      righeInfo: g.dalD && g.alD
+        ? [['Periodo', `${g.dalD.toLocaleDateString('it-IT')} → ${g.alD.toLocaleDateString('it-IT')}`]]
+        : [],
+      righe: (g.righe || []).filter(r => r.total !== 0),
+      imponibile, iva, totale: g.totale
+    };
+  }
+
+  const bid = _currentPdfBid;
+  if (!bid) return null;
+  const b = bookings.find(x => x.id === bid);
+  if (!b) return null;
+  const room  = ROOMS.find(r => r.id === b.r);
+  const isA   = room?.g === 'Appartamenti';
+  const conto = getContoEffettivo(bid);
+  if (!conto) return null;
+
+  const byIva = {};
+  conto.righe.forEach(r => {
+    const al = r.iva ?? (conto.aliquotaIVA || cfg.aliquotaIVA || 10);
+    byIva[al] = (byIva[al] || 0) + (r.total || 0);
+  });
+  const aliquote   = Object.keys(byIva).map(Number).sort((a,b) => a-b);
+  const imponibile = parseFloat(aliquote.reduce((s,al) => s + byIva[al]/(1+al/100), 0).toFixed(2));
+  const iva        = parseFloat((conto.totale - imponibile).toFixed(2));
+
+  return {
+    cfg, isGruppo: false,
+    tipo: isA ? 'Rendiconto Affitto' : 'Conto Soggiorno',
+    nome: b.n,
+    righeInfo: [
+      ['Camera/Unità', room?.name || roomName(b.r)],
+      ['Check-in', fmt(b.s)],
+      ['Check-out', fmt(b.e)],
+      [isA?'Periodo':'Notti', isA ? (nights(b.s,b.e)/30).toFixed(1)+' mesi' : nights(b.s,b.e)+' notti'],
+      ...(!isA && b.d ? [['Disposizione', b.d]] : [])
+    ],
+    righe: conto.righe.filter(r => r.total !== 0),
+    imponibile, iva, totale: conto.totale
+  };
+}
+
+function _formatRigaTesto(r) {
+  const segno = r.total >= 0 ? '+' : '';
+  const qp = (r.qty != null && r.unitPrice != null) ? ` (${r.qty} × ${r.unitPrice.toFixed(2)}€)` : '';
+  return `• ${r.label}${qp}: ${segno}${r.total.toFixed(2)}€`;
+}
+
+// Costruisce il testo con la formattazione *grassetto* nativa di WhatsApp
+// (asterischi semplici). Limita il dettaglio se troppo lungo per restare
+// sotto il limite pratico di lunghezza URL di wa.me.
+function _buildContoTestoCondivisibile() {
+  const d = _getContoDatiCondivisibili();
+  if (!d) return null;
+  const cfg = d.cfg;
+
+  let t = `*${cfg.hotelName || ''}*\n`;
+  if (cfg.hotelAddress) t += `${cfg.hotelAddress}\n`;
+  if (cfg.hotelTel)     t += `Tel: ${cfg.hotelTel}\n`;
+  t += `\n*${d.tipo.toUpperCase()}*\n\n`;
+  t += `Nome: *${d.nome}*\n`;
+  d.righeInfo.forEach(([lbl,val]) => { t += `${lbl}: ${val}\n`; });
+  t += `\n*DETTAGLIO*\n`;
+
+  let righeTxt = d.righe.map(_formatRigaTesto);
+  let corpo = righeTxt.join('\n');
+  if (corpo.length > 2500 && righeTxt.length > 6) {
+    righeTxt = righeTxt.slice(0, 6);
+    righeTxt.push(`… e altre ${d.righe.length - 6} voci (vedi PDF/immagine allegati)`);
+    corpo = righeTxt.join('\n');
+  }
+  t += corpo + '\n';
+  t += `\nImponibile: ${d.imponibile.toFixed(2)}€\n`;
+  t += `IVA: ${d.iva.toFixed(2)}€\n`;
+  t += `*TOTALE${d.isGruppo?'':' IVA inclusa'}: ${d.totale.toFixed(2)}€*\n`;
+  t += `\n_${cfg.hotelName||''} · Documento del ${new Date().toLocaleDateString('it-IT')}${cfg.hotelTel?' · Tel: '+cfg.hotelTel:''}_`;
+  return t;
+}
+
 function shareDocWhatsApp() {
-  const t = document.getElementById('printDoc').innerText.split('\n').filter(l=>l.trim()).slice(0,25).join('\n');
+  const t = _buildContoTestoCondivisibile();
+  if (!t) { showToast('Apri prima un conto', 'error'); return; }
   window.open(`https://wa.me/?text=${encodeURIComponent(t)}`,'_blank');
 }
 function shareDocEmail() {
-  const s=encodeURIComponent('Conto — '+document.getElementById('pdfTitle').textContent);
-  const b=encodeURIComponent(document.getElementById('printDoc').innerText);
-  window.open(`mailto:?subject=${s}&body=${b}`,'_blank');
+  const t = _buildContoTestoCondivisibile();
+  if (!t) { showToast('Apri prima un conto', 'error'); return; }
+  const d = _getContoDatiCondivisibili();
+  const s = encodeURIComponent('Conto — ' + (d?.nome || ''));
+  // L'email non supporta il markdown *grassetto* di WhatsApp — lo rimuoviamo
+  const plain = t.replace(/\*/g, '').replace(/_/g, '');
+  window.open(`mailto:?subject=${s}&body=${encodeURIComponent(plain)}`,'_blank');
+}
+
+// ── Export come immagine JPG (canvas nativo, nessuna libreria esterna) ──
+// Disegna lo stesso contenuto del PDF su un <canvas>, poi condivide il
+// file tramite Web Share API (se supportata, es. Android/iOS recenti) o
+// lo scarica per condivisione manuale (fallback universale, desktop incluso).
+async function shareDocImage() {
+  const d = _getContoDatiCondivisibili();
+  if (!d) { showToast('Apri prima un conto', 'error'); return; }
+
+  const W = 900, PAD = 50;
+  const headerH = 34 + (d.cfg.hotelAddress?20:0) + (d.cfg.hotelTel?20:0) + 10 + 24 + 26 + 32;
+  const infoH   = Math.ceil(d.righeInfo.length/2) * 44 + 20 + 24 + 26;
+
+  // Pre-calcola l'altezza delle righe (con word-wrap) prima di disegnare
+  const measCanvas = document.createElement('canvas');
+  const mctx = measCanvas.getContext('2d');
+  mctx.font = '400 13px Arial';
+  const colDescW = (W-PAD*2) - 260;
+  const rowHeights = d.righe.map(r => {
+    const words = r.label.split(' ');
+    let line = '', n = 1;
+    words.forEach(w => {
+      const test = line ? line+' '+w : w;
+      if (mctx.measureText(test).width > colDescW && line) { n++; line = w; }
+      else line = test;
+    });
+    return Math.max(34, n*16 + 18);
+  });
+  const tableH = 34 + rowHeights.reduce((s,h)=>s+h, 0);
+  const totalsH = 26*2 + 14 + 28 + 50;
+  const footerH = 20 + 24;
+  const H = PAD*2 + headerH + infoH + tableH + totalsH + footerH;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,W,H);
+  ctx.textBaseline = 'top';
+
+  let y = PAD;
+  ctx.fillStyle = '#1a1a1a'; ctx.font = '700 26px Georgia, serif';
+  ctx.fillText(d.cfg.hotelName || '', PAD, y); y += 34;
+  ctx.font = '400 14px Arial'; ctx.fillStyle = '#666';
+  if (d.cfg.hotelAddress) { ctx.fillText(d.cfg.hotelAddress, PAD, y); y += 20; }
+  if (d.cfg.hotelTel)     { ctx.fillText('Tel: '+d.cfg.hotelTel, PAD, y); y += 20; }
+  y += 10;
+
+  ctx.strokeStyle = '#2d6a4f'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(PAD,y); ctx.lineTo(W-PAD,y); ctx.stroke(); y += 24;
+
+  ctx.fillStyle = '#888'; ctx.font = '700 12px Arial';
+  ctx.fillText(d.tipo.toUpperCase(), PAD, y); y += 26;
+
+  ctx.fillStyle = '#1a1a1a'; ctx.font = '700 20px Arial';
+  ctx.fillText(d.nome, PAD, y); y += 32;
+
+  ctx.font = '400 12px Arial';
+  const colW = (W-PAD*2)/2;
+  d.righeInfo.forEach(([lbl,val], i) => {
+    const col = i % 2, row = Math.floor(i/2);
+    const x = PAD + col*colW, yy = y + row*44;
+    ctx.fillStyle = '#999'; ctx.font = '400 11px Arial';
+    ctx.fillText(lbl.toUpperCase(), x, yy);
+    ctx.fillStyle = '#1a1a1a'; ctx.font = '600 15px Arial';
+    ctx.fillText(val, x, yy+16);
+  });
+  y += Math.ceil(d.righeInfo.length/2)*44 + 20;
+
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD,y); ctx.lineTo(W-PAD,y); ctx.stroke(); y += 24;
+
+  ctx.fillStyle = '#888'; ctx.font = '700 12px Arial';
+  ctx.fillText('DETTAGLIO', PAD, y); y += 26;
+
+  const colDesc = PAD, colQty = W-PAD-260, colPrezzo = W-PAD-180, colImporto = W-PAD-90;
+  ctx.fillStyle = '#f5f5f5'; ctx.fillRect(PAD-10, y-6, W-PAD*2+20, 30);
+  ctx.fillStyle = '#555'; ctx.font = '700 11px Arial';
+  ctx.fillText('DESCRIZIONE', colDesc, y);
+  ctx.fillText('QTÀ', colQty, y);
+  ctx.fillText('PREZZO', colPrezzo, y);
+  ctx.fillText('IMPORTO', colImporto, y);
+  y += 34;
+
+  ctx.font = '400 13px Arial';
+  d.righe.forEach((r, idx) => {
+    ctx.fillStyle = '#1a1a1a';
+    const words = r.label.split(' ');
+    let line = '', lines = [];
+    words.forEach(w => {
+      const test = line ? line+' '+w : w;
+      if (ctx.measureText(test).width > colDescW && line) { lines.push(line); line = w; }
+      else line = test;
+    });
+    if (line) lines.push(line);
+    lines.forEach((l,i) => ctx.fillText(l, colDesc, y + i*16));
+
+    ctx.fillText(r.qty!=null?String(r.qty):'—', colQty, y);
+    ctx.fillText(r.unitPrice!=null?r.unitPrice.toFixed(2)+'€':'—', colPrezzo, y);
+    ctx.fillStyle = r.total<0 ? '#c0392b' : '#1a1a1a';
+    ctx.font = '700 13px Arial';
+    ctx.fillText((r.total>=0?'+':'')+r.total.toFixed(2)+'€', colImporto, y);
+    ctx.font = '400 13px Arial';
+    y += rowHeights[idx];
+  });
+
+  y += 10;
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD,y); ctx.lineTo(W-PAD,y); ctx.stroke(); y += 24;
+
+  ctx.font = '400 13px Arial'; ctx.fillStyle = '#666'; ctx.textAlign = 'left';
+  ctx.fillText('Imponibile totale', PAD, y);
+  ctx.textAlign = 'right'; ctx.fillText(d.imponibile.toFixed(2)+' €', W-PAD, y);
+  ctx.textAlign = 'left'; y += 26;
+  ctx.fillText('IVA totale', PAD, y);
+  ctx.textAlign = 'right'; ctx.fillText(d.iva.toFixed(2)+' €', W-PAD, y);
+  ctx.textAlign = 'left'; y += 14;
+
+  ctx.strokeStyle = '#2d6a4f'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(PAD,y); ctx.lineTo(W-PAD,y); ctx.stroke(); y += 28;
+
+  ctx.fillStyle = '#2d6a4f'; ctx.font = '700 18px Arial';
+  ctx.fillText(d.isGruppo?'TOTALE':'TOTALE IVA inclusa', PAD, y);
+  ctx.font = '700 24px Arial'; ctx.textAlign = 'right';
+  ctx.fillText(d.totale.toFixed(2)+' €', W-PAD, y);
+  ctx.textAlign = 'left'; y += 50;
+
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD,y); ctx.lineTo(W-PAD,y); ctx.stroke(); y += 20;
+  ctx.fillStyle = '#999'; ctx.font = '400 11px Arial'; ctx.textAlign = 'center';
+  const oggi = new Date().toLocaleDateString('it-IT');
+  ctx.fillText(`${d.cfg.hotelName||''} · Documento del ${oggi}${d.cfg.hotelTel?' · Tel: '+d.cfg.hotelTel:''}`, W/2, y);
+  ctx.textAlign = 'left';
+
+  canvas.toBlob(async (blob) => {
+    if (!blob) { showToast('Errore generazione immagine', 'error'); return; }
+    const fileName = `conto_${(d.nome||'cliente').replace(/[^a-z0-9]+/gi,'_').toLowerCase()}.jpg`;
+    const file = new File([blob], fileName, { type: 'image/jpeg' });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'Conto — ' + d.nome });
+        return;
+      } catch(e) {
+        if (e.name === 'AbortError') return; // utente ha annullato — nessun errore da mostrare
+        // altrimenti prosegue al fallback sotto
+      }
+    }
+    // Fallback universale (desktop, browser senza Web Share Level 2): scarica il file
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName; a.click();
+    URL.revokeObjectURL(url);
+    showToast('Immagine salvata — condividila da WhatsApp/Galleria', 'success');
+  }, 'image/jpeg', 0.92);
+}
+
+// Inserisce dinamicamente il bottone "📷 Immagine" accanto a quello
+// WhatsApp esistente nell'overlay PDF. Non richiede modifiche a index.html.
+// Strategia difensiva a 2 livelli + fallback sempre visibile, perché la
+// struttura HTML esatta dell'overlay non è verificabile da qui.
+function _ensureShareImageButton() {
+  if (document.getElementById('btnShareDocImage')) return;
+
+  let waBtn = document.querySelector('[onclick="shareDocWhatsApp()"]');
+  if (!waBtn) {
+    waBtn = Array.from(document.querySelectorAll('#pdfOverlay button'))
+      .find(b => /whatsapp/i.test(b.textContent));
+  }
+
+  const img = document.createElement('button');
+  img.id = 'btnShareDocImage';
+  img.type = 'button';
+  img.innerHTML = '📷 Immagine';
+  img.onclick = shareDocImage;
+
+  if (waBtn) {
+    img.className = waBtn.className;
+    img.setAttribute('style', waBtn.getAttribute('style') || '');
+    waBtn.insertAdjacentElement('afterend', img);
+  } else {
+    // Fallback: bottone flottante sempre visibile, anche se non troviamo la button bar
+    img.className = 'btn';
+    img.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:99999;box-shadow:0 2px 10px rgba(0,0,0,.35);background:#2d6a4f;color:#fff;border:none;border-radius:24px;padding:10px 16px;font-size:13px';
+    document.body.appendChild(img);
+    console.warn('[Blip] Bottone WhatsApp non trovato nell\'overlay — "📷 Immagine" inserito come pulsante flottante. Verifica la struttura di #pdfOverlay in index.html.');
+  }
 }
 
 function esportaXML() {
@@ -3295,6 +3597,7 @@ function apriPdfGruppo() {
   document.getElementById('pdfOverlay').classList.add('open');
   // Imposta bid fittizio per XML gruppo
   _currentPdfBid = '__gruppo__';
+  _ensureShareImageButton();
 }
 
 function esportaXMLGruppo() {
