@@ -6,7 +6,7 @@
 
 
 
-const BLIP_VER_BILLING = '39'; // ← incrementa ad ogni modifica
+const BLIP_VER_BILLING = '40'; // ← incrementa ad ogni modifica
 
 // BILL_SETTINGS_KEY definita in core.js
 const BILL_CONTI_KEY    = 'hotelConti';
@@ -2799,6 +2799,13 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
     const prezzoN= n > 0 ? parseFloat((totB/n).toFixed(2)) : totB;
     totaleGruppo += totB;
 
+    // Consapevolezza pagamento: una camera già pagata (singolarmente o in un
+    // altro gruppo) non deve essere ri-fatturata per default — checkbox
+    // sbarrata e disabilitata, ma resta visibile/informativa nella lista.
+    const statoPag  = (typeof getBillingStatusForBooking === 'function')
+      ? getBillingStatusForBooking(b.dbId || b.id) : null;
+    const giaPagato = statoPag === 'pagato';
+
     // Aggiungi riga per il conto di gruppo
     righeGruppo.push({
       label:     `${room?.name||roomName(b.r)} · ${fmt(b.s)} → ${fmt(b.e)} (${n} notti) · ${b.d||''}`,
@@ -2806,13 +2813,17 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
       unitPrice: prezzoN,
       total:     totB,
       tipo:      'base',
-      bookingId: b.id
+      bookingId: b.id,
+      pagato:    giaPagato
     });
 
-    return `<div class="sr-item" style="cursor:default">
+    return `<div class="sr-item" style="cursor:default${giaPagato?';opacity:.6':''}">
+      <input type="checkbox" class="grp-room-check" data-bid="${b.id}"
+        ${giaPagato ? 'disabled' : 'checked'} onchange="toggleGruppoRoom(this)"
+        style="width:18px;height:18px;margin-right:8px;flex-shrink:0;align-self:center;cursor:${giaPagato?'not-allowed':'pointer'}">
       <div class="sr-dot" style="background:${pastello(b.c)}"></div>
       <div class="sr-body">
-        <div class="sr-name">${room?.name||roomName(b.r)}</div>
+        <div class="sr-name">${room?.name||roomName(b.r)}${giaPagato?' <span style="font-size:10px;font-weight:700;color:var(--success,#2d6a4f);background:var(--accent2,#e8f5e9);padding:1px 6px;border-radius:4px;margin-left:4px">✓ GIÀ PAGATO</span>':''}</div>
         <div class="sr-meta">
           <span class="sr-badge">${fmt(b.s)} → ${fmt(b.e)}</span>
           <span class="sr-badge">${n} notti</span>
@@ -2910,18 +2921,34 @@ function renderRisultatiGruppo(trovate, nome, dalD, alD, el) {
       </div>
     </div>`;
 
-  // Salva in variabile globale per PDF/XML
+  // Salva in variabile globale per PDF/XML/Report/CSV
+  // ─────────────────────────────────────────────────────────────────
+  // righeBase    : righe per-camera (con bookingId+pagato), usate per
+  //                ricostruire g.righe/g.totale ogni volta che cambia
+  //                la selezione (vedi ricalcolaRiepilogoGruppo).
+  // bookings     : lista COMPLETA (non filtrata) — Report Presenze e CSV
+  //                la usano per le presenze fisiche, che NON dipendono
+  //                da quali camere vengono fatturate.
+  // selectedIds  : Set di booking.id (string) attualmente selezionati
+  //                per la fatturazione. Default: tutte tranne le già
+  //                pagate, così il comportamento "seleziona tutto" di
+  //                prima resta invariato quando non c'è nulla da pagare.
+  const righeBase = righeGruppo.filter(r => r.tipo === 'base');
   window._gruppoCorrente = {
-    nome:      trovate[0]?.n || nome,
-    righe:     righeGruppo,
-    totaleBase:parseFloat((totaleGruppo - extraSalvati.reduce((s,e)=>s+e.total,0)).toFixed(2)),
-    totale:    parseFloat(totaleGruppo.toFixed(2)),
-    aliquotaIVA: aliqIVA,
-    bookings:  trovate,
-    // Pre-popola con gli extra già salvati nel master — l'utente può aggiungerne altri
+    nome:        trovate[0]?.n || nome,
+    righeBase,
     extraGruppo: extraSalvati.map(e => ({ ...e, label: e.label.replace(/^\[Extra\]\s*/i,'') })),
+    convenzione: convenzione ? { nome: convenzione.nome, sconto: convenzione.sconto } : null,
+    aliquotaIVA: aliqIVA,
+    bookings:    trovate,
+    selectedIds: new Set(righeBase.filter(r => !r.pagato).map(r => String(r.bookingId))),
     dalD, alD
   };
+
+  // Applica subito il filtro di default (esclude le camere già pagate)
+  // ai totali mostrati a video, riusando lo stesso percorso di ricalcolo
+  // che useranno i toggle dei checkbox.
+  if (typeof ricalcolaRiepilogoGruppo === 'function') ricalcolaRiepilogoGruppo();
 }
 
 function aggiungiExtraGruppo() {
@@ -3070,18 +3097,81 @@ function aggiornaRiepilogoGruppo() {
   if (toEl) toEl.querySelector('span:last-child').textContent = g.totale.toFixed(2)+'€';
 }
 
+// Chiamata al click su un checkbox camera nel conto di gruppo.
+function toggleGruppoRoom(cb) {
+  const g = window._gruppoCorrente;
+  if (!g) return;
+  const bid = cb.dataset.bid;
+  if (cb.checked) g.selectedIds.add(bid); else g.selectedIds.delete(bid);
+  ricalcolaRiepilogoGruppo();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Unico punto che ricostruisce g.righe / g.totale / g.totaleBase a
+// partire da g.righeBase (filtrate per selectedIds) + extra + sconto
+// convenzione. Chiamata da: render iniziale, toggle checkbox camera.
+// NON tocca g.bookings (lista completa) — Report Presenze e CSV
+// continuano a vedere tutte le camere trovate, indipendentemente
+// dalla selezione di fatturazione.
+// ─────────────────────────────────────────────────────────────────
+function ricalcolaRiepilogoGruppo() {
+  const g = window._gruppoCorrente;
+  if (!g) return;
+
+  const righeBaseSel = (g.righeBase || []).filter(r => g.selectedIds.has(String(r.bookingId)));
+  let totale = righeBaseSel.reduce((s, r) => s + r.total, 0);
+  let righe  = [...righeBaseSel];
+
+  (g.extraGruppo || []).forEach(ex => { righe.push(ex); totale += ex.total; });
+
+  if (g.convenzione) {
+    const sc = parseFloat((totale * g.convenzione.sconto / 100).toFixed(2));
+    totale -= sc;
+    righe.push({
+      label: `Convenzione "${g.convenzione.nome}" -${g.convenzione.sconto}%`,
+      qty: null, unitPrice: null, total: -sc, tipo: 'sconto'
+    });
+  }
+
+  g.righe      = righe;
+  g.totale     = parseFloat(totale.toFixed(2));
+  g.totaleBase = parseFloat((totale - (g.extraGruppo||[]).reduce((s,e)=>s+e.total,0)).toFixed(2));
+
+  aggiornaRiepilogoGruppo();
+
+  // Aggiorna il contatore "N prenotazioni trovate" → "N selezionate su M trovate"
+  const titleEl = document.querySelector('#grpRisultati .conti-section-title');
+  if (titleEl) {
+    const tot = g.bookings.length, sel = g.selectedIds.size;
+    titleEl.textContent = sel === tot
+      ? `${tot} prenotazion${tot===1?'e':'i'} trovate`
+      : `${sel} selezionat${sel===1?'a':'e'} su ${tot} trovate`;
+  }
+}
+
 function emettiContoGruppo() {
   const g = window._gruppoCorrente;
   if (!g || !g.bookings?.length) return;
+
+  // FIX: prima iterava SEMPRE g.bookings (tutte le camere trovate dalla
+  // ricerca), ignorando la selezione fatta con i checkbox — una camera
+  // già pagata o volutamente esclusa veniva rifatturata lo stesso.
+  // Ora usa solo le camere effettivamente selezionate.
+  const bookingsSel = g.bookings.filter(b => g.selectedIds.has(String(b.id)));
+  if (!bookingsSel.length) {
+    showToast('Seleziona almeno una camera da fatturare', 'error');
+    return;
+  }
+
   const conti   = loadConti();
   const anno    = new Date().getFullYear();
   const newGrpId = 'GRP-' + anno + '-' + Date.now().toString(36).toUpperCase().slice(-6);
   const ora     = new Date().toISOString();
 
-  // Righe unificate: una sezione per ogni camera + extra di gruppo
+  // Righe unificate: una sezione per ogni camera selezionata + extra di gruppo
   const righeGruppo = [];
   let   totaleGruppo = 0;
-  g.bookings.forEach(b => {
+  bookingsSel.forEach(b => {
     const room  = ROOMS.find(r => r.id === b.r);
     const conto = calcolaConto(b, getExtraForBooking(_ck(b.id)));
     const cam   = room?.name || roomName(b.r);
@@ -3094,7 +3184,7 @@ function emettiContoGruppo() {
   }
   totaleGruppo = parseFloat(totaleGruppo.toFixed(2));
 
-  const tuttiBookingIds = g.bookings.map(b => b.dbId || String(b.id));
+  const tuttiBookingIds = bookingsSel.map(b => b.dbId || String(b.id));
   const primoBookingId  = tuttiBookingIds[0];
 
   // Cerca conto master già esistente per uno dei bookingId del gruppo
@@ -3104,7 +3194,7 @@ function emettiContoGruppo() {
   );
   const esistente = existingIdx >= 0 ? conti[existingIdx] : null;
 
-  // Documento Master — unico record che rappresenta tutto il gruppo
+  // Documento Master — unico record che rappresenta il gruppo selezionato
   const master = {
     id:            esistente?.id || ('C' + Date.now()),
     bookingId:     primoBookingId,
@@ -3112,9 +3202,9 @@ function emettiContoGruppo() {
     groupId:       esistente?.groupId || newGrpId,
     isGroupMaster: true,
     nome:          g.nome,
-    camera:        g.bookings.map(b => ROOMS.find(r=>r.id===b.r)?.name || roomName(b.r)).join(', '),
-    checkin:       g.dalD ? g.dalD.toISOString() : g.bookings[0].s.toISOString(),
-    checkout:      g.alD  ? g.alD.toISOString()  : g.bookings[g.bookings.length-1].e.toISOString(),
+    camera:        bookingsSel.map(b => ROOMS.find(r=>r.id===b.r)?.name || roomName(b.r)).join(', '),
+    checkin:       g.dalD ? g.dalD.toISOString() : bookingsSel[0].s.toISOString(),
+    checkout:      g.alD  ? g.alD.toISOString()  : bookingsSel[bookingsSel.length-1].e.toISOString(),
     righe:         righeGruppo,
     totale:        totaleGruppo,
     status:        'emesso',
@@ -3129,8 +3219,9 @@ function emettiContoGruppo() {
 
   if (existingIdx >= 0) conti[existingIdx] = master; else conti.unshift(master);
 
-  // Stub per ogni prenotazione: punta al master per lookup Gantt/drawer
-  g.bookings.forEach(b => {
+  // Stub per ogni prenotazione SELEZIONATA: punta al master per lookup Gantt/drawer.
+  // Le camere escluse (es. già pagate) non devono essere agganciate a questo master.
+  bookingsSel.forEach(b => {
     const bid = b.dbId || String(b.id);
     if (!_contiDatiCache[bid]) {
       _contiDatiCache[bid] = { extra:[], override:null, appartMode:null, contoEmesso:null, dbRow:null };
@@ -3147,7 +3238,7 @@ function emettiContoGruppo() {
   saveConti(conti);
   if (typeof render === 'function') render(); // aggiorna bordi Gantt
   apriPdfGruppo();
-  showToast(`✓ Conto gruppo emesso — ${g.bookings.length} camere · ${totaleGruppo.toFixed(2)}€`, 'success');
+  showToast(`✓ Conto gruppo emesso — ${bookingsSel.length} camere · ${totaleGruppo.toFixed(2)}€`, 'success');
 }
 
 function apriPdfGruppo() {
@@ -3184,7 +3275,7 @@ function apriPdfGruppo() {
       <div class="doc-info-grid">
         <div class="doc-info-item"><label>Nome</label><span>${g.nome}</span></div>
         <div class="doc-info-item"><label>Periodo</label><span>${periodoLabel}</span></div>
-        <div class="doc-info-item"><label>Soggiorni</label><span>${g.bookings.length}</span></div>
+        <div class="doc-info-item"><label>Soggiorni</label><span>${g.righe.filter(r=>r.tipo==='base').length}</span></div>
       </div>
     </div>
     <div class="doc-section">
