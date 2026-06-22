@@ -13,7 +13,7 @@
 // Dipende da: core.js, api.js, auth.js, store.js, rooms.js, clienti.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_GANTT = '35';
+const BLIP_VER_GANTT = '36';
 const BLIP_VER_ROOMS_REF = '1'; // rooms.js caricato prima di gantt.js // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
@@ -602,16 +602,20 @@ function duplicaBook(id) {
 async function delBook(id){
   const b=bookings.find(x=>x.id===id); if(!b) return;
   if(!confirm(`Eliminare la prenotazione di "${b.n}"?\nQuesto rimuoverà anche i colori dal foglio Google.`)) return;
-  closeDrawer();
-  showLoading('Rimozione…');
+  // Rimozione ottimistica: il booking sparisce dal Gantt immediatamente.
+  // La cancellazione sul foglio Google avviene in background (bridgeCancella
+  // può richiedere 5-30s; non ha senso bloccare l'intera UI nel frattempo).
+  bookings = bookings.filter(x => x.id !== id);
+  closeDrawer(); render();
+  showToast('⏳ Rimozione dal foglio in corso…', 'info');
   try {
     await bridgeCancella(b);
     if(DATABASE_SHEET_ID && b.dbRow) await dbDelete(b, 'Eliminata dall\'app');
-    bookings=bookings.filter(x=>x.id!==id);
-    hideLoading(); render();
     showToast('Prenotazione eliminata', 'success');
   } catch(e) {
-    hideLoading();
+    // Rollback: reinserisce il booking nella lista locale se la cancellazione
+    // sul foglio fallisce (coerenza UI — meglio mostrare il booking che perderlo)
+    bookings.push(b); render();
     syncLog('❌ Bridge cancella fallito: ' + e.message, 'err');
     showToast('Errore eliminazione: ' + e.message, 'error');
   }
@@ -932,18 +936,17 @@ async function saveBooking(){
   else bookings.push(newB);
 
   closeModal(); render();
-  showLoading('Scrittura sul foglio Google…');
+  // Il booking è già visibile nel Gantt con il chip tratteggiato (.pending)
+  // e il tooltip "⏳ in salvataggio". Non blocchiamo l'UI con showLoading.
+  showToast('⏳ Salvataggio in corso…', 'info');
 
   try {
-    // bridgeSalva gestisce internamente cancel+write per le modifiche
-    // e aggiorna bookings[] + render() dopo la risposta Apps Script
     await bridgeSalva(newB, existingB || null);
     const idx=bookings.findIndex(b=>b.id===newB.id);
     if(idx>=0){ bookings[idx].fromSheet=true; bookings[idx].pending=false; }
-    hideLoading(); render();
+    render();
     showToast(`✓ "${name}" salvato sul foglio Google`, 'success');
   } catch(e) {
-    hideLoading();
     const idx=bookings.findIndex(b=>b.id===newB.id);
     if(idx>=0) bookings[idx].pending=false;
     render();
