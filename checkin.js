@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '31'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '32'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -691,15 +691,13 @@ function renderCiGuests() {
         <span class="ci-ospite-num">${titleTxt}</span>
         ${!isCapo ? `<button class="ci-remove-btn" onclick="ciRemoveGuest(${idx})">✕</button>` : ''}
       </div>
-      ${isCapo ? `
-      <button class="ci-scan-btn" id="ciScanBtn" onclick="ciTriggerScan(${idx})">
+      <button class="ci-scan-btn" id="ciScanBtn_${idx}" onclick="ciTriggerScan(${idx})">
         📷 Scansiona documento d'identità
       </button>
-      <img class="ci-scan-preview" id="ciScanPreview" alt="Anteprima documento"
+      <img class="ci-scan-preview" id="ciScanPreview_${idx}" alt="Anteprima documento"
            ${g._previewSrc ? 'src="'+g._previewSrc+'"' : ''}
            style="${g._previewSrc ? 'display:block' : 'display:none'}">
-      <div id="ciScanBadge"></div>
-      ` : ''}
+      <div id="ciScanBadge_${idx}"></div>
       <!-- Nome / Cognome -->
       <div class="ci-field-row">
         <div class="ci-field">
@@ -1216,10 +1214,13 @@ async function ciHandleDocImage(input) {
   if (!input.files || !input.files[0]) return;
   const file = input.files[0];
 
-  const preview = document.getElementById('ciScanPreview');
-  const objUrl  = URL.createObjectURL(file);
+  // ID dinamici per-ospite: funzionano sia per il capogruppo (idx=0)
+  // sia per gli accompagnatori (idx=1, 2, ...) senza conflitti di ID
+  const _gIdx    = _ciOcrGuestIdx;
+  const preview  = document.getElementById('ciScanPreview_' + _gIdx);
+  const objUrl   = URL.createObjectURL(file);
   if (preview) { preview.src = objUrl; preview.style.display = 'block'; }
-  if (_ciEditGuests[_ciOcrGuestIdx]) _ciEditGuests[_ciOcrGuestIdx]._previewSrc = objUrl;
+  if (_ciEditGuests[_gIdx]) _ciEditGuests[_gIdx]._previewSrc = objUrl;
 
   const base64 = await new Promise((res, rej) => {
     const r = new FileReader();
@@ -1232,14 +1233,14 @@ async function ciHandleDocImage(input) {
   const overlay   = document.getElementById('ciOcrOverlay');
   const label     = document.getElementById('ciOcrLabel');
   overlay.classList.add('open');
-  label.textContent = 'Analisi documento in corso\u2026';
+  label.textContent = 'Analisi documento in corso…';
 
-  const btn = document.getElementById('ciScanBtn');
-  if (btn) { btn.classList.add('loading'); btn.textContent = '\u23f3 Analisi in corso\u2026'; }
+  const btn = document.getElementById('ciScanBtn_' + _gIdx);
+  if (btn) { btn.classList.add('loading'); btn.textContent = '⏳ Analisi in corso…'; }
 
   try {
     const apiKey = localStorage.getItem('hotelGeminiApiKey') || '';
-    if (!apiKey) throw new Error('API Key Gemini non configurata. Vai in \u2699 Impostazioni.');
+    if (!apiKey) throw new Error('API Key Gemini non configurata. Vai in ⚙ Impostazioni.');
 
     const prompt = 'Sei un assistente per la reception di un albergo italiano. '
       + 'Analizza questa immagine di un documento di identita e restituisci SOLO un JSON puro senza markdown:\n'
@@ -1278,13 +1279,13 @@ async function ciHandleDocImage(input) {
       if (m) { try { extracted = JSON.parse(m[0]); } catch(e2) { throw new Error('JSON non valido: ' + rawText.slice(0,80)); } }
       else throw new Error('Nessun JSON: ' + rawText.slice(0,80));
     }
-    console.log('OCR extracted:', JSON.stringify(extracted));
+    console.log('OCR extracted (ospite ' + _gIdx + '):', JSON.stringify(extracted));
 
-    const idx = _ciOcrGuestIdx;
-    const g   = _ciEditGuests[idx];
-    if (!g) throw new Error('Ospite non trovato');
+    const g = _ciEditGuests[_gIdx];
+    if (!g) throw new Error('Ospite non trovato (idx=' + _gIdx + ')');
 
-    const previewSrc = document.getElementById('ciScanPreview') ? document.getElementById('ciScanPreview').src : '';
+    const previewEl   = document.getElementById('ciScanPreview_' + _gIdx);
+    const previewSrc  = previewEl ? previewEl.src : '';
     const fields = ['cognome','nome','sesso','dataNascita','luogoNascita',
                     'provNascita','statoEsteroNascita','cittadinanza',
                     'tipoDoc','numDoc','luogoRilascio'];
@@ -1297,30 +1298,31 @@ async function ciHandleDocImage(input) {
     overlay.classList.remove('open');
     renderCiGuests();
 
-    const p2 = document.getElementById('ciScanPreview');
+    // Ripristina anteprima e badge dopo il re-render
+    const p2 = document.getElementById('ciScanPreview_' + _gIdx);
     if (p2 && previewSrc && previewSrc !== 'about:blank') { p2.src = previewSrc; p2.style.display = 'block'; }
 
-    const badge = document.getElementById('ciScanBadge');
+    const badge = document.getElementById('ciScanBadge_' + _gIdx);
     if (badge) {
       badge.innerHTML = filled > 0
-        ? '<div class="ci-scan-result-badge">\u2713 ' + filled + ' campi compilati \u2014 verifica e correggi se necessario</div>'
-        : '<div class="ci-scan-result-badge" style="background:#fdecea;border-color:#f5c6cb;color:var(--danger);">\u26a0 Nessun campo estratto \u2014 riprova con foto pi\u00f9 nitida</div>';
+        ? '<div class="ci-scan-result-badge">✓ ' + filled + ' campi compilati — verifica e correggi se necessario</div>'
+        : '<div class="ci-scan-result-badge" style="background:#fdecea;border-color:#f5c6cb;color:var(--danger);">⚠ Nessun campo estratto — riprova con foto più nitida</div>';
     }
 
-    const btn2 = document.getElementById('ciScanBtn');
-    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '\ud83d\udcf7 Scansiona di nuovo'; }
+    const btn2 = document.getElementById('ciScanBtn_' + _gIdx);
+    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '📷 Scansiona di nuovo'; }
 
     showToast(filled > 0
-      ? '\u2713 Documento analizzato \u00b7 ' + filled + ' campi estratti'
-      : 'Nessun dato estratto \u2014 riprova con foto pi\u00f9 nitida',
+      ? '✓ Documento analizzato · ' + filled + ' campi estratti'
+      : 'Nessun dato estratto — riprova con foto più nitida',
       filled > 0 ? 'success' : 'error');
 
   } catch(e) {
     overlay.classList.remove('open');
     console.error('OCR error:', e);
     showToast('Errore OCR: ' + e.message, 'error');
-    const btn2 = document.getElementById('ciScanBtn');
-    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '\ud83d\udcf7 Scansiona documento d\u2019identit\u00e0'; }
+    const btn2 = document.getElementById('ciScanBtn_' + _gIdx);
+    if (btn2) { btn2.classList.remove('loading'); btn2.textContent = '📷 Scansiona documento d\'identità'; }
   }
 }
 
@@ -1438,7 +1440,7 @@ function renderDrawerCheckin(b) {
     // un badge di conferma invece dell'alert ritardo/oggi/futuro, e offre
     // comunque il pulsante per completare i documenti quando possibile.
     const arrivo = (typeof getArrivoForBooking === 'function') ? getArrivoForBooking(b) : null;
-    const arrivoBtn = arrivo ? '' : `<button class="btn" style="width:100%;justify-content:center;margin-top:6px;font-size:12px;" data-bid="${bid}" onclick='segnalaArrivo(bookings.find(x=>String(x.id)===this.dataset.bid))'>✓ Segnala arrivo (senza documenti)</button>`;
+    const arrivoBtn = arrivo ? '' : `<button class="btn" style="width:100%;justify-content:center;margin-top:6px;font-size:12px;" data-bid="${bid}" onclick='segnalaArrivo(bookings.find(x=>String(x.dbId||x.id)===this.dataset.bid))'>✓ Segnala arrivo (senza documenti)</button>`;
 
     if (arrivo) {
       const oraArr = arrivo.ts ? new Date(arrivo.ts).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}) : '';
