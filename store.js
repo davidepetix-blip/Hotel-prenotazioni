@@ -1251,6 +1251,33 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
     }
     const match = findMatch(sheet, dbActive);
     if (!match) {
+      // ── Diagnostica anti-orfani ────────────────────────────────────
+      // findMatch non ha trovato corrispondenza: stiamo per generare un
+      // BLIP_ID nuovo per questa riga del foglio. Se esistono già dati di
+      // fatturazione (conto/pagamenti) salvati per un nome+camera identici
+      // ma sotto un ID che non risulta più tra le prenotazioni attive, quei
+      // dati rischiano di restare "orfani" — scollegati da qualunque
+      // prenotazione visibile. Questo blocco È SOLO un avviso: non cambia
+      // in nessun modo l'ID generato né la logica di matching sovrastante.
+      try {
+        if (typeof _contiDatiCache !== 'undefined') {
+          const nomSheet = _normName(sheet.n);
+          const camSheet = (sheet.cameraName || roomName(sheet.r) || '').toLowerCase().trim();
+          const orfano = Object.entries(_contiDatiCache).find(([bid, d]) => {
+            const c = d && d.contoEmesso;
+            if (!c || !c.nome) return false;
+            if (_normName(c.nome) !== nomSheet) return false;
+            if ((c.camera||'').toLowerCase().trim() !== camSheet) return false;
+            return !dbActive.some(b => b.dbId === bid);
+          });
+          if (orfano) {
+            const oldBid = orfano[0];
+            syncLog(`⚠ Possibile conto orfano per "${sheet.n}" (cam. ${camSheet}): dati di fatturazione già presenti sotto l'ID ${oldBid}, non più abbinato a nessuna prenotazione attiva. Verifica manualmente in Conti prima di trattarlo come nuovo soggiorno.`, 'wrn');
+            showToast(`⚠ "${sheet.n}": possibile conto/pagamento orfano da un ID precedente — verifica in Conti`, 'warning');
+          }
+        }
+      } catch (e) { /* la diagnostica non deve mai bloccare il sync */ }
+
       sheet.dbId  = genBookingId(sheet.s.getFullYear());
       sheet.ts    = nowISO();
       sheet.fonte = 'manuale';

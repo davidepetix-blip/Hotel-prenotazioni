@@ -685,6 +685,8 @@ function getStatoContoCalcolato(conto) {
   // Nessun pagamento in cache ma il conto ha pagatoIl salvato → considera pagato
   // (si verifica quando il pagamento era registrato con un bookingId legacy diverso)
   if (totale > 0 && pagato === 0 && conto.pagatoIl) return 'pagato';
+  // Acconto/versamento parziale registrato ma saldo non raggiunto
+  if (totale > 0 && pagato > 0 && pagato < totale - 0.01) return 'parziale';
   if (conto.tipoDoc || conto.numDoc || conto.fatturatoIl) return 'fatturato';
   if (conto.emessoIl || conto.status === 'emesso' || conto.status === 'fatturato' || conto.status === 'pagato') return 'emesso';
   return 'bozza';
@@ -769,6 +771,7 @@ function billingBorderColor(bid) {
   const stato = getBillingStatusForBooking(bid);
   if (stato === 'pagato')    return '#34a853'; // verde
   if (stato === 'fatturato') return '#4285f4'; // blu
+  if (stato === 'parziale')  return '#f4b400'; // ambra — acconto versato, saldo mancante
   if (stato === 'emesso')    return '#fa7b17'; // arancione
   if (stato === 'bozza')     return '#9e9e9e'; // grigio
   return null; // nessun conto → nessun bordo
@@ -2544,6 +2547,7 @@ function renderContiTab(tab) {
 const STATO_CFG = {
   bozza:     { icon:'📝', label:'Bozza',     next:'emesso',    nextLabel:'Segna Emesso' },
   emesso:    { icon:'📤', label:'Emesso',    next:'fatturato', nextLabel:'Segna Fatturato/Scontrino' },
+  parziale:  { icon:'💶', label:'Parziale',  next:'pagato',    nextLabel:'Registra pagamento residuo' },
   fatturato: { icon:'🧾', label:'Fatturato', next:'pagato',    nextLabel:'Segna Pagato' },
   pagato:    { icon:'✅', label:'Pagato',    next:null,        nextLabel:null }
 };
@@ -2571,12 +2575,55 @@ function renderContiLista() {
     <div style="font-size:12px;color:var(--text3)">Nessun conto nel periodo selezionato.</div>
   </div>`;
 
-  const ordine = ['pagato','fatturato','emesso','bozza'];
-  const titoli = { pagato:'✅ Pagati', fatturato:'🧾 Fatturati', emesso:'📤 Emessi', bozza:'📝 Bozze' };
-  const byS = { emesso:[], pagato:[], bozza:[], fatturato:[] };
+  const ordine = ['pagato','fatturato','parziale','emesso','bozza'];
+  const titoli = { pagato:'✅ Pagati', fatturato:'🧾 Fatturati', parziale:'💶 Parziali', emesso:'📤 Emessi', bozza:'📝 Bozze' };
+  const byS = { emesso:[], pagato:[], bozza:[], fatturato:[], parziale:[] };
   conti.forEach(c => (byS[c.status] || byS.bozza).push(c));
 
-  return ordine.map(stato => {
+  // ── Sezione "Insoluti": tutti i conti emessi con residuo>0, a prescindere
+  // dal loro stato (emesso/parziale/fatturato), ordinati per data di checkout
+  // crescente — i più scaduti in cima. Le bozze non sono incluse: un conto
+  // non ancora emesso non è un mancato pagamento, è semplicemente da fare.
+  const insoluti = conti
+    .filter(c => c.status !== 'pagato' && c.status !== 'bozza' && (c.residuo||0) > 0.01)
+    .sort((a,b) => (a.checkout||'').localeCompare(b.checkout||''));
+
+  const sezioneInsoluti = (() => {
+    if (!insoluti.length) return '';
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    const totIns = insoluti.reduce((s,c)=>s+(c.residuo||0),0);
+    return `<div class="conti-section conti-section-insoluti">
+      <div class="conti-section-title" style="display:flex;justify-content:space-between">
+        <span>⚠️ Insoluti (${insoluti.length})</span>
+        <span style="font-weight:600;color:var(--danger,#d33)">${totIns.toFixed(2)}€ da incassare</span>
+      </div>
+      ${insoluti.map(c => {
+        const ci  = new Date(c.checkin), co = new Date(c.checkout);
+        const giorniRitardo = Math.floor((oggi - co) / 86400000);
+        const dot = pastello((bookings.find(b=>b.dbId===c.bookingId)||bookings.find(b=>String(b.id)===String(c.bookingId)))?.c || '#ccc');
+        const cfg = STATO_CFG[c.status] || STATO_CFG.bozza;
+        const badgeRitardo = giorniRitardo > 0
+          ? `<span style="font-size:9px;background:#fdeaea;color:#c0392b;padding:1px 6px;border-radius:8px;margin-left:4px">${giorniRitardo}g di ritardo</span>`
+          : (giorniRitardo === 0 ? `<span style="font-size:9px;background:#fff4e0;color:#a05a00;padding:1px 6px;border-radius:8px;margin-left:4px">checkout oggi</span>` : '');
+        return `<div class="bill-list-item">
+          <div class="bill-list-dot" style="background:${dot}"></div>
+          <div class="bill-list-info" onclick="${c.isGroupMaster && c.groupId ? `riapriFogliGruppo('${c.groupId}')` : `riapriFoglio('${c.bookingId}')`}" style="cursor:pointer;flex:1">
+            <div class="bill-list-name">${c.nome}${badgeRitardo}</div>
+            <div class="bill-list-sub">Cam. ${c.camera} · ${fmt(ci)} → ${fmt(co)}</div>
+            <div style="font-size:10px;color:var(--text3);margin-top:2px">${cfg.icon} ${cfg.label} · pagato €${(c.totPagato||0).toFixed(2)} di €${(c.totale||0).toFixed(2)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;min-width:90px">
+            <div class="bill-list-total" style="color:var(--danger,#d33)">${(c.residuo||0).toFixed(2)}€</div>
+            <div class="stato-pill ${c.status}" onclick="avanzaStatoConto('${c.id}',event)">
+              💶 Incassa ▸
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  })();
+
+  return sezioneInsoluti + ordine.map(stato => {
     const lista = byS[stato];
     if (!lista.length) return '';
     const totSez = lista.reduce((s,c)=>s+(c.totale||0),0);
