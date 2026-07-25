@@ -1532,8 +1532,18 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
     syncLog(`⚠ Import parziale: ${MAX_ADD_PER_SYNC}/${MAX_ADD_PER_SYNC + addSkipped} nuove pren. (le altre al prossimo sync)`, 'wrn');
   }
 
+  // ── Scrittura nuove prenotazioni nel DB ─────────────────────────────
+  // IMPORTANTE: se un chunk fallisce (es. quota Sheets esaurita anche dopo
+  // i retry di apiFetch), la prenotazione va marcata come NON confermata
+  // (b._addFallita = true). Più sotto, SOLO le prenotazioni confermate
+  // vengono registrate come "note" al sistema (_row46BlipIds + riga 46).
+  // Prima di questo fix il codice registrava l'ID comunque, anche se la
+  // riga non era mai stata scritta davvero: risultato, un BLIP_ID "fantasma"
+  // presente in riga 46 ma senza alcuna riga in PRENOTAZIONI — invisibile a
+  // fatturazione/check-in e mai più ritentato dai sync successivi.
   if (toAddToDB.length > 0) {
     const total = toAddToDB.length;
+    let falliti = 0;
     for (let i = 0; i < total; i += BATCH_SIZE) {
       const chunk = toAddToDB.slice(i, i+BATCH_SIZE);
       showLoading(`Importazione ${Math.min(i+BATCH_SIZE,total)}/${total}…`);
@@ -1541,15 +1551,27 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
         const resp = await dbBatchAppendRows(chunk.map(b => bookingToDbRow(b, 'manuale')));
         const m = (resp?.updates?.updatedRange||'').match(/(\d+):/);
         if (m) { const startRow = parseInt(m[1])-chunk.length+1; chunk.forEach((b,idx) => { b.dbRow = startRow+idx; }); }
-      } catch(e) { console.warn('[DB] Errore import batch:', e.message); }
+      } catch(e) {
+        falliti += chunk.length;
+        chunk.forEach(b => { b._addFallita = true; });
+        syncLog(`❌ Scrittura DB fallita per ${chunk.length} nuove prenotazioni (${chunk.map(b=>b.n).join(', ')}): ${e.message} — riproverà al prossimo sync`, 'err');
+      }
     }
-    syncLog(`✚ Importate ${total} nuove prenotazioni nel DB`, 'db');
+    const confermate = total - falliti;
+    if (confermate > 0) syncLog(`✚ Importate ${confermate}/${total} nuove prenotazioni nel DB`, 'db');
+    if (falliti > 0) showToast(`⚠ ${falliti} nuova/e prenotazione/i NON salvate nel Database (quota Google superata) — verranno ritentate al prossimo sync`, 'error');
   }
   if (toUpdateInDB.length > 0) {
     showLoading(`Aggiornamento ${toUpdateInDB.length} prenotazioni…`);
+    let updFalliti = 0;
     for (const b of toUpdateInDB) {
-      try { await dbUpsert(b, b.fonte); } catch(e) { console.warn('[DB] Update error:', e.message); }
+      try { await dbUpsert(b, b.fonte); }
+      catch(e) {
+        updFalliti++;
+        syncLog(`❌ Aggiornamento DB fallito per "${b.n}" (${b.dbId||'?'}): ${e.message} — riproverà al prossimo sync`, 'err');
+      }
     }
+    if (updFalliti > 0) showToast(`⚠ ${updFalliti} aggiornamento/i NON salvato/i nel Database — verranno ritentati al prossimo sync`, 'error');
   }
   if (toArchive.length > 0) {
     // LOG DIAGNOSTICO: stampa i candidati alla cestinazione prima di procedere
@@ -1583,11 +1605,21 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
   // → ciclo infinito "18 nuove prenotazioni" ad ogni sync.
   // La scrittura fisica su foglio avviene in background (fire & forget),
   // ma la protezione in memoria è immediata e spezza il ciclo.
-  if (toAddToDB.length > 0) {
-    toAddToDB.forEach(b => { if (b.dbId) _row46BlipIds.add(b.dbId); });
-    syncLog(`✓ ${toAddToDB.length} nuovi BLIP_ID aggiunti a _row46BlipIds (protezione immediata)`, 'ok');
+  //
+  // REGOLA: il foglio Google è la verità — MA solo per le prenotazioni che
+  // sono realmente arrivate nel Database. Una prenotazione la cui scrittura
+  // è fallita (b._addFallita, vedi sopra) NON va registrata qui: se lo
+  // facessimo, il suo BLIP_ID risulterebbe "riservato" in riga 46 per sempre
+  // senza che esista mai una riga corrispondente in PRENOTAZIONI — esattamente
+  // il bug che ha causato le prenotazioni fantasma di luglio/agosto 2026.
+  // Lasciandola FUORI da qui, il prossimo sync la tratterà di nuovo come
+  // "nuova" e ritenterà la scrittura, invece di abbandonarla in silenzio.
+  const confermateOk = toAddToDB.filter(b => !b._addFallita);
+  if (confermateOk.length > 0) {
+    confermateOk.forEach(b => { if (b.dbId) _row46BlipIds.add(b.dbId); });
+    syncLog(`✓ ${confermateOk.length} nuovi BLIP_ID aggiunti a _row46BlipIds (protezione immediata)`, 'ok');
   }
-  const toWriteRow46 = toAddToDB.filter(b => b.dbId && b._sheetCol && b.sheetName && b.sheetId);
+  const toWriteRow46 = confermateOk.filter(b => b.dbId && b._sheetCol && b.sheetName && b.sheetId);
   if (toWriteRow46.length > 0) {
     // Scrivi sempre — writeBlipIdsToRow46 ora usa apiFetch, quindi il token
     // bucket gestisce davvero il rate limiting (prima usava fetch() crudo).
