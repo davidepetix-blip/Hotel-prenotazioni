@@ -1320,19 +1320,28 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
       }
 
       // Propaga info del foglio all'oggetto DB (necessario per backfill riga 46)
+      // NOTA: cameraNamePrima va catturato PRIMA di sovrascrivere match.cameraName
+      // qui sotto — serve al controllo 'changed' per accorgersi di un cambio camera
+      // (bug storico: uno spostamento di stanza fatto solo sul foglio Gantt restava
+      // aggiornato solo in memoria/display e non veniva mai scritto nel DB, perché
+      // 'changed' non includeva la camera tra i campi controllati).
+      const cameraNamePrima = match.cameraName;
       if (sheet.sheetId)    match.sheetId    = sheet.sheetId;
       if (sheet.sheetName)  match.sheetName  = sheet.sheetName;
       if (sheet.cameraName) match.cameraName = sheet.cameraName;
       if (sheet._sheetCol)  match._sheetCol  = sheet._sheetCol;
       match.fromSheet = true;
-      // Rileva aggiornamenti: disposizione, colore, note, date
+      // Rileva aggiornamenti: disposizione, colore, note, date, camera
       // Nota: la disposizione cambia quando l'operatore modifica le celle del Gantt
       // (es. "2s" → "4s"). In quel caso Apps Script crea DUE segmenti distinti
       // (guard in Priority 4), ma se il match è avvenuto per P1/P2/P3 (stessa data
       // esatta), aggiorniamo la disposizione nel DB record esistente.
+      const cameraCambiata = !!sheet.cameraName &&
+        (cameraNamePrima || '').toLowerCase().trim() !== sheet.cameraName.toLowerCase().trim();
       const changed =
         match.n !== sheet.n ||  // ← nome modificato sul foglio
         match.d !== sheet.d || match.c !== sheet.c || match.note !== sheet.note ||
+        cameraCambiata ||
         Math.abs(match.e.getTime() - sheet.e.getTime()) > DAY_MS/2 ||
         Math.abs(match.s.getTime() - sheet.s.getTime()) > DAY_MS/2;
       if (changed) {
@@ -1340,6 +1349,8 @@ async function syncWithDatabase(sheetBookings, forceFullSync = false, fromFallba
           syncLog(`📝 Nome aggiornato: "${match.n}" → "${sheet.n}" (${match.dbId||'?'})`, 'syn');
         if (match.d !== sheet.d && sheet.d)
           syncLog(`📝 Disposizione aggiornata: ${match.n} (${match.dbId||'?'}) ${match.d||'?'} → ${sheet.d}`, 'syn');
+        if (cameraCambiata)
+          syncLog(`📝 Camera aggiornata: ${match.n} (${match.dbId||'?'}) "${cameraNamePrima}" → "${sheet.cameraName}"`, 'syn');
         match.n = sheet.n; match.d = sheet.d; match.c = sheet.c; match.note = sheet.note;
         match.s = sheet.s; match.e = sheet.e; match.ts = nowISO(); match.fonte = 'manuale';
         toUpdateInDB.push(match);
