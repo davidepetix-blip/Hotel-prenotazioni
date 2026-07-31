@@ -1301,14 +1301,25 @@ function esportaReportCSV() {
 // Tabella leggibile con Data (check-in/check-out), Cognome, Camera/
 // Struttura e Numero di persone, per tutte le prenotazioni attive
 // in un dato mese. Esportabile come PDF (stampa) o Excel (CSV).
+// Esclude di default le voci di affitto (contratti annuali, dispo-
+// sizione "1aff") e permette di filtrare per struttura (Scuola,
+// Largo Roma, Appartamenti, ...) prima di esportare.
 // ═══════════════════════════════════════════════════════════════════
 
-function _raccogliElencoMese(anno, mese) {
+function _isVoceAffitto(b) {
+  return (b.d || '').trim().toLowerCase() === '1aff';
+}
+
+function _raccogliElencoMese(anno, mese, opts = {}) {
   // mese: 0-based (gennaio=0), coerente con curM/changeMonth
+  const struttureEscluse = opts.struttureEscluse || [];
+  const includiAffitti   = !!opts.includiAffitti;
   const ms = new Date(anno, mese, 1);
   const me = new Date(anno, mese + 1, 0);
   return bookings
     .filter(b => !b.deleted && b.s <= me && b.e >= ms)
+    .filter(b => !struttureEscluse.includes(roomGroup(b.r)))
+    .filter(b => includiAffitti || !_isVoceAffitto(b))
     .map(b => ({
       struttura: roomGroup(b.r),
       camera:    roomName(b.r),
@@ -1323,6 +1334,13 @@ function _raccogliElencoMese(anno, mese) {
 
 function apriEsportaElencoMensile() {
   const meseVal = `${curY}-${String(curM + 1).padStart(2, '0')}`;
+  const gruppi = [...new Set(ROOMS.map(r => r.g))];
+  const gruppiHtml = gruppi.map(g => `
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;text-align:left;cursor:pointer">
+      <input type="checkbox" class="elencoStrutturaChk" value="${g}" checked style="width:16px;height:16px">
+      ${g}
+    </label>`).join('');
+
   const ov = document.createElement('div');
   ov.id = 'elencoMensileOverlay';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
@@ -1334,6 +1352,17 @@ function apriEsportaElencoMensile() {
     </div>
     <input type="month" id="elencoMeseInput" value="${meseVal}"
       style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);margin-bottom:14px;font-size:14px;box-sizing:border-box">
+
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:10px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text3);margin-bottom:4px;text-align:left">Strutture da includere</div>
+      ${gruppiHtml}
+    </div>
+
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 2px;margin-bottom:14px;text-align:left;cursor:pointer;color:var(--text3)">
+      <input type="checkbox" id="elencoIncludiAffitti" style="width:16px;height:16px">
+      Includi anche le voci di affitto (contratti annuali)
+    </label>
+
     <button onclick="_generaElencoPDF()"
       style="display:block;width:100%;background:#2d6a4f;color:#fff;padding:12px;border:none;border-radius:10px;font-weight:700;font-size:14px;margin-bottom:10px;cursor:pointer">
       🖨 Genera PDF (stampa)
@@ -1349,16 +1378,24 @@ function apriEsportaElencoMensile() {
   ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
 }
 
-function _elencoMeseSelezionato() {
+function _elencoOpzioniSelezionate() {
   const v = document.getElementById('elencoMeseInput')?.value; // "YYYY-MM"
-  if (!v) return { anno: curY, mese: curM };
+  const gruppi = [...new Set(ROOMS.map(r => r.g))];
+  const checks = [...document.querySelectorAll('.elencoStrutturaChk')];
+  const struttureIncluse = checks.length
+    ? checks.filter(c => c.checked).map(c => c.value)
+    : gruppi; // fallback: nessun checkbox trovato → includi tutto
+  const struttureEscluse = gruppi.filter(g => !struttureIncluse.includes(g));
+  const includiAffitti = !!document.getElementById('elencoIncludiAffitti')?.checked;
+
+  if (!v) return { anno: curY, mese: curM, struttureEscluse, includiAffitti };
   const [anno, mm] = v.split('-').map(Number);
-  return { anno, mese: mm - 1 };
+  return { anno, mese: mm - 1, struttureEscluse, includiAffitti };
 }
 
 function _generaElencoPDF() {
-  const { anno, mese } = _elencoMeseSelezionato();
-  const righe = _raccogliElencoMese(anno, mese);
+  const { anno, mese, struttureEscluse, includiAffitti } = _elencoOpzioniSelezionate();
+  const righe = _raccogliElencoMese(anno, mese, { struttureEscluse, includiAffitti });
   const cfg = loadBillSettings();
   const meseLabel = new Date(anno, mese, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
 
@@ -1411,8 +1448,8 @@ function _generaElencoPDF() {
 }
 
 function _scaricaElencoCSV() {
-  const { anno, mese } = _elencoMeseSelezionato();
-  const righe = _raccogliElencoMese(anno, mese);
+  const { anno, mese, struttureEscluse, includiAffitti } = _elencoOpzioniSelezionate();
+  const righe = _raccogliElencoMese(anno, mese, { struttureEscluse, includiAffitti });
   const meseLabel = new Date(anno, mese, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
 
   if (!righe.length) { showToast('Nessuna prenotazione nel mese selezionato', 'error'); return; }
