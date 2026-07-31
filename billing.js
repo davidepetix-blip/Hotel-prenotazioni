@@ -1699,7 +1699,21 @@ function getContoEffettivo(bid) {
     // percentuale) e non è stato adottato esplicitamente come voce manuale
     // (_manuale) — ricalcolandolo sul totale attuale, indipendentemente dal
     // meccanismo/tabella di sconto che lo ha generato.
-    const ovsAutoSconti = ovsSconti.filter(r => !r._manuale && r.pct != null);
+    // FIX: gli override congelati PRIMA di questa correzione non hanno il
+    // campo "pct" (non esisteva ancora). Senza un fallback, questi sconti
+    // automatici storici restano orfani per sempre — mai più ricalcolati,
+    // mai più mostrati. Come ripiego si estrae la percentuale dal testo
+    // dell'etichetta (es. "-15%"), che calcolaConto/calcolaContoAppart hanno
+    // sempre incluso nel label fin dall'inizio.
+    const pctDiRiga = r => {
+      if (r.pct != null) return r.pct;
+      const m = /-\s*([\d.]+)\s*%/.exec(r.label || '');
+      return m ? parseFloat(m[1]) : null;
+    };
+    const ovsAutoSconti = ovsSconti
+      .filter(r => !r._manuale)
+      .map(r => ({ ...r, pct: pctDiRiga(r) }))
+      .filter(r => r.pct != null);
     const scontiAutoRicalcolati = (hasUserSconto && totaleBase > 0)
       ? ovsAutoSconti.map(r => ({
           ...r, qty:null, unitPrice:null,
