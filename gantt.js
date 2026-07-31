@@ -1297,6 +1297,143 @@ function esportaReportCSV() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// ESPORTA ELENCO MENSILE — condivisione con piscina/ristorante
+// Tabella leggibile con Data (check-in/check-out), Cognome, Camera/
+// Struttura e Numero di persone, per tutte le prenotazioni attive
+// in un dato mese. Esportabile come PDF (stampa) o Excel (CSV).
+// ═══════════════════════════════════════════════════════════════════
+
+function _raccogliElencoMese(anno, mese) {
+  // mese: 0-based (gennaio=0), coerente con curM/changeMonth
+  const ms = new Date(anno, mese, 1);
+  const me = new Date(anno, mese + 1, 0);
+  return bookings
+    .filter(b => !b.deleted && b.s <= me && b.e >= ms)
+    .map(b => ({
+      struttura: roomGroup(b.r),
+      camera:    roomName(b.r),
+      cognome:   b.n || '—',
+      checkin:   b.s,
+      checkout:  b.e,
+      notti:     nights(b.s, b.e),
+      persone:   postiLetto(b.d),
+    }))
+    .sort((a, b) => a.checkin - b.checkin || a.camera.localeCompare(b.camera));
+}
+
+function apriEsportaElencoMensile() {
+  const meseVal = `${curY}-${String(curM + 1).padStart(2, '0')}`;
+  const ov = document.createElement('div');
+  ov.id = 'elencoMensileOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+  ov.innerHTML = `<div style="background:var(--surface);border-radius:16px;padding:24px;max-width:380px;width:100%;text-align:center">
+    <div style="font-size:32px;margin-bottom:10px">📋</div>
+    <div style="font-weight:700;font-size:15px;margin-bottom:10px">Elenco mensile — piscina / ristorante</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:14px;text-align:left">
+      Tabella con data, cognome e numero di persone per ogni camera, per il mese selezionato.
+    </div>
+    <input type="month" id="elencoMeseInput" value="${meseVal}"
+      style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);margin-bottom:14px;font-size:14px;box-sizing:border-box">
+    <button onclick="_generaElencoPDF()"
+      style="display:block;width:100%;background:#2d6a4f;color:#fff;padding:12px;border:none;border-radius:10px;font-weight:700;font-size:14px;margin-bottom:10px;cursor:pointer">
+      🖨 Genera PDF (stampa)
+    </button>
+    <button onclick="_scaricaElencoCSV()"
+      style="display:block;width:100%;background:#1a73e8;color:#fff;padding:12px;border:none;border-radius:10px;font-weight:700;font-size:14px;margin-bottom:10px;cursor:pointer">
+      📊 Scarica Excel (CSV)
+    </button>
+    <button onclick="this.closest('div[id=elencoMensileOverlay]').remove()"
+      style="background:none;border:1px solid var(--border);padding:10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);width:100%">Chiudi</button>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+}
+
+function _elencoMeseSelezionato() {
+  const v = document.getElementById('elencoMeseInput')?.value; // "YYYY-MM"
+  if (!v) return { anno: curY, mese: curM };
+  const [anno, mm] = v.split('-').map(Number);
+  return { anno, mese: mm - 1 };
+}
+
+function _generaElencoPDF() {
+  const { anno, mese } = _elencoMeseSelezionato();
+  const righe = _raccogliElencoMese(anno, mese);
+  const cfg = loadBillSettings();
+  const meseLabel = new Date(anno, mese, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+
+  if (!righe.length) { showToast('Nessuna prenotazione nel mese selezionato', 'error'); return; }
+
+  const righeHtml = righe.map(r => `
+    <tr>
+      <td>${r.struttura}</td>
+      <td>${r.camera}</td>
+      <td>${r.cognome}</td>
+      <td>${fmt(r.checkin)}</td>
+      <td>${fmt(r.checkout)}</td>
+      <td style="text-align:center">${r.notti}</td>
+      <td style="text-align:center">${r.persone}</td>
+    </tr>`).join('');
+
+  const totPersoneGiorno = righe.reduce((s, r) => s + r.persone, 0);
+
+  const win = window.open('', '_blank', 'width=800,height=1000');
+  if (!win) { showToast('Popup bloccato dal browser', 'error'); return; }
+
+  win.document.write(`<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Elenco ${meseLabel}</title>
+<style>
+  body{font-family:'Helvetica Neue',Arial,sans-serif;padding:30px;color:#222}
+  h1{font-size:20px;margin-bottom:2px}
+  .sub{color:#666;font-size:12px;margin-bottom:20px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+  th{background:#f2f2f2;text-transform:uppercase;font-size:10px;letter-spacing:.03em}
+  tfoot td{font-weight:700;background:#fafafa}
+  @media print{ body{padding:10px} }
+</style>
+</head>
+<body>
+  <h1>${cfg.hotelName || 'Albergo'}</h1>
+  <div class="sub">Elenco prenotazioni — ${meseLabel.charAt(0).toUpperCase() + meseLabel.slice(1)}</div>
+  <table>
+    <thead><tr><th>Struttura</th><th>Camera</th><th>Cognome</th><th>Check-in</th><th>Check-out</th><th>Notti</th><th>N. persone</th></tr></thead>
+    <tbody>${righeHtml}</tbody>
+    <tfoot><tr><td colspan="6">Totale soggiorni: ${righe.length}</td><td style="text-align:center">${totPersoneGiorno}</td></tr></tfoot>
+  </table>
+  <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+</body>
+</html>`);
+  win.document.close();
+}
+
+function _scaricaElencoCSV() {
+  const { anno, mese } = _elencoMeseSelezionato();
+  const righe = _raccogliElencoMese(anno, mese);
+  const meseLabel = new Date(anno, mese, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+
+  if (!righe.length) { showToast('Nessuna prenotazione nel mese selezionato', 'error'); return; }
+
+  const header = ['Struttura', 'Camera', 'Cognome', 'Check-in', 'Check-out', 'Notti', 'N. persone'];
+  const rows = righe.map(r => [
+    r.struttura, r.camera, r.cognome, fmt(r.checkin), fmt(r.checkout), r.notti, r.persone
+  ].map(v => `"${(v ?? '').toString().replace(/"/g, '""')}"`).join(','));
+
+  const csv = [header.join(','), ...rows].join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `elenco_${meseLabel.replace(/\s+/g, '_')}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
 // RICERCA PRENOTAZIONI
 // ═══════════════════════════════════════════════════════════════════
 
