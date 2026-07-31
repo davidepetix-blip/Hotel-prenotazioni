@@ -1006,11 +1006,13 @@ function calcolaConto(booking, extraRows = []) {
 
   if (convenzione) {
     const sc = parseFloat((subtotale * convenzione.sconto / 100).toFixed(2));
-    righe.push({ label:`Conv. "${convenzione.nome}" -${convenzione.sconto}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', iva: ivaBase, badge:'conv' });
+    // pct: permette a getContoEffettivo di riconoscere e ricalcolare questo
+    // sconto automatico quando il conto ha degli override (vedi fix più sotto).
+    righe.push({ label:`Conv. "${convenzione.nome}" -${convenzione.sconto}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', iva: ivaBase, badge:'conv', pct: convenzione.sconto });
     subtotale -= sc;
   } else if (scontoDurata > 0) {
     const sc = parseFloat((subtotale * scontoDurata / 100).toFixed(2));
-    righe.push({ label:`Sconto lunga durata (${notti} notti) -${scontoDurata}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', iva: ivaBase, badge:'lunga' });
+    righe.push({ label:`Sconto lunga durata (${notti} notti) -${scontoDurata}%`, qty:null, unitPrice:null, total:-sc, tipo:'sconto', iva: ivaBase, badge:'lunga', pct: scontoDurata });
     subtotale -= sc;
   }
 
@@ -1065,7 +1067,7 @@ function calcolaContoAppart(b, room, extras) {
     if (sconto) {
       const imp = parseFloat((total * sconto.percSconto / 100).toFixed(2));
       const lbl = sconto.label || `Sconto lungo periodo (${sconto.percSconto}% ≥${sconto.minNotti}gg)`;
-      righe.push({ label:lbl, qty:null, unitPrice:null, total:-imp, tipo:'sconto', badge:'lunga' });
+      righe.push({ label:lbl, qty:null, unitPrice:null, total:-imp, tipo:'sconto', badge:'lunga', pct: sconto.percSconto });
       totale -= imp;
     }
   }
@@ -1683,22 +1685,27 @@ function getContoEffettivo(bid) {
     // Calcola totale pernottamento dagli ovs base (esclusi sconti ed extra)
     const totaleBase = parseFloat(ovsBase.filter(r=>r.tipo!=='extra').reduce((s,r)=>s+r.total,0).toFixed(2));
 
-    // Ricalcola sconto lungo periodo SOLO se l'utente non ha rimosso tutti gli sconti
-    const cfg = loadBillSettings();
-    const notti = nights(b.s, b.e);
-    const scontiLp = (cfg.scontiLungoPeriodo || [])
-      .filter(s => s.minNotti > 0 && s.percSconto > 0)
-      .sort((a,b) => b.minNotti - a.minNotti);
-    const sconto = scontiLp.find(s => notti >= s.minNotti);
-    // Ricrea lo sconto solo se il conto base ne aveva uno (da calcolo) e l'utente
-    // non lo ha rimosso esplicitamente da ovs
-    const baseHadSconto = base.righe.some(r => r.tipo === 'sconto');
-    const scontoAutoLp = (sconto && totaleBase > 0 && hasUserSconto && baseHadSconto) ? {
-      label: sconto.label || `Sconto lunga durata (${notti} notti) -${sconto.percSconto}%`,
-      qty: null, unitPrice: null,
-      total: -parseFloat((totaleBase * sconto.percSconto / 100).toFixed(2)),
-      tipo: 'sconto', badge: 'lunga'
-    } : null;
+    // FIX: prima si ricreava lo sconto automatico SOLO per il meccanismo
+    // "scontiLungoPeriodo" (usato dalla tariffa a giornata/mese degli
+    // appartamenti). Lo sconto automatico di calcolaConto — usato anche
+    // dagli appartamenti in modalità "Std. letti", come sconto lunga durata
+    // o convenzione — usa una tabella diversa (scontiDurata/convenzioni) e
+    // veniva perso silenziosamente ogni volta che il conto aveva un
+    // override: l'ospite si ritrovava a pagare il totale pieno (verificato
+    // dal vivo: 18 notti, sconto 15% da -94.50€ sparito dal totale).
+    // Ora si rigenera in modo generico QUALSIASI sconto automatico
+    // congelato in ovs — riconoscibile perché ha un campo "pct" (percentuale
+    // salvata da calcolaConto/calcolaContoAppart o da un addScontoVoce
+    // percentuale) e non è stato adottato esplicitamente come voce manuale
+    // (_manuale) — ricalcolandolo sul totale attuale, indipendentemente dal
+    // meccanismo/tabella di sconto che lo ha generato.
+    const ovsAutoSconti = ovsSconti.filter(r => !r._manuale && r.pct != null);
+    const scontiAutoRicalcolati = (hasUserSconto && totaleBase > 0)
+      ? ovsAutoSconti.map(r => ({
+          ...r, qty:null, unitPrice:null,
+          total: -parseFloat((totaleBase * r.pct / 100).toFixed(2))
+        }))
+      : [];
 
     // Extras manuali dagli ovs (flag _manuale) o da getExtraForBooking
     const extrasMan = ovsBase.filter(r => r.tipo === 'extra');
@@ -1715,7 +1722,7 @@ function getContoEffettivo(bid) {
 
     const righeFinali = [
       ...ovsBase,
-      ...(scontoAutoLp ? [scontoAutoLp] : []),
+      ...scontiAutoRicalcolati,
       ...extrasExt,
     ];
     const totale = parseFloat(righeFinali.reduce((s,r) => s + r.total, 0).toFixed(2));
