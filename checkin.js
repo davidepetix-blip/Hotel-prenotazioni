@@ -1440,7 +1440,12 @@ function renderDrawerCheckin(b) {
     // un badge di conferma invece dell'alert ritardo/oggi/futuro, e offre
     // comunque il pulsante per completare i documenti quando possibile.
     const arrivo = (typeof getArrivoForBooking === 'function') ? getArrivoForBooking(b) : null;
-    const arrivoBtn = arrivo ? '' : `<button class="btn" style="width:100%;justify-content:center;margin-top:6px;font-size:12px;" data-bid="${bid}" onclick='segnalaArrivo(bookings.find(x=>String(x.dbId||x.id)===this.dataset.bid))'>✓ Segnala arrivo (senza documenti)</button>`;
+    // FIX: data-bid qui sopra contiene sempre l'id NUMERICO (bid = b.id, riga 1374),
+    // ma il confronto originale dava priorita' a x.dbId (String(x.dbId||x.id)) — che per
+    // qualunque prenotazione con un dbId assegnato (quasi tutte) non e' mai uguale
+    // all'id numerico in dataset.bid. bookings.find() ritornava sempre undefined,
+    // segnalaArrivo(undefined) usciva subito (if (!b) return;) e il click non faceva nulla.
+    const arrivoBtn = arrivo ? '' : `<button class="btn" style="width:100%;justify-content:center;margin-top:6px;font-size:12px;" data-bid="${bid}" onclick='segnalaArrivo(bookings.find(x=>String(x.id)===this.dataset.bid||x.dbId===this.dataset.bid))'>✓ Segnala arrivo (senza documenti)</button>`;
 
     if (arrivo) {
       const oraArr = arrivo.ts ? new Date(arrivo.ts).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}) : '';
