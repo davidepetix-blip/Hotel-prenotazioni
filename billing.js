@@ -1432,7 +1432,7 @@ function renderDrawerBill(b) {
     </div>
     ${toggleHtml}
     ${righe.map((r,i)=>rigaHtml(r,i)).join('')}
-    ${ovs ? '' : renderExtraRows(b.id)}
+    
     <div class="conti-section-title" style="margin-top:14px">Aggiungi voce</div>
     ${extraAdder}
     ${scontoHtml}${consumiHtml}
