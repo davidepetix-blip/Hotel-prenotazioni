@@ -311,7 +311,7 @@ function buildBedString(counts) {
 function parseBedString(str) {
   const counts = { m:0, ms:0, s:0, c:0, aff:0 };
   if (!str || str === 'ND') return counts;
-  const norm   = str.replace(/\s*\+\s*/g, '+').replace(/\s*,\s*/g, '+').trim();
+  const norm   = str.replace(/\s*\+\s*/g, '+').replace(/\s*,\s*/g, '+').replace(/\s+/g, '+').trim();
   const normMS = norm.replace(/\s/g,'').toLowerCase();
   if (/^(\d*)m\/s$/.test(normMS)) { counts.ms = parseInt(normMS) || 1; return counts; }
   const parts = norm.split('+');
