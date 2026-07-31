@@ -1558,7 +1558,20 @@ function addScontoVoce(bid) {
 
   if (tipo === 'percentuale') {
     // Calcola importo come percentuale del subtotale corrente (escludi sconti)
-    const conto = calcolaConto(getBookingById(bid), extras.filter(e => e.tipo !== 'sconto'));
+    // FIX: getBookingById non esiste — usare bookings.find come nel resto del file
+    // (es. editRigaConto). Senza questo la funzione andava in eccezione silenziosa
+    // e il click su "Applica sconto" non faceva nulla.
+    const b = bookings.find(x => x.id === bid || x.dbId === String(bid));
+    if (!b) { showToast('Prenotazione non trovata — sconto non applicato', 'error'); return; }
+    // FIX: per gli appartamenti la tariffa base si calcola con calcolaContoAppart
+    // (mensile/giornaliera), non con calcolaConto (tariffa standard a letti) —
+    // altrimenti la percentuale verrebbe applicata su una base sbagliata.
+    const room     = ROOMS.find(r => r.id === b.r);
+    const isAppart = room?.g === 'Appartamenti';
+    const extraSenzaSconti = extras.filter(e => e.tipo !== 'sconto');
+    const conto = isAppart
+      ? calcolaContoAppart(b, room, extraSenzaSconti)
+      : calcolaConto(b, extraSenzaSconti);
     const importo = parseFloat((conto.totale * val / 100).toFixed(2));
     extras.push({ label:`🏷 Sconto ${val}%`, qty:1, unitPrice:-importo, unita:'', tipo:'sconto', pct:val });
   } else {
