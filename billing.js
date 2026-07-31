@@ -1563,16 +1563,21 @@ function addScontoVoce(bid) {
     // e il click su "Applica sconto" non faceva nulla.
     const b = bookings.find(x => x.id === bid || x.dbId === String(bid));
     if (!b) { showToast('Prenotazione non trovata — sconto non applicato', 'error'); return; }
-    // FIX: per gli appartamenti la tariffa base si calcola con calcolaContoAppart
-    // (mensile/giornaliera), non con calcolaConto (tariffa standard a letti) —
-    // altrimenti la percentuale verrebbe applicata su una base sbagliata.
-    const room     = ROOMS.find(r => r.id === b.r);
-    const isAppart = room?.g === 'Appartamenti';
-    const extraSenzaSconti = extras.filter(e => e.tipo !== 'sconto');
-    const conto = isAppart
-      ? calcolaContoAppart(b, room, extraSenzaSconti)
-      : calcolaConto(b, extraSenzaSconti);
-    const importo = parseFloat((conto.totale * val / 100).toFixed(2));
+    // FIX: la base per la percentuale NON va ricalcolata da zero con
+    // calcolaContoAppart/calcolaConto — quelle funzioni ignorano eventuali
+    // modifiche manuali alle voci (es. pernottamento editato a mano tramite
+    // "editRigaConto"/override). Se il conto è stato modificato, ricalcolare
+    // da zero produce un totale diverso da quello mostrato a schermo e lo
+    // sconto risulta sbagliato (es. 10% su un totale "fantasma" invece che
+    // sul totale reale). Usiamo invece il conto EFFETTIVO — lo stesso usato
+    // da emettiConto/renderDrawerBill per mostrare il totale a video —
+    // ed escludiamo solo le righe di sconto già presenti.
+    const contoEff = getContoEffettivo(bid) || {};
+    const baseImponibile = parseFloat(
+      (contoEff.righe || []).filter(r => r.tipo !== 'sconto')
+        .reduce((s, r) => s + r.total, 0).toFixed(2)
+    );
+    const importo = parseFloat((baseImponibile * val / 100).toFixed(2));
     extras.push({ label:`🏷 Sconto ${val}%`, qty:1, unitPrice:-importo, unita:'', tipo:'sconto', pct:val });
   } else {
     extras.push({ label:`🏷 Sconto`, qty:1, unitPrice:-Math.abs(val), unita:'', tipo:'sconto' });
