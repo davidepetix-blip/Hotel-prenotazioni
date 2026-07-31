@@ -1176,13 +1176,21 @@ function rimuoviRigaPerLabel(bid, label) {
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
   const ovs  = getContoOverrides(ck) || base.righe.map(r=>({...r}));
   const idx  = ovs.findIndex(r => r.label === label);
-  if (idx < 0) { showToast('Voce non trovata', 'error'); return; }
-  // Rimuovi anche dagli extras se presente
+  // FIX: le voci extra/sconto aggiunte con un conto che ha GIÀ degli override
+  // (es. sconto applicato dopo aver modificato a mano il pernottamento)
+  // vivono solo in getExtraForBooking — l'array "ovs" salvato in precedenza
+  // non le contiene mai, perché addScontoVoce/aggiungiExtra scrivono solo lì.
+  // Prima si controllava solo "ovs" e si rispondeva "Voce non trovata" anche
+  // quando la voce era visibile a schermo (mostrata in lettura da
+  // getContoEffettivo, che le unisce solo per la visualizzazione).
   const extras = getExtraForBooking(ck);
   const ei = extras.findIndex(e => e.label === label);
+  if (idx < 0 && ei < 0) { showToast('Voce non trovata', 'error'); return; }
   if (ei >= 0) { extras.splice(ei, 1); setExtraForBooking(ck, extras); }
-  ovs.splice(idx, 1);
-  setContoOverrides(ck, ovs.length ? ovs : null);
+  if (idx >= 0) {
+    ovs.splice(idx, 1);
+    setContoOverrides(ck, ovs.length ? ovs : null);
+  }
   markContoDirty(bid);
   refreshBillTab(bid);
 }
@@ -1195,10 +1203,30 @@ function editRigaContoPerLabel(bid, label, isAuto) {
   const isA  = room?.g==='Appartamenti';
   const ext  = getExtraForBooking(ck);
   const base = isA ? calcolaContoAppart(b,room,ext) : calcolaConto(b,ext);
-  const ovs  = getContoOverrides(ck) || base.righe.map(r=>({...r}));
+  const existing = getContoOverrides(ck);
+  const ovs  = existing || base.righe.map(r=>({...r}));
   const idx  = ovs.findIndex(r => r.label === label);
   if (idx >= 0) { editRigaConto(bid, idx); return; }
-  // Non trovato in ovs — crea ovs dalla base e poi modifica
+  // FIX: se esistono già override (es. pernottamento modificato a mano) e la
+  // voce cercata non c'è ancora dentro (perché è uno sconto/extra vivo solo
+  // in getExtraForBooking), NON si deve sovrascrivere l'intero array ovs con
+  // un baseOvs ricalcolato da zero: si perderebbero le modifiche manuali già
+  // salvate (es. il pernottamento tornerebbe al valore ricalcolato invece di
+  // quello editato). Si aggiunge invece la sola voce mancante in coda.
+  if (existing) {
+    const fromExtra = getExtraForBooking(ck).find(e => e.label === label);
+    const riga = fromExtra
+      ? { label: fromExtra.label, qty: fromExtra.qty, unitPrice: fromExtra.unitPrice,
+          total: parseFloat((fromExtra.qty * fromExtra.unitPrice).toFixed(2)),
+          tipo: fromExtra.tipo === 'sconto' ? 'sconto' : 'extra', pct: fromExtra.pct, _manuale: true }
+      : base.righe.find(r => r.label === label);
+    if (!riga) { showToast('Voce non trovata', 'error'); return; }
+    const nuovi = [...existing, { ...riga }];
+    setContoOverrides(ck, nuovi);
+    editRigaConto(bid, nuovi.length - 1);
+    return;
+  }
+  // Nessun override preesistente — crea ovs dalla base e poi modifica
   const baseOvs = base.righe.map(r=>({...r}));
   const bi = baseOvs.findIndex(r => r.label === label);
   if (bi >= 0) { setContoOverrides(ck, baseOvs); editRigaConto(bid, bi); }
@@ -1674,10 +1702,16 @@ function getContoEffettivo(bid) {
 
     // Extras manuali dagli ovs (flag _manuale) o da getExtraForBooking
     const extrasMan = ovsBase.filter(r => r.tipo === 'extra');
+    // FIX: qui il tipo veniva forzato SEMPRE a 'extra', anche per gli sconti
+    // (tipo:'sconto' in getExtraForBooking) — una voce sconto aggiunta con
+    // addScontoVoce risultava quindi visibile come "extra" invece che come
+    // "sconto" (stile riga, IVA di riferimento, e coerenza con isAuto/pct
+    // sbagliati). Ora si preserva il tipo originale (e il pct, se presente).
     const extrasExt = getExtraForBooking(ck).filter(e =>
       !extrasMan.some(m => m.label === e.label)
     ).map(e => ({ label:e.label, qty:e.qty, unitPrice:e.unitPrice,
-      total:parseFloat((e.qty*e.unitPrice).toFixed(2)), tipo:'extra', _manuale:true }));
+      total:parseFloat((e.qty*e.unitPrice).toFixed(2)),
+      tipo: e.tipo === 'sconto' ? 'sconto' : 'extra', pct: e.pct, _manuale:true }));
 
     const righeFinali = [
       ...ovsBase,
