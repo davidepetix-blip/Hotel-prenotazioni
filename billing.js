@@ -1313,17 +1313,24 @@ function renderDrawerBill(b) {
     `<option value="${e.id}" data-price="${e.prezzo}" data-unita="${e.unita}">${e.label} ${e.prezzo>0?'('+e.prezzo+'€)':''}</option>`
   ).join('');
 
+  // Precompila prezzo e quantità in base alla prima voce extra configurata:
+  // se l'unita di misura è "persona" (es. Colazione), la quantità di
+  // default è il numero di ospiti della camera (da disposizione letti).
+  const primoExtra  = (cfg.extra||[])[0];
+  const primoPrezzo = (primoExtra && primoExtra.prezzo > 0) ? primoExtra.prezzo : '';
+  const primoQty    = (primoExtra && primoExtra.unita === 'persona') ? postiLetto(b.d) : 1;
+
   const extraAdder = isAppart
     ? `<div class="extra-adder">
         <input type="text"   id="extraLabel_${b.id}" placeholder="Descrizione" style="flex:2">
-        <input type="number" id="extraQty_${b.id}"   value="1" min="0.01" step="0.01" style="width:60px" placeholder="Qty">
+        <input type="number" id="extraQty_${b.id}"   value="1" min="1" step="1" style="width:60px" placeholder="Qty">
         <input type="number" id="extraPrice_${b.id}" placeholder="€" step="0.01" style="width:70px">
         <button class="btn" onclick="addExtraLibero(${b.id})">+</button>
       </div>`
     : `<div class="extra-adder">
         <select id="extraType_${b.id}" onchange="prefillExtraPrice(${b.id})">${extraOptions}</select>
-        <input type="number" id="extraQty_${b.id}"   value="1" min="0.01" step="0.01" style="width:55px" placeholder="Qty">
-        <input type="number" id="extraPrice_${b.id}" placeholder="€" step="0.01" style="width:70px">
+        <input type="number" id="extraQty_${b.id}"   value="${primoQty}" min="1" step="1" style="width:55px" placeholder="Qty">
+        <input type="number" id="extraPrice_${b.id}" value="${primoPrezzo}" placeholder="€" step="0.01" style="width:70px">
         <button class="btn" onclick="addExtraVoce(${b.id})">+</button>
       </div>`;
 
@@ -1504,10 +1511,21 @@ function renderExtraRows(bid) {
 function prefillExtraPrice(bid) {
   const sel = document.getElementById(`extraType_${bid}`);
   const opt = sel?.selectedOptions?.[0];
-  if (opt) {
-    const p = parseFloat(opt.dataset.price||0);
-    const inp = document.getElementById(`extraPrice_${bid}`);
-    if (inp && p > 0) inp.value = p;
+  if (!opt) return;
+  const p = parseFloat(opt.dataset.price||0);
+  const unita = opt.dataset.unita || '';
+  const inp = document.getElementById(`extraPrice_${bid}`);
+  if (inp) inp.value = p > 0 ? p : '';
+  // Quantità di default: numero ospiti della camera per le voci "a persona"
+  // (es. Colazione), altrimenti 1 (es. Pulizie, Cambio lenzuola).
+  const qtyInp = document.getElementById(`extraQty_${bid}`);
+  if (qtyInp) {
+    if (unita === 'persona') {
+      const b = bookings.find(x => x.id === bid);
+      qtyInp.value = b ? postiLetto(b.d) : 1;
+    } else {
+      qtyInp.value = 1;
+    }
   }
 }
 
