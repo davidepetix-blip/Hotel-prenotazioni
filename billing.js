@@ -1307,6 +1307,24 @@ function renderDrawerBill(b) {
     </div>`;
   }
 
+  // Calcola stato conto UNA VOLTA sola — usato sia nel badge che nel bottone,
+  // e per il banner "salva modifiche" inline sotto "Aggiungi voce" (spostato
+  // qui perché ci serve prima di costruire extraAdder/scontoHtml).
+  const _contiOuter = loadConti();
+  // Cerca per dbId (nuovo formato) o per id numerico (legacy)
+  // o tramite bookingIds del master di gruppo
+  const _bidStr = String(b.dbId || b.id);
+  let _ceOuter = _contiOuter.find(x => String(x.bookingId) === String(b.dbId)) ||
+                 _contiOuter.find(x => String(x.bookingId) === String(b.id)) || null;
+  // Fallback: cerca tra i master di gruppo che includono questo booking
+  if (!_ceOuter) {
+    _ceOuter = _contiOuter.find(x =>
+      x.isGroupMaster && x.bookingIds?.some(id => String(id) === _bidStr)
+    ) || null;
+  }
+  const _isEmesso = _ceOuter && _ceOuter.status && _ceOuter.status !== 'bozza';
+  const _isDirtyNow = !!(_ceOuter && _ceOuter.dirty);
+
   // Extra adder
   const cfg = loadBillSettings();
   const extraOptions = (cfg.extra||[]).map(e=>
@@ -1334,6 +1352,20 @@ function renderDrawerBill(b) {
         <button class="btn" onclick="addExtraVoce(${b.id})">+</button>
       </div>`;
 
+  // Banner "salva modifiche" — compare qui, subito sotto "Aggiungi voce",
+  // ogni volta che il conto è già emesso ma è stato modificato dopo
+  // l'emissione (dirty=true). Prima questo avviso non appariva mai perché
+  // addExtraVoce/addExtraLibero/addScontoVoce/aggiungiConsumi non chiamavano
+  // markContoDirty() — quindi l'unico modo per capire che bisognava salvare
+  // era ricordarsi di scorrere fino in fondo e notare il bottone "Modifica
+  // conto" (piccolo, sbiadito, in fondo alla pagina).
+  const salvaOraHtml = _isDirtyNow ? `
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0;padding:8px 10px;background:#fff3e0;border:1px solid #ffb74d;border-radius:8px">
+      <span style="font-size:15px">⚠️</span>
+      <span style="flex:1;font-size:11px;color:#9a5b00;font-weight:600">Voce aggiunta ma non salvata nel conto emesso</span>
+      <button class="btn primary" onclick="emettiConto(${b.id})" style="font-size:12px;padding:5px 12px;justify-content:center">💾 Salva ora</button>
+    </div>` : '';
+
   // Sezione sconto — disponibile per tutti i tipi di prenotazione
   const scontoHtml = `
     <div class="conti-section-title" style="margin-top:10px;display:flex;align-items:center;gap:6px">
@@ -1353,7 +1385,7 @@ function renderDrawerBill(b) {
         style="width:80px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right">
       <span id="scontoValLbl_${b.id}" style="font-size:12px;color:var(--text3);min-width:16px">€</span>
       <button class="btn" onclick="addScontoVoce(${b.id})"
-        style="padding:5px 14px;font-size:12px;background:var(--danger,#e53e3e);color:#fff;border:none;border-radius:6px;cursor:pointer">
+        style="padding:5px 14px;font-size:12px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer">
         − Applica sconto
       </button>
     </div>`;
@@ -1368,21 +1400,6 @@ function renderDrawerBill(b) {
       <div><label style="font-size:10px;color:var(--text3);display:block">💧 Fine m³</label><input type="number" id="mc_end_${b.id}" step="0.001" placeholder="0" style="width:100%;padding:5px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
     </div>
     <button class="btn" style="width:100%;justify-content:center;font-size:11px" onclick="aggiungiConsumi(${b.id})">⚡💧 Aggiungi consumi al conto</button>`;
-
-  // Calcola stato conto UNA VOLTA sola — usato sia nel badge che nel bottone
-  const _contiOuter = loadConti();
-  // Cerca per dbId (nuovo formato) o per id numerico (legacy)
-  // o tramite bookingIds del master di gruppo
-  const _bidStr = String(b.dbId || b.id);
-  let _ceOuter = _contiOuter.find(x => String(x.bookingId) === String(b.dbId)) ||
-                 _contiOuter.find(x => String(x.bookingId) === String(b.id)) || null;
-  // Fallback: cerca tra i master di gruppo che includono questo booking
-  if (!_ceOuter) {
-    _ceOuter = _contiOuter.find(x =>
-      x.isGroupMaster && x.bookingIds?.some(id => String(id) === _bidStr)
-    ) || null;
-  }
-  const _isEmesso = _ceOuter && _ceOuter.status && _ceOuter.status !== 'bozza';
 
   // ── Banner di stato dinamico ──────────────────────────────────
   const _statoCalc = _ceOuter ? getStatoContoCalcolato(_ceOuter) : null;
@@ -1442,6 +1459,7 @@ function renderDrawerBill(b) {
     
     <div class="conti-section-title" style="margin-top:14px">Aggiungi voce</div>
     ${extraAdder}
+    ${salvaOraHtml}
     ${scontoHtml}${consumiHtml}
     ${(()=>{
       const _ce = _ceOuter;
@@ -1482,7 +1500,9 @@ function renderDrawerBill(b) {
     })()}
     <div style="display:flex;gap:8px;margin-top:10px">
       ${_isEmesso
-        ? `<button class="btn" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;opacity:0.7;">✎ Modifica conto</button>`
+        ? (_isDirtyNow
+            ? `<button class="btn primary" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;">💾 Salva modifiche</button>`
+            : `<button class="btn" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;opacity:0.7;">✎ Modifica conto</button>`)
         : `<button class="btn primary" onclick="emettiConto(${b.id})" style="flex:1;justify-content:center;">📄 Emetti conto</button>`
       }
       <button class="btn" onclick="apriPdf(${b.id})" style="flex:1;justify-content:center;">👁 PDF</button>
@@ -1578,6 +1598,7 @@ function addExtraVoce(bid) {
   const extras = getExtraForBooking(ck);
   extras.push({ label, qty, unitPrice:price, unita });
   setExtraForBooking(ck, extras);
+  markContoDirty(bid);
   refreshBillTab(bid);
 }
 
@@ -1590,6 +1611,7 @@ function addExtraLibero(bid) {
   const extras = getExtraForBooking(ck);
   extras.push({ label, qty, unitPrice:price, unita:'' });
   setExtraForBooking(ck, extras);
+  markContoDirty(bid);
   refreshBillTab(bid);
 }
 
@@ -1631,6 +1653,7 @@ function addScontoVoce(bid) {
     extras.push({ label:`🏷 Sconto`, qty:1, unitPrice:-Math.abs(val), unita:'', tipo:'sconto' });
   }
   setExtraForBooking(ck, extras);
+  markContoDirty(bid);
   refreshBillTab(bid);
 }
 
@@ -1657,6 +1680,7 @@ function aggiungiConsumi(bid) {
     extras.push({ label:'💧 Consumo idrico', qty:diff, unitPrice:price, unita:'m³' });
   }
   setExtraForBooking(ck, extras);
+  markContoDirty(bid);
   refreshBillTab(bid);
 }
 
