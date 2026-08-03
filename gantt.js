@@ -617,7 +617,7 @@ async function delBook(id){
     // sul foglio fallisce (coerenza UI — meglio mostrare il booking che perderlo)
     bookings.push(b); render();
     syncLog('❌ Bridge cancella fallito: ' + e.message, 'err');
-    showToast('Errore eliminazione: ' + e.message, 'error');
+    showToast('❌ NON eliminata — ripristinata: ' + e.message, 'error', 9000);
   }
 }
 
@@ -947,11 +947,23 @@ async function saveBooking(){
     render();
     showToast(`✓ "${name}" salvato sul foglio Google`, 'success');
   } catch(e) {
+    // FIX: prima si limitava a togliere il flag "pending" lasciando comunque
+    // in bookings[] la modifica ottimistica MAI davvero salvata — indistin-
+    // guibile a video da una salvata con successo, finché un resync succes-
+    // sivo (anche ore dopo) non la cancellava silenziosamente. Nel frattempo
+    // si poteva emettere un conto sui dati sbagliati (es. notti/disposizione
+    // mai realmente registrate). Ora ripristiniamo lo stato precedente:
     const idx=bookings.findIndex(b=>b.id===newB.id);
-    if(idx>=0) bookings[idx].pending=false;
+    if (existingB) {
+      // Era una modifica di una prenotazione esistente → ripristina l'originale
+      if (idx>=0) bookings[idx] = { ...existingB, pending:false };
+    } else {
+      // Era una prenotazione nuova, mai esistita prima del salvataggio fallito
+      if (idx>=0) bookings.splice(idx, 1);
+    }
     render();
     syncLog('❌ Bridge scrivi fallito: ' + e.message, 'err');
-    showToast('Errore scrittura: ' + e.message, 'error');
+    showToast('❌ NON salvato — ripristinato lo stato precedente: ' + e.message, 'error', 9000);
     console.error(e);
   }
 }

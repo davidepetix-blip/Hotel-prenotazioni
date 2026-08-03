@@ -97,7 +97,7 @@ async function _callBridge(url) {
  * polling = true (no-cors): non sappiamo quando Apps Script finisce
  *   → poll ogni 8s per max 3 tentativi (24s totali).
  */
-async function _bridgeReload(polling) {
+async function _bridgeReload(polling, verify = null) {
   // ── Usa il foglio dell'anno corrente — JSON_ANNUALE esiste solo lì ──
   // annualSheets può contenere più anni (es. 2025, 2026).
   // find(e => e.sheetId) restituisce il primo, che potrebbe non avere JSON_ANNUALE.
@@ -108,10 +108,25 @@ async function _bridgeReload(polling) {
     : null;
   if (!entry?.sheetId) {
     syncLog('⚠ Bridge reload: nessun foglio annuale disponibile', 'wrn');
-    return;
+    return false;
   }
 
+  // Se il chiamante passa "verify", il valore di ritorno di _bridgeReload
+  // riflette se la modifica attesa e' REALMENTE presente nei dati appena
+  // riletti dal foglio (fresh, prima della guardia anti-flicker qui sotto)
+  // — non solo se il reload in generale e' andato a buon fine. Senza questo
+  // controllo, un salvataggio silenziosamente fallito poteva risultare
+  // "confermato" solo perche' la stessa guardia lo ripreservava in bookings[]
+  // in attesa che il foglio si aggiornasse (entro 2 ore) — mascherando il
+  // fallimento reale invece di segnalarlo.
+  let _verified = true;
+
   const _apply = async (fresh) => {
+    // NOTA: verify() va valutata ANCHE quando fresh è vuoto/assente — es. la
+    // verifica di una cancellazione è per definizione "la riga non c'è più",
+    // quindi un array vuoto (o senza il nostro dbId) è un ESITO VALIDO da
+    // verificare, non un errore di lettura da ignorare.
+    _verified = verify ? verify(fresh || []) : true;
     if (!fresh?.length) return false;
 
     // ── Preserva prenotazioni inserite via app non ancora nel foglio ──
@@ -158,8 +173,9 @@ async function _bridgeReload(polling) {
       }
     } catch(e) {
       syncLog('⚠ Bridge reload: ' + e.message, 'wrn');
+      return false;
     }
-    return;
+    return _verified;
   }
 
   // no-cors: polling
@@ -167,17 +183,20 @@ async function _bridgeReload(polling) {
     await new Promise(r => setTimeout(r, 8000));
     try {
       const fresh = await readJSONAnnuale(entry.sheetId);
-      if (await _apply(fresh)) {
+      const applied = await _apply(fresh); // side-effect: aggiorna bookings[] se ci sono dati
+      if (applied) {
         syncLog(`✓ Bridge: Gantt aggiornato (${bookings.length} pren., poll ${t}/3)`, 'ok');
-        return;
       }
+      // _verified è indipendente da "applied" — è il vero segnale di successo
+      // (va controllato anche quando fresh è vuoto, es. cancellazioni).
+      if (_verified) return true;
     } catch(e) {
       syncLog(`⏳ Bridge poll ${t}/3: ${e.message}`, 'syn');
     }
   }
 
   syncLog('⚠ Bridge: JSON_ANNUALE non aggiornato entro 24s — premi 🔄', 'wrn');
-  showToast('⚠ Foglio non aggiornato — premi 🔄 per ricaricare', 'warning');
+  return false;
 }
 
 
@@ -240,20 +259,44 @@ async function bridgeSalva(newB, oldB = null) {
   // ── Blocca bgSync mentre il bridge è attivo (evita sovrascritture) ──
   if (typeof _lastFullSyncTs !== 'undefined') _lastFullSyncTs = Date.now();
 
+  // Verifica che LA NOSTRA modifica specifica sia davvero presente nei dati
+  // grezzi riletti dal foglio (per dbId + checkout finale, tollerante ai
+  // frammenti multi-mese: nel frammento finale l'"al" coincide col checkout
+  // vero). Usata per non dichiarare mai un salvataggio riuscito quando in
+  // realtà non lo sappiamo con certezza (caso no-cors).
+  const _verificaScrittura = (fresh) => (fresh || []).some(f =>
+    f.dbId === newB.dbId &&
+    Math.abs((f.e?.getTime?.() || 0) - newB.e.getTime()) < 43200000
+  );
+
   // ── Chiama Apps Script ─────────────────────────────────────────
   const url  = _bridgeUrl(params);
   const resp = await _callBridge(url);
 
   if (resp === null) {
-    // no-cors: non sappiamo l'esito → polling
-    await _bridgeReload(true);
+    // no-cors: non sappiamo l'esito dalla risposta HTTP → polling con verifica
+    // esplicita sui dati riletti. FIX: prima si chiamava _bridgeReload(true)
+    // e si proseguiva SEMPRE come se fosse andato tutto bene (nessun throw),
+    // quindi il chiamante mostrava "✓ salvato sul foglio Google" anche quando
+    // la scrittura non era mai realmente avvenuta (es. token OAuth scaduto a
+    // metà sessione) — l'unico avviso reale restava sepolto nel pannello LOG,
+    // mai mostrato come toast. Ora, se dopo 24s di polling la modifica non
+    // risulta confermata sul foglio, solleviamo un errore esplicito.
+    const confermato = await _bridgeReload(true, _verificaScrittura);
+    if (!confermato) {
+      throw new Error('scrittura non confermata sul foglio entro 24s (sessione scaduta o connessione instabile?) — verifica manualmente sul foglio Google prima di procedere');
+    }
   } else if (resp.ok && resp.action === 'rigenera') {
     // Apps Script ha risposto ma ha eseguito _rigenera invece di scriviPrenotazioneSuFoglio.
     // Questo accade quando i parametri GET si perdono nel redirect OAuth di Google.
     // La cella NON è stata scritta sul foglio.
     syncLog('⚠ Bridge: Apps Script non ha ricevuto action=scrivi (redirect OAuth?) — cella NON scritta', 'wrn');
-    showToast('⚠ Prenotazione non scritta sul foglio — riprova o scrivi manualmente', 'warning');
-    // Non ricaricare: il JSON_ANNUALE non ha la nuova prenotazione, non vogliamo sovrascrivere
+    // FIX: prima qui si mostrava solo un toast e si CONTINUAVA senza throw —
+    // il chiamante procedeva comunque a mostrare "✓ salvato", sovrascrivendo
+    // (stesso elemento <div id="toast">) l'avviso appena mostrato prima che
+    // fosse leggibile. Ora solleviamo un errore: il chiamante mostrerà UN
+    // solo toast, quello reale.
+    throw new Error('sessione Google scaduta durante il salvataggio — la prenotazione NON è stata scritta sul foglio, riprova');
   } else if (resp.ok && resp.written > 0) {
     syncLog(
       `✓ Bridge scrivi OK — ${resp.written} celle scritte, ${resp.prenotazioni ?? '?'} pren.` +
@@ -266,7 +309,9 @@ async function bridgeSalva(newB, oldB = null) {
     // ma gestiamo anche il caso in cui written=0 con ok:true per retrocompatibilità)
     const detail = (resp.log || []).filter(l => l.includes('⚠')).join('\n');
     syncLog('⚠ Bridge: nessuna cella scritta — ' + (detail || 'causa sconosciuta'), 'wrn');
-    showToast('⚠ Prenotazione non scritta sul foglio — ' + (detail || 'verifica il nome camera'), 'warning');
+    // FIX: vedi commento sopra — non dichiarare mai successo se non c'è stata
+    // nessuna scrittura reale sul foglio.
+    throw new Error('nessuna cella scritta sul foglio — ' + (detail || 'verifica il nome camera'));
   } else {
     // Apps Script ha risposto con ok:false → errore esplicito con dettagli
     const detail = (resp.log || []).join('\n');
@@ -274,6 +319,8 @@ async function bridgeSalva(newB, oldB = null) {
   }
 
   // ── Aggiorna BLIP-DB (fire-and-forget, non blocca UI) ─────────
+  // NOTA: si arriva qui SOLO se il blocco sopra non ha sollevato eccezioni,
+  // cioè solo quando la scrittura sul foglio grafico è confermata riuscita.
   if (typeof DATABASE_SHEET_ID !== 'undefined' && DATABASE_SHEET_ID) {
     newB.ts = nowISO(); newB.fonte = 'app'; newB.fromSheet = true;
     dbUpsert(newB, 'app').catch(e => syncLog('⚠ DB upsert: ' + e.message, 'wrn'));
@@ -307,11 +354,23 @@ async function bridgeCancella(b) {
 
   if (typeof _lastFullSyncTs !== 'undefined') _lastFullSyncTs = Date.now();
 
+  // Verifica che la cella sia REALMENTE sparita dal foglio (nessun frammento
+  // con questo dbId e range ancora presente nei dati riletti).
+  const _verificaCancellazione = (fresh) => !(fresh || []).some(f =>
+    f.dbId === b.dbId &&
+    Math.abs((f.s?.getTime?.() || 0) - b.s.getTime()) < 43200000
+  );
+
   const url  = _bridgeUrl(params);
   const resp = await _callBridge(url);
 
   if (resp === null) {
-    await _bridgeReload(true);
+    // Stesso fix di bridgeSalva: non dichiarare mai successo (nessun throw)
+    // se dopo il polling non risulta confermato che la cella sia sparita.
+    const confermato = await _bridgeReload(true, _verificaCancellazione);
+    if (!confermato) {
+      throw new Error('cancellazione non confermata sul foglio entro 24s (sessione scaduta o connessione instabile?) — verifica manualmente');
+    }
   } else if (resp.ok) {
     syncLog(
       `✓ Bridge cancella OK` +
