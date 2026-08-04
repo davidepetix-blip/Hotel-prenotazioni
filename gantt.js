@@ -944,6 +944,18 @@ async function saveBooking(){
     await bridgeSalva(newB, existingB || null);
     const idx=bookings.findIndex(b=>b.id===newB.id);
     if(idx>=0){ bookings[idx].fromSheet=true; bookings[idx].pending=false; }
+    // FIX: se check-in/check-out cambiano su una prenotazione che ha già un
+    // conto emesso o una riga "Pernottamento" personalizzata a mano, quella
+    // riga resta bloccata al vecchio numero di notti (calcolaConto non la
+    // ricalcola da sola). Visto in produzione: drawer prenotazione corretto
+    // a 11 notti, tab Conto ancora fermo a 12 perché nessuno la riallineava.
+    // syncPernottamentoOverride (in billing.js) aggiorna qty/totale e marca
+    // il conto "dirty", così il banner "Salva ora" avvisa lo staff.
+    const dateCambiate = existingB && (
+      existingB.s?.getTime?.() !== newB.s?.getTime?.() ||
+      existingB.e?.getTime?.() !== newB.e?.getTime?.()
+    );
+    if (dateCambiate && typeof syncPernottamentoOverride === 'function') syncPernottamentoOverride(newB.id);
     render();
     showToast(`✓ "${name}" salvato sul foglio Google`, 'success');
   } catch(e) {

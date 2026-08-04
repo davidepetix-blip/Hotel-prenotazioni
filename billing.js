@@ -654,6 +654,36 @@ function setContoOverrides(bid, righe) {
   saveContoDati(key, { override: righe }); // fire-and-forget
 }
 
+// Quando le date (check-in/check-out) di una prenotazione vengono modificate
+// DOPO che il conto è già stato emesso o che la riga "Pernottamento" è stata
+// personalizzata a mano, l'override salvato resta bloccato al vecchio numero
+// di notti — calcolaConto/calcolaContoAppart non lo ricalcolano mai da soli.
+// Risultato: il tab Conto può continuare a fatturare notti che non esistono
+// più (visto in produzione: drawer "11 notti" corrette, tab Conto ancora
+// fermo a "12 notti" da prima della modifica date).
+// Questa funzione riallinea SOLO la quantità della riga base (tipo:'base')
+// quando ha una qty intera (== numero di notti): non tocca gli appartamenti
+// in modalità "mensile", dove qty è frazionaria (notti/30) per definizione.
+// Va chiamata subito dopo un salvataggio riuscito di una prenotazione le cui
+// date sono cambiate; marca il conto "dirty" così il banner "Salva ora"
+// (già presente nel drawer) avvisa lo staff che deve confermare l'importo.
+function syncPernottamentoOverride(bid) {
+  const b = bookings.find(x => x.id === bid || x.dbId === String(bid));
+  if (!b || !b.s || !b.e) return false;
+  const ck = b.dbId || String(b.id);
+  const ovs = getContoOverrides(ck);
+  if (!ovs || !ovs.length) return false;
+  const newNotti = nights(b.s, b.e);
+  const idx = ovs.findIndex(r => r.tipo === 'base' && Number.isInteger(r.qty));
+  if (idx < 0 || ovs[idx].qty === newNotti) return false;
+  const updated = ovs.map((r,i) => i !== idx ? r : {
+    ...r, qty: newNotti, total: parseFloat((newNotti * r.unitPrice).toFixed(2))
+  });
+  setContoOverrides(ck, updated);
+  markContoDirty(bid);
+  return true;
+}
+
 function getAppartMode(bid, notti) {
   const key = _ck(bid);
   const m = _contiDatiCache[key]?.appartMode ?? localStorage.getItem(`appartMode_${key}`);
@@ -1362,7 +1392,7 @@ function renderDrawerBill(b) {
   const salvaOraHtml = _isDirtyNow ? `
     <div style="display:flex;align-items:center;gap:8px;margin:8px 0;padding:8px 10px;background:#fff3e0;border:1px solid #ffb74d;border-radius:8px">
       <span style="font-size:15px">⚠️</span>
-      <span style="flex:1;font-size:11px;color:#9a5b00;font-weight:600">Voce aggiunta ma non salvata nel conto emesso</span>
+      <span style="flex:1;font-size:11px;color:#9a5b00;font-weight:600">Modifiche non salvate nel conto emesso</span>
       <button class="btn primary" onclick="emettiConto(${b.id})" style="font-size:12px;padding:5px 12px;justify-content:center">💾 Salva ora</button>
     </div>` : '';
 
