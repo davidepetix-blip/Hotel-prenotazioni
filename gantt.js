@@ -581,7 +581,10 @@ function duplicaBook(id) {
   document.getElementById('fRoom').value = targetRoomId;
 
   // Apri il modal
-  openModal(false);
+    // Apri il modal in modalita "nuova prenotazione" ma senza far
+  // azzerare a openModal() nome/note/disposizione/colore appena impostati
+  // (bug: openModal(false) trattava isEdit=false come "form vuoto" e li resettava)
+  openModal(false, true);
 
   // Mostra warning disponibilità (se presente) — dopo openModal che fa rebuildColors/Beds
   if (cameraWarning) {
@@ -655,8 +658,8 @@ function closeDrawer(){
 // ═══════════════════════════════════════════════════════════════════
 // MODAL
 // ═══════════════════════════════════════════════════════════════════
-function openModal(isEdit=false){
-  if(!isEdit){
+function openModal(isEdit=false, skipReset=false){
+  if(!isEdit && !skipReset){
     editId=null;
     document.getElementById('fName').value='';
     document.getElementById('fNotes').value='';
@@ -702,7 +705,7 @@ function openModal(isEdit=false){
   } else {
     if (typeof resetAnagraficaModal === 'function') resetAnagraficaModal();
   }
-  rebuildBeds(isEdit ? bedCounts : null); rebuildColors();
+  rebuildBeds((isEdit || skipReset) ? bedCounts : null); rebuildColors();
   document.getElementById('errmsg').classList.remove('show');
   document.getElementById('mov').classList.add('open');
   // Aggiorna disponibilità al primo render del modal
