@@ -1604,7 +1604,7 @@ function ciPrevGenerate() {
     const nome     = pR(cleanAl(r.nome),30);
     const sesso    = (r.sesso||'M').toUpperCase()==='F'?'2':'1';
     const dataN    = toFmt(r.dataNascita);
-    const isIta    = _alNorm(r.cittadinanza||'ITALIA').includes('ITAL');
+    const isIta    = _normCitIsIta(r.cittadinanza||'ITALIA');
     let comN='000000000', provN='  ';
     if (isIta&&r.luogoNascita){const f=_alCodiceComune(r.luogoNascita);if(f){comN=f.cod;provN=pR(f.prov,2);}}
     const statoN = _alCodiceStato(isIta?'ITALIA':(r.statoEsteroNascita||r.cittadinanza||'ITALIA')).padStart(9,'0');
