@@ -974,7 +974,8 @@ function exportAlloggiati(scope='72h'){
 // Nucleo dell'export — prende items già filtrati/selezionati
 // Helper conversione ISO → nome stato (definiti FUORI dal loop)
 const _ISO_TO_NOME = {'IT':'ITALIA','DE':'GERMANIA','FR':'FRANCIA','ES':'SPAGNA','GB':'REGNO UNITO','AT':'AUSTRIA','CH':'SVIZZERA','BE':'BELGIO','NL':'PAESI BASSI','PL':'POLONIA','RO':'ROMANIA','PT':'PORTOGALLO','GR':'GRECIA','CZ':'REPUBBLICA CECA','HU':'UNGHERIA','SE':'SVEZIA','DK':'DANIMARCA','FI':'FINLANDIA','SK':'REPUBBLICA SLOVACCA','SI':'SLOVENIA','HR':'CROAZIA','BG':'BULGARIA','LT':'LITUANIA','LV':'LETTONIA','EE':'ESTONIA','LU':'LUSSEMBURGO','MT':'MALTA','IE':'IRLANDA','CY':'CIPRO','US':'STATI UNITI D AMERICA','RU':'FEDERAZIONE RUSSA','CN':'CINA','JP':'GIAPPONE','IN':'INDIA','BR':'BRASILE','LY':'LIBIA','TN':'TUNISIA','MA':'MAROCCO','EG':'EGITTO','NG':'NIGERIA','GH':'GHANA','SN':'SENEGAL','CM':'CAMERUN','ET':'ETIOPIA','UA':'UCRAINA','TR':'TURCHIA','AL':'ALBANIA','MK':'MACEDONIA DEL NORD','RS':'SERBIA','BA':'BOSNIA ED ERZEGOVINA','ME':'MONTENEGRO','KO':'KOSOVO','XK':'KOSOVO'};
-function _normCitNome(s) { const u=(s||'').toUpperCase().trim(); return _ISO_TO_NOME[u]||u; }
+const _ISO3_TO_ISO2={ITA:'IT',DEU:'DE',FRA:'FR',ESP:'ES',GBR:'GB',AUT:'AT',CHE:'CH',BEL:'BE',NLD:'NL',POL:'PL',ROU:'RO',PRT:'PT',GRC:'GR',CZE:'CZ',HUN:'HU',SWE:'SE',DNK:'DK',FIN:'FI',SVK:'SK',SVN:'SI',HRV:'HR',BGR:'BG',LTU:'LT',LVA:'LV',EST:'EE',LUX:'LU',MLT:'MT',IRL:'IE',CYP:'CY',USA:'US',RUS:'RU',CHN:'CN',JPN:'JP',IND:'IN',BRA:'BR',LBY:'LY',TUN:'TN',MAR:'MA',EGY:'EG',NGA:'NG',GHA:'GH',SEN:'SN',CMR:'CM',ETH:'ET',UKR:'UA',TUR:'TR',ALB:'AL',MKD:'MK',SRB:'RS',BIH:'BA',MNE:'ME',KOR:'KO',XKX:'XK'};
+function _normCitNome(s) { const u=(s||'').toUpperCase().trim(); const u2=_ISO3_TO_ISO2[u]||u; return _ISO_TO_NOME[u2]||u; }
 function _normCitIsIta(s) { return _alNorm(_normCitNome(s||'ITALIA')).includes('ITAL'); }
 
 function _exportAlloggiatiItems(items){
