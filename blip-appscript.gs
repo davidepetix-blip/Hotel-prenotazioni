@@ -1,6 +1,6 @@
 // =============================================================
 // SCRIPT UNIFICATO — Prenotazioni + JSON_ANNUALE + Bridge Blip
-// Versione: 2026-05-03
+// Versione: 2026-08-13 — fix guardia riga 46 (cambio camera) + warning al frontend
 // =============================================================
 // ISTRUZIONI:
 //   1. Sostituisci TUTTO il contenuto dell'Apps Script con questo
