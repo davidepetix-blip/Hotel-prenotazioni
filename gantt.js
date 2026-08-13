@@ -944,7 +944,7 @@ async function saveBooking(){
   showToast('⏳ Salvataggio in corso…', 'info');
 
   try {
-    await bridgeSalva(newB, existingB || null);
+    const _bridgeResult = await bridgeSalva(newB, existingB || null);
     const idx=bookings.findIndex(b=>b.id===newB.id);
     if(idx>=0){ bookings[idx].fromSheet=true; bookings[idx].pending=false; }
     // FIX: se check-in/check-out cambiano su una prenotazione che ha già un
@@ -961,6 +961,13 @@ async function saveBooking(){
     if (dateCambiate && typeof syncPernottamentoOverride === 'function') syncPernottamentoOverride(newB.id);
     render();
     showToast(`✓ "${name}" salvato sul foglio Google`, 'success');
+    // Avvisa esplicitamente se il backend ha saltato la cancellazione del
+      // vecchio range (conflitto rilevato in un cambio camera/date) — senza
+      // questo controllo un eventuale duplicato rimasto nella camera o nel
+      // periodo precedente passerebbe inosservato dietro il toast di successo.
+      if (_bridgeResult?.warning) {
+            showToast('Verifica manuale consigliata: ' + _bridgeResult.warning, 'warn', 12000);
+      }
   } catch(e) {
     // FIX: prima si limitava a togliere il flag "pending" lasciando comunque
     // in bookings[] la modifica ottimistica MAI davvero salvata — indistin-
