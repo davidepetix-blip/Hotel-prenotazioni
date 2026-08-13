@@ -339,10 +339,29 @@ function _cancellaRangeFoglio(ss, camera, blipId, dalDate, alDate, log) {
 
     // ── Guardia: verifica che le celle appartengano a questo blipId ──
     // Legge riga BLIP_ID_ROW per questa colonna e controlla la mappa.
-    const idMap = _leggiBlipIdMap(sheet, col);
-    if (Object.keys(idMap).length > 0 && !idMap[blipId]) {
-      log.push('  ⚠ Skip ' + mese.sheetName + ': celle appartengono ad altro booking (non ' + blipId + ')');
-      return;
+    // FIX: prima si bloccava la cancellazione ogni volta che la mappa non
+    // era vuota e non conteneva il nostro blipId — anche quando NESSUNO
+    // degli altri ID registrati aveva un range che si sovrapponeva
+    // davvero alle celle da cancellare (tipico per prenotazioni "vecchie"
+    // mai registrate in riga 46). Risultato osservato: cambiare camera
+    // lasciava un duplicato fantasma nella camera originale, senza alcun
+    // errore visibile. Ora blocchiamo SOLO se c'è un conflitto reale.
+    const idMap  = _leggiBlipIdMap(sheet, col);
+    const altriIds = Object.keys(idMap).filter(function(k) { return k !== blipId; });
+    if (altriIds.length > 0 && !idMap[blipId]) {
+      const conflittoReale = altriIds.some(function(otherId) {
+        const r = idMap[otherId];
+        if (!r || r.length !== 2) return false;
+        const oDal = _parseDataGS(r[0]);
+        const oAl  = _parseDataGS(r[1]);
+        if (!oDal || !oAl) return false;
+        return oDal <= mese.lastDay && oAl > mese.firstDay;
+      });
+      if (conflittoReale) {
+        log.push('  ⚠ Skip ' + mese.sheetName + ': celle appartengono ad altro booking (non ' + blipId + ')');
+        return;
+      }
+      log.push('  ℹ ' + mese.sheetName + ': BLIP_ID ' + blipId + ' assente da riga 46 ma nessun conflitto reale — cancello comunque');
     }
 
     const rows = _trovaRigheDate(sheet, mese.firstDay, mese.lastDay);
