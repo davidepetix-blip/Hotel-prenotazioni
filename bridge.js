@@ -224,6 +224,10 @@ async function bridgeSalva(newB, oldB = null) {
     newB.dbId = genBookingId(newB.s.getFullYear());
   }
 
+    // Popolato se il backend salta la cancellazione del vecchio range
+    // (cambio camera/date con conflitto reale rilevato su un'altra prenotazione).
+    let bridgeWarning = null;
+
   const params = {
     action:       'scrivi',
     blipId:       newB.dbId,
@@ -304,6 +308,15 @@ async function bridgeSalva(newB, oldB = null) {
       'ok'
     );
     await _bridgeReload(false);
+    // Se il backend ha saltato la cancellazione del vecchio range (conflitto
+      // reale rilevato), la scrittura nuova e' comunque riuscita ma va segnalato
+      // — senza questo controllo il chiamante mostra solo "salvato", mascherando
+      // un possibile duplicato rimasto nella camera/periodo precedente.
+      const _skipLine = (resp.log || []).find(l => l.includes('Skip'));
+      if (_skipLine) {
+            syncLog('Bridge: ' + _skipLine, 'wrn');
+            bridgeWarning = _skipLine;
+      }
   } else if (resp.ok && !resp.written && resp.log) {
     // scriviPrenotazioneSuFoglio è partita ma non ha scritto celle (ok:false avrebbe lanciato eccezione,
     // ma gestiamo anche il caso in cui written=0 con ok:true per retrocompatibilità)
@@ -325,6 +338,8 @@ async function bridgeSalva(newB, oldB = null) {
     newB.ts = nowISO(); newB.fonte = 'app'; newB.fromSheet = true;
     dbUpsert(newB, 'app').catch(e => syncLog('⚠ DB upsert: ' + e.message, 'wrn'));
   }
+
+    return { warning: bridgeWarning };
 }
 
 /**
