@@ -974,6 +974,36 @@ function estraiSegmenti(ss, anno) {
     }
     if (Object.keys(camMap).length===0) { Logger.log("[JS] Nessuna camera in "+sheetName); continue; }
 
+    // ── FIX vulnerabilità BLIP_ID: leggi la riga BLIP_ID_ROW (46) per colonna ──
+    // Prima di questo fix, ogni rigenerazione di JSON_ANNUALE (onEdit o trigger
+    // 5min) ricostruiva i record SOLO da testo/colore delle celle, senza mai
+    // guardare gli ID già presenti in riga 46: il campo blipId usciva sempre
+    // vuoto, anche per prenotazioni che un ID ce l'avevano già. Risultato: ad
+    // ogni modifica manuale sul foglio, l'app perdeva l'aggancio blipId e
+    // rischiava di trattare la prenotazione come "fantasma" al sync successivo
+    // (caso reale: prenotazione "Pitonzo", camera 1, 14-15/08/2026).
+    // Qui leggiamo la mappa {blipId:[dal,al]} per ogni colonna e la teniamo
+    // a disposizione per l'abbinamento fatto in unisciMultiMese/trovaBlipId.
+    const idMapByCol = {};
+    try {
+      const idRowVals = sheet.getRange(BLIP_ID_ROW, JS_FIRST_CAM_COL, 1, maxCol-JS_FIRST_CAM_COL+1).getValues()[0];
+      for (var ic=0; ic<idRowVals.length; ic++) {
+        const raw = String(idRowVals[ic]||"").trim();
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            idMapByCol[JS_FIRST_CAM_COL + ic] = parsed;
+          }
+        } catch(eJson) {
+          // Cella riga 46 non nel formato mappa ID atteso: ignora questa colonna,
+          // non deve mai bloccare la lettura delle prenotazioni.
+        }
+      }
+    } catch(eRow46) {
+      Logger.log("[JS] Impossibile leggere riga "+BLIP_ID_ROW+" in "+sheetName+": "+eRow46.message);
+    }
+
     const dataFine = Math.min(maxRow, OUTPUT_ROW-1);
     if (dataFine < JS_FIRST_DATA_ROW) continue;
     const nRighe   = dataFine - JS_FIRST_DATA_ROW + 1;
@@ -1001,6 +1031,7 @@ function estraiSegmenti(ss, anno) {
       const col     = camCols[ci];
       const camName = camMap[col];
       const blockCol = col-firstCol;
+      const idMap   = idMapByCol[col] || null; // mappa BLIP_ID di questa colonna (riga 46), o null
       var cur = null;
 
       for (var ri=0;ri<rows.length;ri++) {
@@ -1022,7 +1053,7 @@ function estraiSegmenti(ss, anno) {
           } else {
             if (cur) segmenti.push(cur);
             cur = { camera:camName, colore:bg, sheetName:sheetName, start:new Date(d), end:new Date(d),
-                    testi:testo?[testo]:[], dispoIniziale:dispoCorrente||null };
+                    testi:testo?[testo]:[], dispoIniziale:dispoCorrente||null, idMap:idMap };
           }
         } else {
           if (cur) { segmenti.push(cur); cur=null; }
@@ -1049,7 +1080,7 @@ function unisciMultiMese(segmenti) {
   for (var i=0;i<segmenti.length;i++) {
     if (used.has(i)) continue;
     const s=segmenti[i];
-    const base={camera:s.camera,colore:s.colore,start:new Date(s.start),end:new Date(s.end),testi:[...s.testi]};
+    const base={camera:s.camera,colore:s.colore,start:new Date(s.start),end:new Date(s.end),testi:[...s.testi],idMap:s.idMap};
     for (var j=i+1;j<segmenti.length;j++) {
       if (used.has(j)) continue;
       const t=segmenti[j];
@@ -1067,10 +1098,18 @@ function unisciMultiMese(segmenti) {
     const checkout=new Date(base.end); checkout.setDate(checkout.getDate()+1);
     const parsed=parsaTesti(base.testi);
     const letti=calcolaLetti(parsed.disposizione);
+    const dal=formatData(base.start), al=formatData(checkout);
     merged.push({
-      camera:base.camera, nome:parsed.nome, dal:formatData(base.start), al:formatData(checkout),
+      camera:base.camera, nome:parsed.nome, dal:dal, al:al,
       disposizione:parsed.disposizione, note:parsed.note, backgroundColor:base.colore,
-      matrimoniali:letti.m, singoli:letti.s, culle:letti.c, matrimonialiUS:letti.ms
+      matrimoniali:letti.m, singoli:letti.s, culle:letti.c, matrimonialiUS:letti.ms,
+      // FIX vulnerabilità BLIP_ID: riaggancia l'ID già presente in riga 46,
+      // se e solo se c'è un'unica corrispondenza univoca per date+colonna.
+      // In caso di ambiguità (più ID mappati sullo stesso intervallo, es.
+      // residui di modifiche/cancellazioni precedenti mai ripulite) NON
+      // indoviniamo: meglio lasciare blipId vuoto — esattamente il
+      // comportamento di oggi — che agganciare un ID sbagliato.
+      blipId: trovaBlipId(base.idMap, dal, al)
     });
   }
   merged.sort(function(a,b){
@@ -1078,6 +1117,21 @@ function unisciMultiMese(segmenti) {
     return da-db||a.camera.localeCompare(b.camera,"it",{numeric:true});
   });
   return merged;
+}
+
+// Cerca in idMap ({blipId:[dal,al], ...}) l'UNICA voce il cui intervallo
+// [dal,al] coincide esattamente con quello richiesto. Ritorna "" se idMap
+// è assente, se non c'è nessuna corrispondenza, o se ce n'è più di una
+// (ambiguo — meglio non abbinare che abbinare a caso).
+function trovaBlipId(idMap, dal, al) {
+  if (!idMap) return "";
+  var match = "", count = 0;
+  var keys = Object.keys(idMap);
+  for (var i=0; i<keys.length; i++) {
+    var v = idMap[keys[i]];
+    if (Array.isArray(v) && v[0]===dal && v[1]===al) { match = keys[i]; count++; }
+  }
+  return count === 1 ? match : "";
 }
 
 
@@ -1132,7 +1186,10 @@ function salvaJsonAnnuale(ss, prenotazioni, anno) {
   }
 
   const TABLE_ROW = 15;
-  const cols=["camera","nome","dal","al","disposizione","matrimoniali","singoli","culle","matrimonialiUS","backgroundColor","note"];
+  // "blipId" aggiunto alla tabella leggibile solo per debug visivo — così una
+  // cella vuota in questa colonna è visibile a colpo d'occhio senza dover
+  // aprire il JSON grezzo in colonna A.
+  const cols=["camera","nome","dal","al","disposizione","matrimoniali","singoli","culle","matrimonialiUS","backgroundColor","note","blipId"];
   js.getRange(TABLE_ROW,1,1,cols.length).setValues([cols]);
   js.getRange(TABLE_ROW,1,1,cols.length).setFontWeight("bold").setBackground("#eeeeee");
 
