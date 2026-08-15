@@ -5,11 +5,11 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '32'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '33'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
-const CI_CACHE_TTL   = 60 * 60 * 1000; // 1 ora
+const CI_CACHE_TTL   = 5 * 60 * 1000; // 5 minuti — dato operativo, deve restare fresco multi-dispositivo (allineato a ARRIVI_CACHE_TTL)
 
 // Colonne scheda CHECK-IN
 // A=ID_CHECKIN B=ID_PRENOTAZIONE C=CAMERA D=DATA_CHECKIN E=NUM_OSPITI
