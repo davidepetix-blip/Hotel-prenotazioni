@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 
-const BLIP_VER_CHECKIN = '33'; // ← incrementa ad ogni modifica
+const BLIP_VER_CHECKIN = '34'; // ← incrementa ad ogni modifica
 
 const CI_SHEET_NAME  = 'CHECK-IN';
 const CI_CACHE_KEY   = 'hotelCiCache';
@@ -666,7 +666,7 @@ function ciOverlayClick(e) {
 }
 
 function emptyGuest(isCapo=false) {
-  return { isCapo, nome:'', cognome:'', dataNascita:'', sesso:'M', cittadinanza:'IT',
+  return { isCapo, nome:'', cognome:'', dataNascita:'', sesso:'M', cittadinanza:'',
            luogoNascita:'', provNascita:'', statoEsteroNascita:'',
            tipoDoc: isCapo ? 'IDENT' : '', numDoc: isCapo ? '' : undefined,
            luogoRilascio: isCapo ? '' : undefined };
@@ -750,7 +750,7 @@ function renderCiGuests() {
       <div class="ci-field-row full">
         <div class="ci-field">
           <label>Cittadinanza (codice ISO) *</label>
-          <input type="text" value="${g.cittadinanza||'IT'}" placeholder="IT" maxlength="3"
+          <input type="text" value="${g.cittadinanza||''}" placeholder="IT" maxlength="3"
                  oninput="_ciEditGuests[${idx}].cittadinanza=this.value.toUpperCase();this.value=this.value.toUpperCase();
                           document.getElementById('ciEstero${idx}').style.display=this.value!=='IT'?'':'none'">
         </div>
@@ -806,7 +806,7 @@ async function saveCiCheckin() {
   if (!capo.nome)        missing.push('Nome');
   if (!capo.dataNascita) missing.push('Data di nascita');
   if (!capo.luogoNascita)missing.push('Luogo di nascita');
-  if (!capo.numDoc)      missing.push('Numero documento');
+  if (!capo.numDoc)      missing.push('Numero documento'); if (!capo.cittadinanza) missing.push('Cittadinanza'); _ciEditGuests.forEach((g,i)=>{ if(i>0 && !g.cittadinanza) missing.push('Cittadinanza (accompagnatore '+i+')'); });
   if (missing.length > 0) {
     showToast('Campi obbligatori mancanti: ' + missing.join(', '), 'error');
     return;
@@ -1120,7 +1120,7 @@ function _scaricaDaAnteprima() {
     let luogoRil='         ';
     if(o.isCapo && o.luogoRilascio){const rl=_alRisolviLuogo(o.luogoRilascio);if(rl)luogoRil=rl.cod;}
     const record=tipoAllog+toFmt(o.arrISO)+nGiorni(o.arrISO,o.parISO)+
-      padR(cleanAl(o.cognome),50)+padR(cleanAl(o.nome),30)+
+      padR(cleanAlNome(o.cognome),50)+padR(cleanAlNome(o.nome),30)+
       (_alNorm(o.sesso||'M').charAt(0)==='F'?'2':'1')+
       toFmt(o.dataNascita)+comN+provN+statoN+cittad+tipoDoc+numDoc+luogoRil;
     if(record.length!==168) console.warn('[Alloggiati] len='+record.length, o.cognome);
@@ -1137,7 +1137,7 @@ function _scaricaDaAnteprima() {
 }
 
 // Helper testo Alloggiati Web
-function cleanAl(s) { return (s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 '.,\-]/g,''); }
+function cleanAl(s) { return (s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 '.,\-]/g,''); } function cleanAlNome(s) { return cleanAl(s).replace(/[.,\-]/g, ' ').replace(/\s+/g, ' ').trim(); }
 function padR(s, n) { const t=(s||'').substring(0,n); return t+' '.repeat(Math.max(0,n-t.length)); }
 function pad(s, n)  { const t=(s||'').substring(0,n); return '0'.repeat(Math.max(0,n-t.length))+t; }
 
@@ -1600,8 +1600,8 @@ function ciPrevGenerate() {
   rows.forEach(r => {
     const nGruppo = rows.filter(x => x.ciId===r.ciId).length;
     const tipoAllog = r.isCapo ? (nGruppo>1?'17':'16') : '19';
-    const cognome  = pR(cleanAl(r.cognome),50);
-    const nome     = pR(cleanAl(r.nome),30);
+    const cognome  = pR(cleanAlNome(r.cognome),50);
+    const nome     = pR(cleanAlNome(r.nome),30);
     const sesso    = (r.sesso||'M').toUpperCase()==='F'?'2':'1';
     const dataN    = toFmt(r.dataNascita);
     const isIta    = _normCitIsIta(r.cittadinanza||'ITALIA');
