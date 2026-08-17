@@ -1,6 +1,6 @@
 // =============================================================
 // SCRIPT UNIFICATO — Prenotazioni + JSON_ANNUALE + Bridge Blip
-// Versione: 2026-08-17 — fix onEdit: non dipende più da e.user (bloccava la sync delle prenotazioni manuali sul foglio)
+// Versione: 2026-08-17b — aggiunto .claspignore: root cause reale trovata (localStorage in alloggiati-data.js rompeva ogni trigger dal 13/08) — fix onEdit: non dipende più da e.user (bloccava la sync delle prenotazioni manuali sul foglio)
 // =============================================================
 // ISTRUZIONI:
 //   1. Sostituisci TUTTO il contenuto dell'Apps Script con questo
