@@ -1,0 +1,10 @@
+# Solo i file realmente eseguiti da Apps Script vengono caricati.
+# Tutti gli altri .js in questo repo sono frontend client-side (serviti via
+# GitHub Pages) e NON devono finire nel progetto Apps Script: contengono
+# codice di livello superiore (es. localStorage in alloggiati-data.js) che
+# non esiste nel runtime server-side e mandava in errore OGNI esecuzione
+# del progetto (onOpen, onEdit, rigenera5min, trigger email) fin dal 13/08.
+**/*
+!appsscript.json
+!blip-appscript.gs
+!JSON_annuale_script.gs
