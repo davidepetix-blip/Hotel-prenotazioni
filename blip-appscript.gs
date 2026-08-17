@@ -1,6 +1,6 @@
 // =============================================================
 // SCRIPT UNIFICATO — Prenotazioni + JSON_ANNUALE + Bridge Blip
-// Versione: 2026-08-13 — fix guardia riga 46 (cambio camera) + warning al frontend
+// Versione: 2026-08-17 — fix onEdit: non dipende più da e.user (bloccava la sync delle prenotazioni manuali sul foglio)
 // =============================================================
 // ISTRUZIONI:
 //   1. Sostituisci TUTTO il contenuto dell'Apps Script con questo
@@ -92,7 +92,7 @@ function onOpen() {
 // TRIGGER onEdit — unico per tutto
 // =============================================================
 function onEdit(e) {
-  if (!e || e.user == null) return;
+  if (!e || !e.range) return; // FIX: non dipendere da e.user (Google non lo garantisce per ogni editor/dispositivo) — bloccava sync prenotazioni manuali
   const sheet = e.source.getActiveSheet();
   const col   = e.range.getColumn();
   const row   = e.range.getRow();
