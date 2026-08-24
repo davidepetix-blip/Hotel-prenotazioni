@@ -13,7 +13,7 @@
 // Dipende da: core.js, api.js, auth.js, store.js, rooms.js, clienti.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_GANTT = '36';
+const BLIP_VER_GANTT = '37';
 const BLIP_VER_ROOMS_REF = '1'; // rooms.js caricato prima di gantt.js // ← incrementa ad ogni modifica
 
 let _billingPreloaded = false;
@@ -1658,7 +1658,37 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.getElementById('searchOverlay').classList.contains('open')) {
     closeSearch();
   }
+  if (e.key === 'Escape' && document.getElementById('moreMenu') && document.getElementById('moreMenu').style.display === 'flex') {
+    closeMoreMenu();
+  }
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// MENU "ALTRO" — raccoglie le voci meno usate della topbar
+// ═══════════════════════════════════════════════════════════════════
+function openMoreMenu(ev){
+  const menu = document.getElementById('moreMenu');
+  const ov   = document.getElementById('moreOv');
+  if (!menu || !ov) return;
+  const btn = document.getElementById('btnMore');
+  const r   = btn.getBoundingClientRect();
+  menu.style.visibility = 'hidden';
+  menu.style.display = 'flex'; // per misurare la larghezza prima di posizionare
+  const mw = menu.offsetWidth || 220;
+  let left = r.right - mw;
+  left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+  menu.style.top  = (r.bottom + 6) + 'px';
+  menu.style.left = left + 'px';
+  menu.style.visibility = 'visible';
+  ov.style.display = 'block';
+  if (ev) ev.stopPropagation();
+}
+function closeMoreMenu(){
+  const menu = document.getElementById('moreMenu');
+  const ov   = document.getElementById('moreOv');
+  if (menu) menu.style.display = 'none';
+  if (ov) ov.style.display = 'none';
+}
 
 // openSettings, closeSettings, resetRoomSettings, saveSettings, renderSettingsBody,
 // getRoomInterventions, getRoomDayStatus, puliziaBadge, opBadge,
@@ -1825,16 +1855,14 @@ function buildRoomSelect(){
 
 function checkW(){
   const w=window.innerWidth>=640;
-  document.getElementById('btnAdd').style.display=w?'inline-flex':'none';
   document.getElementById('fabGroup').style.display=w?'none':'flex';
   // Su desktop: mostra il pulsante di ricerca in topbar
   // Su mobile: la ricerca è dentro fabGroup (già visibile)
   const bs = document.getElementById('btnSearch');
   if (bs) bs.style.display = w ? 'inline-flex' : 'none';
-  const be = document.getElementById('btnEmail');
-  if (be) be.style.display = (w && window.userRole === 'admin') ? 'inline-flex' : 'none';
-  const bc = document.getElementById('btnClienti');
-  if (bc) bc.style.display = 'inline-flex'; // sempre visibile — anche su mobile
+  // "Richieste" nel menu Altro — solo per ruolo admin (invariato rispetto a prima)
+  const mei = document.getElementById('moreEmailItem');
+  if (mei) mei.style.display = (window.userRole === 'admin') ? 'flex' : 'none';
 }
 window.addEventListener('resize',checkW);
 

@@ -103,6 +103,12 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 .btn.danger:hover { background: #fbd5d3; }
 .btn-icon { width: 32px; padding: 0; justify-content: center; font-size: 15px; }
 .avatar { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--border); cursor: pointer; box-shadow: var(--shadow-sm); }
+.more-ov { position: fixed; inset: 0; z-index: 199; display: none; background: rgba(0,0,0,.15); }
+.more-menu { position: fixed; z-index: 200; min-width: 220px; max-width: calc(100vw - 24px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 6px; display: none; flex-direction: column; gap: 2px; }
+.more-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: none; background: transparent; border-radius: 8px; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; color: var(--text); cursor: pointer; text-align: left; }
+.more-menu button:hover { background: var(--accent-light); color: var(--accent); }
+.more-menu .mm-icon { width: 20px; flex-shrink: 0; text-align: center; font-size: 15px; }
+.more-menu .mm-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 .sync-btn { position: relative; }
 .sync-dot { position: absolute; top: -3px; right: -3px; width: 7px; height: 7px; background: var(--success); border-radius: 50%; display: none; }
 .sync-dot.show { display: block; }
@@ -836,21 +842,15 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
     <div class="mlabel" id="mlabel">GEN 2026</div>
     <button onclick="changeMonth(1)" title="Mese successivo (o scrolla)">›</button>
   </div>
+  <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
   <button class="btn btn-icon sync-btn" onclick="forceSync()" title="Leggi da JSON_2026 (1 chiamata API)">
     ↻<span class="sync-dot" id="syncDot"></span>
   </button>
   <span id="jsonSourceBadge" style="font-size:10px;color:#888;display:none;margin-left:2px" title="Fonte dati"></span>
-  <button class="btn btn-icon" onclick="goToday()" title="Oggi">⊙</button>
-  <button class="btn btn-icon" onclick="openCheckin()" title="Check-in">🛎</button>
-  <button class="btn btn-icon" onclick="openRoomDash()" title="Stato camere">🏠</button>
-  <button class="btn btn-icon" onclick="openConti()" title="Conti e fatturazione">💶</button>
-  <button class="btn btn-icon" onclick="apriEsportaElencoMensile()" title="Esporta elenco mensile (piscina/ristorante)">📋</button>
   <button class="btn btn-icon" onclick="openSettings()" title="Impostazioni camere">⚙</button>
-  <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
   <button class="btn" id="btnSearch" style="display:none" onclick="openSearch()" title="Cerca prenotazione">🔍</button>
-  <button class="btn" id="btnEmail" onclick="openEmailPanel()" title="Richieste dal sito" style="display:none">📧</button>
-  <button class="btn" id="btnClienti" onclick="openClientiPanel()" title="Anagrafica clienti" style="display:none">👥</button>
-  <button class="btn primary" id="btnAdd" style="display:none" onclick="openModal()">+ Nuova</button>
+  <button class="btn btn-icon" id="btnMore" onclick="openMoreMenu(event)" title="Altro">⋯</button>
+  <button class="btn btn-icon" onclick="openDrawer()" title="Pannello">☰</button>
   <img id="userAvatar" class="avatar" style="display:none" title="Logout" onclick="logout()"><span id="userRoleBadge" style="display:none;font-size:14px;cursor:default;margin-left:2px;line-height:1" title="Ruolo utente"></span>
 </div>
 
@@ -897,6 +897,20 @@ body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: v
 <div class="fab-group" id="fabGroup">
   <button class="fab fab-search" onclick="openSearch()" title="Cerca prenotazione">🔍</button>
   <button class="fab" onclick="openModal()" title="Nuova prenotazione">+</button>
+</div>
+
+<!-- ══ MENU "ALTRO" ══ -->
+<div class="more-ov" id="moreOv" onclick="closeMoreMenu()"></div>
+<div class="more-menu" id="moreMenu">
+  <button onclick="closeMoreMenu();openCheckin()"><span class="mm-icon">🛎</span>Check-in</button>
+  <button onclick="closeMoreMenu();openRoomDash()"><span class="mm-icon">🏠</span>Stato camere</button>
+  <button onclick="closeMoreMenu();openConti()"><span class="mm-icon">💶</span>Conti e fatturazione</button>
+  <button onclick="closeMoreMenu();apriEsportaElencoMensile()"><span class="mm-icon">📋</span>Esporta elenco mensile</button>
+  <div class="mm-sep"></div>
+  <button onclick="closeMoreMenu();openClientiPanel()"><span class="mm-icon">👥</span>Anagrafica clienti</button>
+  <button id="moreEmailItem" onclick="closeMoreMenu();openEmailPanel()" style="display:none"><span class="mm-icon">📨</span>Richieste</button>
+  <div class="mm-sep"></div>
+  <button onclick="closeMoreMenu();openModal()"><span class="mm-icon">➕</span>Nuova prenotazione</button>
 </div>
 
 <!-- ══ SEARCH OVERLAY ══ -->
