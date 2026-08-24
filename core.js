@@ -6,7 +6,7 @@
 
 // ── Error handler globale per debug mobile ──
 
-const BLIP_VER_CORE = '8';
+const BLIP_VER_CORE = '9';
 
 // ── Bootstrap admin — sempre admin anche se IMPOSTAZIONI è vuoto ──
 // Modifica questa lista per aggiungere email di admin permanenti.
@@ -18,7 +18,7 @@ const BILL_SETTINGS_KEY = 'hotelBillSettings';
 // Modifica questa lista per aggiungere email di admin permanenti.
 // Gli admin aggiuntivi si gestiscono dal foglio IMPOSTAZIONI (chiave adminEmails).
 const BOOTSTRAP_ADMINS = [
-  // 'tua@email.com',  ← aggiungi la tua email qui
+  'davide.petix@gmail.com',
 ]; // ← incrementa ad ogni modifica
 
 function dbg(msg, isErr) {
