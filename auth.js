@@ -17,7 +17,7 @@
 //   • render()              — definita in gantt.js
 // ═══════════════════════════════════════════════════════════════════
 
-const BLIP_VER_AUTH = '1'; // ← incrementa ad ogni modifica
+const BLIP_VER_AUTH = '2'; // ← incrementa ad ogni modifica
 
 // ═══════════════════════════════════════════════════════════════════
 // HELPERS OAUTH
@@ -174,6 +174,12 @@ async function onLoginSuccess() {
     badge.title = `Ruolo: ${window.userRole} (${userEmail})`;
     badge.style.display = 'inline';
   }
+
+  // Il ruolo (admin/staff) è ora noto: aggiorna la visibilità delle voci
+  // gated su window.userRole (es. "Richieste" nel menu Altro), che a pagina
+  // caricata (evento 'load') erano state valutate PRIMA che il login
+  // completasse — checkW() viene richiamata qui per correggerle.
+  if (typeof checkW === 'function') checkW();
 
   // ── Step 4: caricamento principale ──────────────────────────────
   if (typeof loadFromSheets === 'function') await loadFromSheets();
