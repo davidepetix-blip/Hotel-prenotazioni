@@ -6,7 +6,7 @@
 
 // ── Error handler globale per debug mobile ──
 
-const BLIP_VER_CORE = '9';
+const BLIP_VER_CORE = '10';
 
 // ── Bootstrap admin — sempre admin anche se IMPOSTAZIONI è vuoto ──
 // Modifica questa lista per aggiungere email di admin permanenti.
@@ -34,7 +34,11 @@ window.addEventListener('unhandledrejection', function(e) { dbg('❌ Promise: '+
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════
 const CLIENT_ID = '13060466249-bk4s31a1vanhnd6j0qhequ3d3ptd2b2g.apps.googleusercontent.com';
-const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets'; // Gmail token gestito separatamente in email.js
+// NB: 'email' è necessario perché la chiamata a https://www.googleapis.com/oauth2/v3/userinfo
+// (usata per calcolare il ruolo admin/staff confrontando l'email con BOOTSTRAP_ADMINS/adminEmails
+// e per l'avatar utente) falliva con 401 "Invalid Credentials" senza questo scope — il ruolo
+// risultava sempre 'staff' per chiunque, indipendentemente dalle liste admin configurate.
+const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets email'; // Gmail token gestito separatamente in email.js
 
 const DEFAULT_ANNUAL_SHEETS = [
   { year: 2025, sheetId: '', label: '2025' },
